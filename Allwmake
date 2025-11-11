@@ -7,6 +7,7 @@ torch_flag=''
 muq_flag=''
 applications_flag=''
 unit_tests_flag=''
+debug_flag=''
 
 has_wmake="$(command -v wmake)"
 
@@ -19,7 +20,7 @@ case "$1" in
 esac
 # ------------
 
-while getopts 'htmqj:asu' flag; do
+while getopts 'htmqj:asud' flag; do
   case "${flag}" in
     h) help_flag=true ;;
     t) tutorial_flag=true ;;
@@ -27,12 +28,12 @@ while getopts 'htmqj:asu' flag; do
     q) muq_flag=true ;;
     a) applications_flag=true ;;
     u) unit_tests_flag=true ;;
+    d) debug_flag=true ;;
     j)
         export WM_NCOMPPROCS="$OPTARG"
         echo "Compiling enabled on $WM_NCOMPPROCS cores" 1>&2
         ;;
     s) export WM_QUIET=true ;;
-
     *) print_usage
        exit 1 ;;
   esac
@@ -53,6 +54,7 @@ then
     echo "  -j N   enable parallel compilation with specified number of cores"
     echo "  -a     enable application compilation (default: off)"
     echo "  -u     enable unitTests compilation (default: off)"
+    echo "  -d     enable debug build (adds -g -O0 -DITHACA_DEBUG to C/CXX flags)"
     echo
     if [ -n "$has_wmake" ]
     then
@@ -63,7 +65,6 @@ then
     else
         echo "No wmake - is OPENFOAM enviroment active?"
     fi
-
     exit 0  # Clean exit
 fi
 
@@ -85,6 +86,14 @@ fi
     exit 2
 }
 
+# If requested, set debug compile flags (export so wmake sees them)
+if [ -n "$debug_flag" ]
+then
+    echo "Debug mode: exporting C/C++ flags for debug build"
+    # Append debug flags so they are present; modules that hardcode flags may still override.
+    export CXXFLAGS="${CXXFLAGS:-} -g -O0 -DITHACA_DEBUG"
+    export CFLAGS="${CFLAGS:-} -g -O0 -DITHACA_DEBUG"
+fi
 
 #------------------------------------------------------------------------------
 #
