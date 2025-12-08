@@ -89,10 +89,10 @@ fi
 # If requested, set debug compile flags (export so wmake sees them)
 if [ -n "$debug_flag" ]
 then
-    echo "Debug mode: exporting C/C++ flags for debug build"
     # Append debug flags so they are present; modules that hardcode flags may still override.
     export CXXFLAGS="${CXXFLAGS:-} -g -O0 -DITHACA_DEBUG"
     export CFLAGS="${CFLAGS:-} -g -O0 -DITHACA_DEBUG"
+    export WM_COMPILE_OPTION=Debug
 fi
 
 #------------------------------------------------------------------------------
