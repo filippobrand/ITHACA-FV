@@ -24,7 +24,7 @@
 \*---------------------------------------------------------------------------*/
 {
     alphat = turbulence->nut() / Prt;
-    alphat.correctBoundaryConditions(); // Crashing here
+    alphat.correctBoundaryConditions();
     volScalarField alphaEff("alphaEff", turbulence->nu() / Pr + alphat);
     fvScalarMatrix TEqn
     (

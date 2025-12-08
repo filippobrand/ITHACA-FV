@@ -28,15 +28,11 @@
     surfaceScalarField rAUf("rAUf", fvc::interpolate(rAU));
     volVectorField HbyA(constrainHbyA(rAU * UEqn.H(), U, p_rgh));
 
-    surfaceScalarField phig(-rAUf* ghf * fvc::snGrad(rhok) * mesh.magSf());
+    surfaceScalarField phig(-rAUf * ghf * fvc::snGrad(rhok) * mesh.magSf());
 
-    surfaceScalarField phiHbyA
-    (
+    surfaceScalarField phiHbyA(
         "phiHbyA",
-        fvc::flux(HbyA)
-        + rAUf * fvc::ddtCorr(U, phi)
-        + phig
-    );
+        fvc::flux(HbyA) + rAUf * fvc::ddtCorr(U, phi) + phig);
 
     MRF.makeRelative(phiHbyA);
 
@@ -45,10 +41,8 @@
 
     while (pimple.correctNonOrthogonal())
     {
-        fvScalarMatrix p_rghEqn
-        (
-            fvm::laplacian(rAUf, p_rgh) == fvc::div(phiHbyA)
-        );
+        fvScalarMatrix p_rghEqn(
+            fvm::laplacian(rAUf, p_rgh) == fvc::div(phiHbyA));
         p_rghEqn.setReference(pRefCell, getRefCellValue(p_rgh, pRefCell));
         p_rghEqn.solve(mesh.solver(p_rgh.select(pimple.finalInnerIter())));
 
@@ -69,17 +63,12 @@
 
     p = p_rgh + rhok * gh;
 
-
     if (p_rgh.needReference())
     {
-        p += dimensionedScalar
-             (
-                 "p",
-                 p.dimensions(),
-                 pRefValue - getRefCellValue(p, pRefCell)
-             );
+        p += dimensionedScalar(
+            "p",
+            p.dimensions(),
+            pRefValue - getRefCellValue(p, pRefCell));
         p_rgh = p - rhok * gh;
     }
 }
-
-
