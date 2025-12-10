@@ -78,13 +78,8 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
 void UnsteadyBBTurb::truthSolve(List<scalar> mu_now, label nSample)
 {
     Time& runTime = _runTime();
-    instantList Times = runTime.times();
-    runTime.setEndTime(finalTime); // runTime.setTime(Times[1], 1);
-    runTime.setTime(startTime, 0);
-    runTime.setDeltaT(timeStep);
-    #include "createFields.H"
-    turbulence->validate();
     fvMesh& mesh = _mesh();
+    #include "initContinuityErrs.H"
     fv::options& fvOptions = _fvOptions();
     singlePhaseTransportModel& laminarTransport = _laminarTransport();
     volScalarField& p = _p();
@@ -103,7 +98,46 @@ void UnsteadyBBTurb::truthSolve(List<scalar> mu_now, label nSample)
     dimensionedScalar& TRef = _TRef();
     dimensionedScalar& Pr = _Pr();
     dimensionedScalar& Prt = _Prt();
+
+    instantList Times = runTime.times();
+    runTime.setEndTime(finalTime); // runTime.setTime(Times[1], 1);
+    runTime.setTime(startTime, 0);
+    runTime.setDeltaT(timeStep);
     
+    Info<< "Resetting fields to initial conditions from " << runTime.timeName() << endl;
+
+    if (mesh.foundObject<volScalarField>("k") && IOobject("k", runTime.timeName(), mesh).typeHeaderOk<volScalarField>(true))
+    {
+        Info << "Resetting k field to initial condition." << endl;
+        volScalarField k_new(IOobject("k", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE, false), mesh);
+        
+        // Lookup the field from the registry and cast away constness to modify it
+        volScalarField& k = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>("k"));
+        k = k_new;
+        k.correctBoundaryConditions();
+    }
+
+    // Reset omega: Check if it exists in mesh AND on disk
+    if (mesh.foundObject<volScalarField>("omega") && IOobject("omega", runTime.timeName(), mesh).typeHeaderOk<volScalarField>(true))
+    {
+        Info << "Resetting omega field to initial condition." << endl;
+        volScalarField omega_new(IOobject("omega", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE, false), mesh);
+        
+        // Lookup the field from the registry
+        volScalarField& omega = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>("omega"));
+        omega = omega_new;
+    }
+
+    // Reset nut: You already have a reference to 'nut' in this scope (from _nut())
+    if (IOobject("nut", runTime.timeName(), mesh).typeHeaderOk<volScalarField>(true))
+    {
+        Info << "Resetting nut field to initial condition." << endl;
+        volScalarField nut_new(IOobject("nut", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE, false), mesh);
+        
+        // Use the local reference 'nut' which refers to the field in the registry
+        nut = nut_new;
+    }
+
     nextWrite = startTime + writeEvery;
 
     if (timeSnapshots.size() != Tnumber)
@@ -165,9 +199,9 @@ void UnsteadyBBTurb::truthSolve(List<scalar> mu_now, label nSample)
 
 void UnsteadyBBTurb::truthSolve(fileName folder)
 {
-#include "initContinuityErrs.H"
     Time& runTime = _runTime();
     fvMesh& mesh = _mesh();
+    #include "initContinuityErrs.H"
     volScalarField& p = _p();
     volVectorField& U = _U();
     volScalarField& p_rgh = _p_rgh();
@@ -613,7 +647,6 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
     {
         meanA(i) = velDerCoeff[0].col(i).mean();
         stdA(i) = std::sqrt((velDerCoeff[0].col(i).array() - meanA(i)).square().sum() / (velDerCoeff[0].rows() - 1));
-        Info << "Velocity mode " << i << ": mean = " << meanA(i) << ", std = " << stdA(i) << endl;
         if (stdA(i) == 0)
         {
             stdA(i) = 1; // To avoid division by zero in case of constant mode
@@ -626,7 +659,6 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
     {
         meanG(i) = velDerCoeff[1].col(i).mean();
         stdG(i) = std::sqrt((velDerCoeff[1].col(i).array() - meanG(i)).square().sum() / (velDerCoeff[1].rows() - 1));
-        Info << "Eddy viscosity mode " << i << ": mean = " << meanG(i) << ", std = " << stdG(i) << endl;
         if (stdG(i) == 0)
         {
             stdG(i) = 1; // To avoid division by zero in case of constant mode
@@ -662,10 +694,13 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
 
             rbfSplines[i] = new SPLINTER::RBFSpline(*samples[i],
                 SPLINTER::RadialBasisFunctionType::GAUSSIAN, false, radii(i));
-            ITHACAstream::SaveDenseMatrix(rbfSplines[i]->weights,
-                "./ITHACAoutput/weightsRBF/", weightName);
-            ITHACAstream::exportMatrix(rbfSplines[i]->weights,
-                "weightsRBF", "python", "./ITHACAoutput/weightsRBF/");
+            if (Pstream::master())
+            {
+              ITHACAstream::SaveDenseMatrix(rbfSplines[i]->weights,
+                  "./ITHACAoutput/weightsRBF/", weightName);
+              ITHACAstream::exportMatrix(rbfSplines[i]->weights,
+                  "weightsRBF", "python", "./ITHACAoutput/weightsRBF/");
+            }
         }
     }
 }
@@ -674,28 +709,32 @@ List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(const Eigen::MatrixXd& 
     const Eigen::MatrixXd& G, const List<Eigen::VectorXd>& snapshotTimes)
 {
     // BUGGED/Incomplete: now this is coded assuming same number of snapshots for each parameter run...
+    // TODO: add the possibility to have different number of snapshots per parameter sample
+
     List<Eigen::MatrixXd> newCoeffs;
     newCoeffs.setSize(2);
     const label velCoeffsNum = A.cols();
     const label snapshotsNum = A.rows();
     const label parsSamplesNum = snapshotTimes.size();
 
-    const label timeSnapshotsPerSample = snapshotsNum / parsSamplesNum;
+    Eigen::VectorXi timeSnapshotsPerSampleVec(parsSamplesNum);
+    for (label i = 0; i < parsSamplesNum; i++)
+    {
+        timeSnapshotsPerSampleVec(i) = snapshotTimes[i].size();
+    }
     const label newColsNum = 2 * velCoeffsNum;
-    const label newRowsNum = parsSamplesNum * (timeSnapshotsPerSample - 1);
+    const label newRowsNum = timeSnapshotsPerSampleVec.sum() - 1 * parsSamplesNum;
     newCoeffs[0].resize(newRowsNum, newColsNum);
     newCoeffs[1].resize(newRowsNum, G.cols());
-
+    label outOffset = 0;
     for (label j = 0; j < parsSamplesNum; j++)
     {
         const Eigen::VectorXd& timeSnap = snapshotTimes[j];
         // Create shifted blocks to compute differences. Remember that
         // A has all the snapshots stacked for all parameter samples, with the column
         // indicating the different time-varying coefficients (a1, a2, ..., an)
-        label rowsPerBlock = timeSnapshotsPerSample - 1;
-        label blockStart = j * timeSnapshotsPerSample;
-        label outOffset = j * rowsPerBlock;
-
+        label rowsPerBlock = timeSnapshotsPerSampleVec(j) - 1;
+        label blockStart = timeSnapshotsPerSampleVec.head(j).sum();
         Eigen::MatrixXd b0 = A.middleRows(blockStart, rowsPerBlock);
         Eigen::MatrixXd b2 = A.middleRows(blockStart + 1, rowsPerBlock);
         Eigen::VectorXd deltaT = timeSnap.tail(rowsPerBlock) - timeSnap.head(rowsPerBlock);
@@ -713,36 +752,57 @@ List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(const Eigen::MatrixXd& 
 void UnsteadyBBTurb::splitEddyViscositySnapshots()
 {
     label nSamples = timeSnapshots.size();
-    for (label i = 0; i < nSamples; i++)
-    {
-        volScalarField tmpnutField(
-            IOobject(
-                "avgNut",
-                Nutfield[i * timeSnapshots[i].size()].time().timeName(),
-                Nutfield[i * timeSnapshots[i].size()].mesh(),
-                IOobject::NO_READ,
-                IOobject::NO_WRITE),
-            Nutfield[i * timeSnapshots[i].size()].mesh(),
-            dimensionedScalar("zero", Nutfield[i * timeSnapshots[i].size()].dimensions(), 0.0));
-        for (label j = 0; j < timeSnapshots[i].size(); j++)
-        {
-            tmpnutField += Nutfield[i * timeSnapshots[i].size() + j];
-        }
-        tmpnutField /= timeSnapshots[i].size();
-        avgNutfield.append(tmpnutField.clone());
-    }
-    fluctNutfield.setSize(0);
+    label globalIndex = 0;
+    avgNutfield.clear();
+    fluctNutfield.clear();
+
     for (label i = 0; i < nSamples; i++)
     {
         label nSnapshotPerSample = timeSnapshots[i].size();
-        for (label j = 0; j < nSnapshotPerSample; j++)
+        M_Assert(nSnapshotPerSample > 0,
+            "Each parameter sample must have at least one snapshot");
+        volScalarField* avgPtr = new volScalarField(
+          IOobject(
+                "avgNut",
+                Nutfield[globalIndex].time().timeName(),
+                Nutfield[globalIndex].mesh(),
+                IOobject::NO_READ,
+                IOobject::NO_WRITE),
+            Nutfield[globalIndex]
+          );
+        
+        for (label j = 1; j < nSnapshotPerSample; j++)
         {
-            volScalarField tmp = Nutfield[i * nSnapshotPerSample + j] - avgNutfield[i];
-            tmp.rename("fluctNut");
-            fluctNutfield.append(tmp.clone());
+            *avgPtr += Nutfield[globalIndex + j];
         }
+
+        *avgPtr /= scalar(nSnapshotPerSample);
+        avgNutfield.append(avgPtr);
+        globalIndex += nSnapshotPerSample;
+      }
+
+    label totalSnapshots = Nutfield.size();
+    fluctNutfield.setSize(totalSnapshots);
+
+    globalIndex = 0;
+    label flatIndex = 0;
+
+    for (label i = 0; i < nSamples; i++)
+    {
+       label nSnap = timeSnapshots[i].size();
+       const volScalarField& avgField = avgNutfield[i];
+
+       for (label j = 0; j < nSnap; j++)
+       {
+            tmp<volScalarField> tempFluct = Nutfield[globalIndex + j] - avgField;
+            tempFluct.ref().rename("fluctNut");
+            fluctNutfield.set(flatIndex, tempFluct.ptr());
+            flatIndex++;
+      }
+      globalIndex += nSnap;
     }
-    if (Pstream::master() && DEBUG_MODE)
+
+    if (DEBUG_MODE)
     {
         ITHACAutilities::createSymLink("./ITHACAoutput/Debug");
         ITHACAstream::exportFields(avgNutfield, "./ITHACAoutput/Debug/", "avgNutfield");
