@@ -559,13 +559,10 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
 
     if (exportFields)
     {
-        if (Pstream::master())
-        {
-            ITHACAstream::exportFields(uRecFields, folder, "uRec");
-            ITHACAstream::exportFields(TRecFields, folder, "TRec");
-            ITHACAstream::exportFields(nutFluctRecFields, folder, "nutFluctRec");
-            ITHACAstream::exportFields(nutRecFields, folder, "nutRec");
-        }
+        ITHACAstream::exportFields(uRecFields, folder, "uRec");
+        ITHACAstream::exportFields(TRecFields, folder, "TRec");
+        ITHACAstream::exportFields(nutFluctRecFields, folder, "nutFluctRec");
+        ITHACAstream::exportFields(nutRecFields, folder, "nutRec");
     }
     // TODO: Implement correct BC handling for shifted pressure reconstruction
     // prghRecFields = problem->P_rghmodes.reconstruct(prghRec, CoeffPrgh, "prghRec");

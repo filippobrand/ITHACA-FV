@@ -598,15 +598,6 @@ void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT
 // * * * * * * * * * * * * * * RBF Prep Methods * * * * * * * * * * * * * * //
 void UnsteadyBBTurb::offlineRBFInterpolation()
 {
-    if (ITHACAutilities::check_file("./radii.txt"))
-    {
-        radii = ITHACAstream::readMatrix("./radii.txt");
-        M_Assert(radii.size() == Nnutmodes,
-            "Thes size of the shape parameters vector must be equal to the number of eddy viscosity modes nNutModes");
-    } else
-    {
-        radii = Eigen::MatrixXd::Ones(Nnutmodes, 1) * radius;
-    }
     samples.resize(Nnutmodes);
     rbfSplines.resize(Nnutmodes);
     Eigen::MatrixXd weights;
@@ -669,6 +660,37 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
     ITHACAutilities::createSymLink("./ITHACAoutput/Debug");
     ITHACAstream::exportMatrix(velDerCoeff[0], "A_RBF", "python", "./ITHACAoutput/Debug/");
     ITHACAstream::exportMatrix(velDerCoeff[1], "G_RBF", "python", "./ITHACAoutput/Debug/");
+
+    // Guesstimation of the radius of the RBFs based on the average distance between points
+    if (ITHACAutilities::check_file("./radii.txt"))
+    {
+        radii = ITHACAstream::readMatrix("./radii.txt");
+        M_Assert(radii.size() == Nnutmodes,
+            "Thes size of the shape parameters vector must be equal to the number of eddy viscosity modes nNutModes");
+    } else
+    {
+        radii = Eigen::MatrixXd::Ones(Nnutmodes, 1) * radius;
+    }
+
+    for (label i = 0; i < Nnutmodes; i++)
+    {
+        double avgDist = 0.0;
+        for (label j = 0; j < velDerCoeff[0].rows(); j++)
+        {
+            for (label k = j + 1; k < velDerCoeff[0].rows(); k++)
+            {
+                avgDist += (velDerCoeff[0].row(j) - velDerCoeff[0].row(k)).norm();
+            }
+        }
+        avgDist /= (velDerCoeff[0].rows() * (velDerCoeff[0].rows() - 1) / 2.0);
+        radii(i) = avgDist;
+    }
+    Info << "RBF shape parameters (radii) estimated as: " << radii << endl;
+    if (Pstream::master())
+    {
+      ITHACAstream::SaveDenseMatrix(radii, "./ITHACAoutput/", "RBFradii");
+    }
+
     dimA = velDerCoeff[0].cols();
     // Interpolation of the eddy viscosity proceeds per-mode
     for (label i = 0; i < Nnutmodes; i++)

@@ -104,7 +104,7 @@ public:
     Eigen::VectorXd radii;
 
     /// RBF Function radius
-    double radius = 0.5;
+    double radius = 0.1;
 
     /// Vector with column means for normalization during RBF for matrix A
     Eigen::VectorXd meanA;
