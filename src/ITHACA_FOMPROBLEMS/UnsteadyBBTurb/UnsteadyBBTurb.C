@@ -79,7 +79,8 @@ void UnsteadyBBTurb::truthSolve(List<scalar> mu_now, label nSample)
 {
     Time& runTime = _runTime();
     fvMesh& mesh = _mesh();
-    #include "initContinuityErrs.H"
+    Info << "Created mesh and runTime references." << nl << endl;
+#include "initContinuityErrs.H"
     fv::options& fvOptions = _fvOptions();
     singlePhaseTransportModel& laminarTransport = _laminarTransport();
     volScalarField& p = _p();
@@ -99,54 +100,21 @@ void UnsteadyBBTurb::truthSolve(List<scalar> mu_now, label nSample)
     dimensionedScalar& Pr = _Pr();
     dimensionedScalar& Prt = _Prt();
 
+    // Here we handle the time settings. In other instances in ITHACA-FV,
+    // runTime.setTime() uses as argument (Times[1],0). Don't know the reason, ask for clarification.
     instantList Times = runTime.times();
-    runTime.setEndTime(finalTime); // runTime.setTime(Times[1], 1);
+    runTime.setEndTime(finalTime);
     runTime.setTime(startTime, 0);
     runTime.setDeltaT(timeStep);
-    
-    Info<< "Resetting fields to initial conditions from " << runTime.timeName() << endl;
-
-    if (mesh.foundObject<volScalarField>("k") && IOobject("k", runTime.timeName(), mesh).typeHeaderOk<volScalarField>(true))
-    {
-        Info << "Resetting k field to initial condition." << endl;
-        volScalarField k_new(IOobject("k", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE, false), mesh);
-        
-        // Lookup the field from the registry and cast away constness to modify it
-        volScalarField& k = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>("k"));
-        k = k_new;
-        k.correctBoundaryConditions();
-    }
-
-    // Reset omega: Check if it exists in mesh AND on disk
-    if (mesh.foundObject<volScalarField>("omega") && IOobject("omega", runTime.timeName(), mesh).typeHeaderOk<volScalarField>(true))
-    {
-        Info << "Resetting omega field to initial condition." << endl;
-        volScalarField omega_new(IOobject("omega", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE, false), mesh);
-        
-        // Lookup the field from the registry
-        volScalarField& omega = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>("omega"));
-        omega = omega_new;
-    }
-
-    // Reset nut: You already have a reference to 'nut' in this scope (from _nut())
-    if (IOobject("nut", runTime.timeName(), mesh).typeHeaderOk<volScalarField>(true))
-    {
-        Info << "Resetting nut field to initial condition." << endl;
-        volScalarField nut_new(IOobject("nut", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE, false), mesh);
-        
-        // Use the local reference 'nut' which refers to the field in the registry
-        nut = nut_new;
-    }
 
     nextWrite = startTime + writeEvery;
+    label nSavedTimesteps = (finalTime - startTime) / writeEvery;
+    M_Assert(timeSnapshots.size() > nSample,
+        "The timeSnapshots list does not have enough space for the current sample index.");
+    timeSnapshots[nSample].resize(nSavedTimesteps);
+    label stepCounter = 0;
 
-    if (timeSnapshots.size() != Tnumber)
-    {
-        timeSnapshots.setSize(Tnumber);
-        for (int ii = 0; ii < Tnumber; ++ii)
-            timeSnapshots[ii].resize(0);
-    }
-
+    Info << "Starting time loop." << nl << endl;
     while (runTime.run())
     {
 #include "readTimeControls.H"
@@ -181,10 +149,9 @@ void UnsteadyBBTurb::truthSolve(List<scalar> mu_now, label nSample)
             ITHACAstream::exportSolution(T, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(nut, name(counter), "./ITHACAoutput/Offline/");
             std::ofstream of("./ITHACAoutput/Offline/" + name(counter) + "/" + runTime.timeName());
-            // Fill the correct vector entry of the list timeSnapshots (List<Eigen::VectorXd>)
-            Eigen::Index oldSize = timeSnapshots[nSample].size();
-            timeSnapshots[nSample].conservativeResize(oldSize + 1);
-            timeSnapshots[nSample](oldSize) = runTime.value();
+
+            timeSnapshots[nSample](stepCounter) = runTime.value();
+            stepCounter++;
 
             Ufield.append(U.clone());
             Prghfield.append(p_rgh.clone());
@@ -201,7 +168,9 @@ void UnsteadyBBTurb::truthSolve(fileName folder)
 {
     Time& runTime = _runTime();
     fvMesh& mesh = _mesh();
-    #include "initContinuityErrs.H"
+#include "initContinuityErrs.H"
+    fv::options& fvOptions = _fvOptions();
+    singlePhaseTransportModel& laminarTransport = _laminarTransport();
     volScalarField& p = _p();
     volVectorField& U = _U();
     volScalarField& p_rgh = _p_rgh();
@@ -212,43 +181,32 @@ void UnsteadyBBTurb::truthSolve(fileName folder)
     volScalarField& gh = _gh();
     surfaceScalarField& ghf = _ghf();
     surfaceScalarField& phi = _phi();
-    fv::options& fvOptions = _fvOptions();
     pimpleControl& pimple = _pimple();
     IOMRFZoneList& MRF = _MRF();
-    singlePhaseTransportModel& laminarTransport = _laminarTransport();
     dimensionedScalar& beta = _beta();
     dimensionedScalar& TRef = _TRef();
     dimensionedScalar& Pr = _Pr();
     dimensionedScalar& Prt = _Prt();
+
     instantList Times = runTime.times();
     runTime.setEndTime(finalTime);
-    runTime.setTime(Times[1], 1);
+    runTime.setTime(startTime, 0);
     runTime.setDeltaT(timeStep);
-    nextWrite = startTime;
-    // Save initial condition
-    ITHACAstream::exportSolution(U, name(counter), folder);
-    ITHACAstream::exportSolution(p, name(counter), folder);
-    ITHACAstream::exportSolution(T, name(counter), folder);
-    ITHACAstream::exportSolution(p_rgh, name(counter), folder);
-    ITHACAstream::exportSolution(nut, name(counter), folder);
-    std::ofstream of(folder + name(counter) + "/" + runTime.timeName());
-    counter++;
-    nextWrite += writeEvery;
 
-    // Start the time loop
+    nextWrite = startTime + writeEvery;
+
     while (runTime.run())
     {
 #include "readTimeControls.H"
 #include "CourantNo.H"
 #include "setDeltaT.H"
-        runTime.setEndTime(finalTime + timeStep);
+        runTime++;
+        // runTime.setEndTime(finalTime + timeStep);
         Info << "Time = " << runTime.timeName() << nl << endl;
-        // --- Pressure-velocity PIMPLE corrector loop
         while (pimple.loop())
         {
 #include "UEqn.H"
 #include "TEqn.H"
-            // --- Pressure corrector loop
             while (pimple.correct())
             {
 #include "pEqn.H"
@@ -262,20 +220,23 @@ void UnsteadyBBTurb::truthSolve(fileName folder)
         Info << "ExecutionTime = " << runTime.elapsedCpuTime() << " s"
              << "  ClockTime = " << runTime.elapsedClockTime() << " s"
              << nl << endl;
-
         if (checkWrite(runTime))
         {
             nut = turbulence->nut();
             ITHACAstream::exportSolution(U, name(counter), folder);
             ITHACAstream::exportSolution(p, name(counter), folder);
-            ITHACAstream::exportSolution(T, name(counter), folder);
             ITHACAstream::exportSolution(p_rgh, name(counter), folder);
+            ITHACAstream::exportSolution(T, name(counter), folder);
             ITHACAstream::exportSolution(nut, name(counter), folder);
-            std::ofstream of(folder + name(counter) + "/" + runTime.timeName());
-            counter++;
+            std::ofstream of(folder + "/" + name(counter) + "/" + runTime.timeName());
+
+            Ufield.append(U.clone());
+            Prghfield.append(p_rgh.clone());
+            Tfield.append(T.clone());
+            Nutfield.append(nut.clone());
             nextWrite += writeEvery;
+            counter++;
         }
-        runTime++;
     }
 }
 
@@ -372,7 +333,7 @@ void UnsteadyBBTurb::solvesupremizer(word type)
 // * * * * * * * * * * * * * * Projection Methods * * * * * * * * * * * * * * //
 
 void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT,
-    label NSUP, label Nnut)
+    label NSUP, label Nnut, float RBFShapeParameter)
 {
     NUmodes = NU;
     NTmodes = NT;
@@ -592,17 +553,20 @@ void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT
     C_total_ave_tensor = CT1_ave_tensor + CT2_ave_tensor;
 
     Info << "Completed the matrix computation. Now starting the RBF interpolation" << endl;
-    offlineRBFInterpolation();
+    if (Pstream::master())
+    {
+        offlineRBFInterpolation(float (RBFShapeParameter));
+    }
 }
 
 // * * * * * * * * * * * * * * RBF Prep Methods * * * * * * * * * * * * * * //
-void UnsteadyBBTurb::offlineRBFInterpolation()
+void UnsteadyBBTurb::offlineRBFInterpolation(float RBFshapeParam)
 {
     samples.resize(Nnutmodes);
     rbfSplines.resize(Nnutmodes);
     Eigen::MatrixXd weights;
     Eigen::MatrixXd coeffL2nut = ITHACAutilities::getCoeffs(fluctNutfield, nutmodes, Nnutmodes);
-    Eigen::MatrixXd coeffL2vel = ITHACAutilities::getCoeffs(Uomfield, L_U_SUPmodes, NUmodes); // Returns a [modes x snapshots]
+    Eigen::MatrixXd coeffL2vel = ITHACAutilities::getCoeffs(Uomfield, L_U_SUPmodes, NUmodes + liftfield.size()); // Returns a [modes x snapshots]
     // Substitute the BC rows with the appropriate values when using lifting approach
     if (liftfield.size() > 0)
     {
@@ -657,38 +621,44 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
         velDerCoeff[1].col(i) = (velDerCoeff[1].col(i).array() - meanG(i)) / stdG(i);
     }
 
-    ITHACAutilities::createSymLink("./ITHACAoutput/Debug");
-    ITHACAstream::exportMatrix(velDerCoeff[0], "A_RBF", "python", "./ITHACAoutput/Debug/");
-    ITHACAstream::exportMatrix(velDerCoeff[1], "G_RBF", "python", "./ITHACAoutput/Debug/");
-
-    // Guesstimation of the radius of the RBFs based on the average distance between points
-    if (ITHACAutilities::check_file("./radii.txt"))
+    if (Pstream::master())
     {
-        radii = ITHACAstream::readMatrix("./radii.txt");
-        M_Assert(radii.size() == Nnutmodes,
+        ITHACAutilities::createSymLink("./ITHACAoutput/Debug");
+        ITHACAstream::exportMatrix(velDerCoeff[0], "A_RBF", "python", "./ITHACAoutput/Debug/");
+        ITHACAstream::exportMatrix(velDerCoeff[1], "G_RBF", "python", "./ITHACAoutput/Debug/");
+    }
+
+    // Guesstimation of the shapeParam of the RBFs based on the average distance between points
+    if (ITHACAutilities::check_file("./ITHACAoutput/shapeParameters.txt"))
+    {
+        shapeParameters = ITHACAstream::readMatrix("./ITHACAoutput/shapeParameters.txt");
+        M_Assert(shapeParameters.size() == Nnutmodes,
             "Thes size of the shape parameters vector must be equal to the number of eddy viscosity modes nNutModes");
     } else
     {
-        radii = Eigen::MatrixXd::Ones(Nnutmodes, 1) * radius;
+        shapeParameters = Eigen::MatrixXd::Ones(Nnutmodes, 1) * RBFshapeParam;
     }
 
-    for (label i = 0; i < Nnutmodes; i++)
+    if (estimateShapeParam)
     {
-        double avgDist = 0.0;
-        for (label j = 0; j < velDerCoeff[0].rows(); j++)
+        for (label i = 0; i < Nnutmodes; i++)
         {
-            for (label k = j + 1; k < velDerCoeff[0].rows(); k++)
+            double avgDist = 0.0;
+            for (label j = 0; j < velDerCoeff[0].rows(); j++)
             {
-                avgDist += (velDerCoeff[0].row(j) - velDerCoeff[0].row(k)).norm();
+                for (label k = j + 1; k < velDerCoeff[0].rows(); k++)
+                {
+                    avgDist += (velDerCoeff[0].row(j) - velDerCoeff[0].row(k)).norm();
+                }
             }
+            avgDist /= (velDerCoeff[0].rows() * (velDerCoeff[0].rows() - 1) / 2.0);
+            shapeParameters(i) = avgDist;
         }
-        avgDist /= (velDerCoeff[0].rows() * (velDerCoeff[0].rows() - 1) / 2.0);
-        radii(i) = avgDist;
-    }
-    Info << "RBF shape parameters (radii) estimated as: " << radii << endl;
-    if (Pstream::master())
-    {
-      ITHACAstream::SaveDenseMatrix(radii, "./ITHACAoutput/", "RBFradii");
+        Info << "RBF shape parameters (shapeParameters) estimated as: " << shapeParameters << endl;
+        if (Pstream::master())
+        {
+            ITHACAstream::SaveDenseMatrix(shapeParameters, "./ITHACAoutput/", "RBFshapeParameters");
+        }
     }
 
     dimA = velDerCoeff[0].cols();
@@ -705,7 +675,7 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
             }
             ITHACAstream::ReadDenseMatrix(weights, "./ITHACAoutput/weightsRBF/", weightName);
             rbfSplines[i] = new SPLINTER::RBFSpline(*samples[i],
-                SPLINTER::RadialBasisFunctionType::GAUSSIAN, weights, radii(i));
+                SPLINTER::RadialBasisFunctionType::GAUSSIAN, weights, shapeParameters(i));
         } else
         {
             samples[i] = new SPLINTER::DataTable(1, 1);
@@ -715,13 +685,13 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
             }
 
             rbfSplines[i] = new SPLINTER::RBFSpline(*samples[i],
-                SPLINTER::RadialBasisFunctionType::GAUSSIAN, false, radii(i));
+                SPLINTER::RadialBasisFunctionType::GAUSSIAN, false, shapeParameters(i));
             if (Pstream::master())
             {
-              ITHACAstream::SaveDenseMatrix(rbfSplines[i]->weights,
-                  "./ITHACAoutput/weightsRBF/", weightName);
-              ITHACAstream::exportMatrix(rbfSplines[i]->weights,
-                  "weightsRBF", "python", "./ITHACAoutput/weightsRBF/");
+                ITHACAstream::SaveDenseMatrix(rbfSplines[i]->weights,
+                    "./ITHACAoutput/weightsRBF/", weightName);
+                ITHACAstream::exportMatrix(rbfSplines[i]->weights,
+                    "weightsRBF", "python", "./ITHACAoutput/weightsRBF/");
             }
         }
     }
@@ -730,9 +700,6 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
 List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(const Eigen::MatrixXd& A,
     const Eigen::MatrixXd& G, const List<Eigen::VectorXd>& snapshotTimes)
 {
-    // BUGGED/Incomplete: now this is coded assuming same number of snapshots for each parameter run...
-    // TODO: add the possibility to have different number of snapshots per parameter sample
-
     List<Eigen::MatrixXd> newCoeffs;
     newCoeffs.setSize(2);
     const label velCoeffsNum = A.cols();
@@ -781,27 +748,28 @@ void UnsteadyBBTurb::splitEddyViscositySnapshots()
     for (label i = 0; i < nSamples; i++)
     {
         label nSnapshotPerSample = timeSnapshots[i].size();
+        Info << "Processing sample " << i + 1 << " with " << nSnapshotPerSample << " snapshots." << endl;
         M_Assert(nSnapshotPerSample > 0,
             "Each parameter sample must have at least one snapshot");
-        volScalarField* avgPtr = new volScalarField(
-          IOobject(
-                "avgNut",
-                Nutfield[globalIndex].time().timeName(),
-                Nutfield[globalIndex].mesh(),
-                IOobject::NO_READ,
-                IOobject::NO_WRITE),
-            Nutfield[globalIndex]
-          );
-        
+        autoPtr<volScalarField> avgPtr(
+            new volScalarField(
+                IOobject(
+                    "avgNut",
+                    Nutfield[globalIndex].time().timeName(),
+                    Nutfield[globalIndex].mesh(),
+                    IOobject::NO_READ,
+                    IOobject::NO_WRITE),
+                Nutfield[globalIndex]));
+
         for (label j = 1; j < nSnapshotPerSample; j++)
         {
-            *avgPtr += Nutfield[globalIndex + j];
+            avgPtr() += Nutfield[globalIndex + j];
         }
 
-        *avgPtr /= scalar(nSnapshotPerSample);
+        avgPtr() /= scalar(nSnapshotPerSample);
         avgNutfield.append(avgPtr);
         globalIndex += nSnapshotPerSample;
-      }
+    }
 
     label totalSnapshots = Nutfield.size();
     fluctNutfield.setSize(totalSnapshots);
@@ -811,17 +779,17 @@ void UnsteadyBBTurb::splitEddyViscositySnapshots()
 
     for (label i = 0; i < nSamples; i++)
     {
-       label nSnap = timeSnapshots[i].size();
-       const volScalarField& avgField = avgNutfield[i];
+        label nSnap = timeSnapshots[i].size();
+        const volScalarField& avgField = avgNutfield[i];
 
-       for (label j = 0; j < nSnap; j++)
-       {
+        for (label j = 0; j < nSnap; j++)
+        {
             tmp<volScalarField> tempFluct = Nutfield[globalIndex + j] - avgField;
             tempFluct.ref().rename("fluctNut");
             fluctNutfield.set(flatIndex, tempFluct.ptr());
             flatIndex++;
-      }
-      globalIndex += nSnap;
+        }
+        globalIndex += nSnap;
     }
 
     if (DEBUG_MODE)
@@ -1231,4 +1199,75 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::convective_tensor_temperature(label NU,
                 name(NSUP) + "_" + name(liftfieldT.size()) + "_" + name(NT) + "_t");
     }
     return Q_tensor;
+}
+
+// * * * * * * * * * * * * * * Restart Methods * * * * * * * * * * * * * //
+
+void UnsteadyBBTurb::restart()
+{
+    Time& runTime = _runTime();
+    fvMesh& mesh = _mesh();
+    runTime.setTime(0, 0);
+
+    // Read transportProperties dictionary
+    IOdictionary transportProperties(
+        IOobject(
+            "transportProperties",
+            runTime.constant(),
+            mesh,
+            IOobject::MUST_READ_IF_MODIFIED,
+            IOobject::NO_WRITE));
+
+    // Update constants
+    _nu() = dimensionedScalar("nu", dimViscosity, transportProperties.lookup("nu"));
+    _Pr() = dimensionedScalar("Pr", dimless, transportProperties.lookup("Pr"));
+    _Prt() = dimensionedScalar("Prt", dimless, transportProperties.lookup("Prt"));
+    _beta() = dimensionedScalar("beta", dimless / dimTemperature, transportProperties.lookup("beta"));
+    _TRef() = dimensionedScalar("TRef", dimTemperature, transportProperties.lookup("TRef"));
+
+    // Now we reset the fields, reading from disk (OpenFOAM folders)
+    volVectorField U_new(IOobject("U", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE), mesh);
+    _U() = U_new;
+    // _U().correctBoundaryConditions();
+
+    volScalarField T_new(IOobject("T", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE), mesh);
+    _T() = T_new;
+    // _T().correctBoundaryConditions();
+
+    volScalarField p_rgh_new(IOobject("p_rgh", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE), mesh);
+    _p_rgh() = p_rgh_new;
+    // _p_rgh().correctBoundaryConditions();
+
+    volScalarField nut_new(IOobject("nut", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE), mesh);
+    _nut() = nut_new;
+    // _nut().correctBoundaryConditions();
+
+    volScalarField alphat_new(IOobject("alphat", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE), mesh);
+    _alphat() = alphat_new;
+    // _alphat().correctBoundaryConditions();
+
+    volScalarField UliftBC_new(IOobject("UliftBC", runTime.timeName(), mesh, IOobject::MUST_READ, IOobject::NO_WRITE), mesh);
+    _UliftBC() = UliftBC_new;
+
+    _phi() = linearInterpolate(_U()) & mesh.Sf();
+    _rhok() = 1.0 - _beta() * (_T() - _TRef());
+
+    _laminarTransport.clear();
+    _laminarTransport = autoPtr<singlePhaseTransportModel>(new singlePhaseTransportModel(_U(), _phi()));
+    turbulence.clear();
+    turbulence = autoPtr<incompressible::turbulenceModel>(incompressible::turbulenceModel::New(_U(), _phi(), _laminarTransport()));
+    turbulence->validate();
+
+    _p() = _p_rgh() + _rhok() * _gh();
+
+    // Fix p reference
+    pimpleControl& pimple = _pimple();
+    setRefCell(_p(), _p_rgh(), pimple.dict(), pRefCell, pRefValue);
+    if (_p_rgh().needReference())
+    {
+        _p() += dimensionedScalar("p", _p().dimensions(), pRefValue - getRefCellValue(_p(), pRefCell));
+    }
+    mesh.setFluxRequired(_p_rgh().name());
+    Info << "Restart complete." << endl;
+    // UPstream::barrier(UPstream::worldComm);
 }

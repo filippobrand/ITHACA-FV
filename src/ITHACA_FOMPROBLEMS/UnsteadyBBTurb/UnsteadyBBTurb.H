@@ -101,10 +101,10 @@ public:
     std::vector<SPLINTER::RBFSpline*> rbfSplines;
 
     /// RBF shape parameters vector
-    Eigen::VectorXd radii;
+    Eigen::VectorXd shapeParameters;
 
-    /// RBF Function radius
-    double radius = 0.1;
+    /// Default RBF shape parameter
+    double shapeParam = 0.005;
 
     /// Vector with column means for normalization during RBF for matrix A
     Eigen::VectorXd meanA;
@@ -117,6 +117,9 @@ public:
 
     /// Vector with column std for normalization during RBF for matrix G
     Eigen::VectorXd stdG;
+
+    /// Bool to enable/disable automatic radius estimation
+    bool estimateShapeParam = false;
 
     /// Create a Eigen vector with the time instant for each snapshot
     List<Eigen::VectorXd> timeSnapshots;
@@ -175,6 +178,12 @@ public:
     /// Turbulent thermal diffusivity
     autoPtr<volScalarField> _alphat;
 
+    /// List of pointers for the online validation of the eddy viscosity solution
+    PtrList<volScalarField> nutfield_on;
+
+    /// List of pointers for the online validation of the shifted pressure solution
+    PtrList<volScalarField> Prghfield_on;
+
     /// bool for debug mode
     bool DEBUG_MODE = false;
 
@@ -202,7 +211,7 @@ public:
     /// @param[in]  NPrgh    The number of pressure modes.
     /// @param[in]  NSUP  The number of supremizer modes.
     ///
-    void projectSUP(fileName folder, label NU, label NPrgh, label NT, label NSUP, label Nnut);
+    void projectSUP(fileName folder, label NU, label NPrgh, label NT, label NSUP, label Nnut, float RBFShapeParameter);
 
     //--------------------------------------------------------------------------
     /// Gradient of pressure
@@ -367,7 +376,12 @@ public:
     //--------------------------------------------------------------------------
     /// @brief     Carries out the RBF interpolation
     ///
-    void offlineRBFInterpolation();
+    void offlineRBFInterpolation(float RBFshapeParam);
+
+    //--------------------------------------------------------------------------
+    /// @brief      Resets the fields after a truthSolve, reading from disk
+    ///
+    void restart();
 
     //--------------------------------------------------------------------------
     /// @brief     Debugging tool to print the dimension of a given Eigen::MatrixXd
