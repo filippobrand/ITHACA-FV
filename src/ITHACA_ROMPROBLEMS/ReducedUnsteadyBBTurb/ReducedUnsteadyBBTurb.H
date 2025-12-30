@@ -227,8 +227,8 @@ public:
     /// @param[in]  startSnap The first snapshot taken from the offline snapshots
     /// and used to get the reduced initial condition default = 0.
     ///
-    void solveOnline_sup(Eigen::MatrixXd& temp_now_BC,
-        Eigen::MatrixXd& vel_now_BC, int NParaSet = 0, int startSnap = 0);
+    void solveOnline_sup(const Eigen::Ref<const Eigen::RowVectorXd>& temp_now_BC,
+        const Eigen::Ref<const Eigen::RowVectorXd>& vel_now_BC, int NParaSet = 0, int startSnap = 0);
 
     /// @brief    Method to reconstruct a solution from an online solve
     ///
@@ -242,6 +242,18 @@ public:
     /// @param[in]  mu_now   The vector of the online parameter
     ///
     Eigen::VectorXd interpolateIDW();
+
+    /// @brief    Method to set the time setting for the online solution
+    ///
+    /// @param[in]  timeMatrix  The matrix containing the time settings, with the following columns:
+    ///                         Column 1: initial time
+    ///                         Column 2: final time
+    ///                         Column 3: time step
+    ///                         Column 4: exportEvery
+    ///                         Column 5: storeEvery
+    /// @param[in]  solutionCounter  The counter of the current online solution, used to index the time settings
+    ///
+    void setTimeSettings(const Eigen::MatrixXd& timeMatrix, label solutionCounter);
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

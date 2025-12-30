@@ -256,8 +256,8 @@ int newton_unsteadyBBTurb_PPE::df(const Eigen::VectorXd& x,
 }
 
 // * * * * * * * * * * * * * * * Solve Functions  * * * * * * * * * * * * * //
-void ReducedUnsteadyBBTurb::solveOnline_sup(Eigen::MatrixXd& temp_now_BC,
-    Eigen::MatrixXd& vel_now_BC, int NParaSet, int startSnap)
+void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::Ref<const Eigen::RowVectorXd>& temp_now_BC,
+    const Eigen::Ref<const Eigen::RowVectorXd>& vel_now_BC, int NParaSet, int startSnap)
 {
     Info << "Starting the online solve with supremizer stabilisation method."
          << "\nThe following time settings are used:"
@@ -280,8 +280,8 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(Eigen::MatrixXd& temp_now_BC,
     M_Assert(ITHACAutilities::isInteger(exportEvery / storeEvery) == true,
         "The variable exportEvery must be an integer multiple of the variable storeEvery.");
 
-    std::cout << "################## Online solve N° " << NParaSet << " ##################" << std::endl;
-    std::cout << "Solving for the temperature parameter: " << temp_now_BC << std::endl;
+    Info << "################## Online solve N° " << NParaSet << " ##################" << endl;
+    // Info << "Solving for the temperature parameter: " << temp_now_BC << endl;
 
     y.resize(Nphi_u + Nphi_prgh + Nphi_t, 1); // Solution vector
     y.setZero();
@@ -293,7 +293,7 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(Eigen::MatrixXd& temp_now_BC,
         {
             if (j == problem->inletIndexT(i, 0))
             {
-                T_IC.boundaryFieldRef()[problem->inletIndexT(i, 0)][j] = temp_now_BC(i, 0);
+                T_IC.boundaryFieldRef()[problem->inletIndexT(i, 0)][j] = temp_now_BC(i);
             } else
             {
             }
@@ -310,12 +310,12 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(Eigen::MatrixXd& temp_now_BC,
     // Change initial condition for the lifting function
     for (int i = 0; i < N_BC; i++)
     {
-        y(i) = vel_now_BC(i, 0);
+        y(i) = vel_now_BC(i);
     }
     for (int i = 0; i < N_BC_t; i++)
     {
         int k = i + Nphi_prgh + Nphi_u;
-        y(k) = temp_now_BC(i, 0);
+        y(k) = temp_now_BC(i);
     }
 
     nut0 = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
@@ -343,11 +343,11 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(Eigen::MatrixXd& temp_now_BC,
 
     for (int j = 0; j < N_BC; j++) // Velocity BC
     {
-        newton_object_sup.BC(j) = vel_now_BC(j, 0);
+        newton_object_sup.BC(j) = vel_now_BC(j);
     }
     for (int j = 0; j < N_BC_t; j++) // Temperature BC
     {
-        newton_object_sup.BC_t(j) = temp_now_BC(j, 0);
+        newton_object_sup.BC_t(j) = temp_now_BC(j);
     }
 
     // Set number of online solutions - Time related
@@ -399,7 +399,7 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(Eigen::MatrixXd& temp_now_BC,
         aDer.setZero();
         aDer = (y.head(Nphi_u) - newton_object_sup.y_old.head(Nphi_u)) / dt;
         tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
-        // Now we should normalize each tv entry with the eigen::vectorXd problem->meanA and problem->stdA
+        // Now normalize each tv entry with the eigen::vectorXd problem->meanA and problem->stdA
         for (int i = 0; i < dimA; i++)
         {
             tv(i) = (tv(i) - problem->meanA(i)) / problem->stdA(i);
@@ -414,12 +414,12 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(Eigen::MatrixXd& temp_now_BC,
 
         for (int j = 0; j < N_BC; j++)
         {
-            y(j) = vel_now_BC(j, 0);
+            y(j) = vel_now_BC(j);
         }
         for (int j = 0; j < N_BC_t; j++)
         {
             int k = j + Nphi_prgh + Nphi_u;
-            y(k) = temp_now_BC(j, 0);
+            y(k) = temp_now_BC(j);
         }
 
         newton_object_sup.operator()(y, res);
@@ -554,7 +554,6 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
     forAll(nutFluctRecFields, i)
     {
         nutRecFields.append(nutFluctRecFields[i] + nutAvg);
-        // nutRec += nutFluctRecFields[i] + nutAvg;
     }
 
     if (exportFields)
@@ -598,4 +597,13 @@ Eigen::VectorXd ReducedUnsteadyBBTurb::interpolateIDW()
     return interpolatedNutCoeffs;
 }
 
+// * * * * * * * * *  Inverse Distance Weighting Functions  * * * * * * * * //
+void ReducedUnsteadyBBTurb::setTimeSettings(const Eigen::MatrixXd& timeMatrix, label solutionCounter)
+{
+    tstart = timeMatrix(solutionCounter, 0);
+    finalTime = timeMatrix(solutionCounter, 1);
+    dt = timeMatrix(solutionCounter, 2);
+    storeEvery = timeMatrix(solutionCounter, 3);
+    exportEvery = timeMatrix(solutionCounter, 4);
+}
 // ************************************************************************ //
