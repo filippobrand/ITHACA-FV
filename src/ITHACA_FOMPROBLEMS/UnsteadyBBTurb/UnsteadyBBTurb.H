@@ -70,7 +70,8 @@ public:
     // Lifted BC matrix. [NsampleRun x NBoundaryPatches]. Holds the values of the lifted BCs for each sample and each boundary patch
     Eigen::MatrixXd liftBCMatrix;
 
-    // Shifted pressure modes
+    // Shifted pressure modes - weird naming problems occur if we use Prghmodes, clashing with BBUnsteady, which has a PtrList<volScalarField>. Ideally 
+    // I would change to correct data type in UnsteadyBB (change to volScalarModes), but this requires more extensive changes.
     volScalarModes P_rghmodes;
 
     // Temperature modes
@@ -78,6 +79,15 @@ public:
 
     // Eddy viscosity modes
     volScalarModes nutmodes;
+
+    // Source term modes - Not implemented yet
+    // volScalarModes Sourcemodes;
+
+    // Source term snapshots - Not implemented yet
+    // PtrList<volScalarField> Sourcefield;
+
+    /// Number of modes used for the source term - Not implemented yet
+    // label Nsourcemodes;
 
     /// List of snapshots for the solution for eddy viscosity
     PtrList<volScalarField> Nutfield;
@@ -163,6 +173,12 @@ public:
     Eigen::MatrixXd B_total_matrix;
     ///@}
 
+    /// BC Matrix for the temperature -- Used for the penalty method
+    List<Eigen::MatrixXd> bcTempVec;
+
+    /// BC List of Matrices for the temperature -- Used for the penalty method
+    List<Eigen::MatrixXd> bcTempMat;
+
     /// Eddy viscosity field
     autoPtr<volScalarField> _nut;
 
@@ -183,6 +199,9 @@ public:
 
     /// List of pointers for the online validation of the shifted pressure solution
     PtrList<volScalarField> Prghfield_on;
+
+    /// Number of velocity coefficient to skip in the RBF interpolation during the offline phase
+    label skipRBFIndex = 0;
 
     /// bool for debug mode
     bool DEBUG_MODE = false;
@@ -379,9 +398,21 @@ public:
     void offlineRBFInterpolation(float RBFshapeParam);
 
     //--------------------------------------------------------------------------
-    /// @brief      Resets the fields after a truthSolve, reading from disk
+    /// @brief      Resets the fields after a truthSolve, reading from disk the initial conditions.
     ///
     void restart();
+
+    //--------------------------------------------------------------------------
+    /// @brief      Prepares the BC matrices for the penalty method for the temperature equation
+    ///
+    /// @param[in]  NTmodes    The number of temperature modes.
+    List<Eigen::MatrixXd> bcTemperatureVec(label NTmodes);
+
+    //--------------------------------------------------------------------------
+    /// @brief      Prepares the BC matrices for the penalty method for the temperature equation
+    ///
+    /// @param[in]  NTmodes    The number of temperature modes.
+    List<Eigen::MatrixXd> bcTemperatureMat(label NTmodes);
 
     //--------------------------------------------------------------------------
     /// @brief     Debugging tool to print the dimension of a given Eigen::MatrixXd

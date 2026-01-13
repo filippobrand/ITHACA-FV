@@ -31,6 +31,8 @@
         fvm::ddt(T)
         + fvm::div(phi, T)
         - fvm::laplacian(alphaEff, T)
+        // ==
+        // Sourceterm
     );
 
     TEqn.relax();

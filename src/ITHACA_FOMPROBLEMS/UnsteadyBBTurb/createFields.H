@@ -237,6 +237,17 @@ _p = autoPtr<volScalarField>(
         p_rgh + rhok * gh));
 volScalarField& p = _p();
 
+// Temperature equation source term
+// _Sourceterm = autoPtr<volScalarField>(
+//     new volScalarField(
+//         IOobject(
+//             "Sourceterm",
+//             runTime.timeName(),
+//             mesh,
+//             IOobject::MUST_READ,
+//             IOobject::AUTO_WRITE),
+//         mesh));
+// volScalarField& Sourceterm = _Sourceterm();
 
 pRefCell = 0;
 pRefValue = 0.0;
