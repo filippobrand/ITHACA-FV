@@ -52,44 +52,45 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     Nphi_t = problem->Y_matrix.rows();
     Nphi_nut = problem->C_total_tensor.dimension(1);
     dimA = problem->dimA;
-
-    // Create locally the velocity modes, with lifting and supremizer
-    for (int k = 0; k < problem->liftfield.size(); k++)
-    {
-        LUmodes.append((problem->liftfield[k]).clone());
-    }
-
-    for (int k = 0; k < problem->NUmodes; k++)
-    {
-        LUmodes.append((problem->Umodes[k]).clone());
-    }
-
-    for (int k = 0; k < problem->NSUPmodes; k++)
-    {
-        LUmodes.append((problem->supmodes[k]).clone());
-    }
-
-    // Create locally the Prgh modes
-    for (int k = 0; k < problem->NPrghmodes; k++)
-    {
-        Prghmodes.append((problem->P_rghmodes[k]).clone());
-    }
-
-    // Create locally the temperature modes including BC with liftfield
-    for (int k = 0; k < problem->liftfieldT.size(); k++)
-    {
-        LTmodes.append((problem->liftfieldT[k]).clone());
-    }
-
-    for (int k = 0; k < problem->NTmodes; k++)
-    {
-        LTmodes.append((problem->Tmodes[k]).clone());
-    }
-
     newton_object_sup = newton_unsteadyBBTurb_sup(Nphi_u + Nphi_prgh + Nphi_t,
-        Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
+    Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
     newton_object_PPE = newton_unsteadyBBTurb_PPE(Nphi_u + Nphi_prgh + Nphi_t,
-        Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
+    Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
+
+    // Create locally the velocity modes, with lifting and supremizer. Now it's commented
+    // but maybe this could be useful so that the FOM problem can be deleted to free memory.
+
+    // for (int k = 0; k < problem->liftfield.size(); k++)
+    // {
+    //     LUmodes.append((problem->liftfield[k]).clone());
+    // }
+
+    // for (int k = 0; k < problem->NUmodes; k++)
+    // {
+    //     LUmodes.append((problem->Umodes[k]).clone());
+    // }
+
+    // for (int k = 0; k < problem->NSUPmodes; k++)
+    // {
+    //     LUmodes.append((problem->supmodes[k]).clone());
+    // }
+
+    // // Create locally the Prgh modes - Probably unnecessary
+    // for (int k = 0; k < problem->NPrghmodes; k++)
+    // {
+    //     Prghmodes.append((problem->P_rghmodes[k]).clone());
+    // }
+
+    // // Create locally the temperature modes including BC with liftfield
+    // for (int k = 0; k < problem->liftfieldT.size(); k++)
+    // {
+    //     LTmodes.append((problem->liftfieldT[k]).clone());
+    // }
+
+    // for (int k = 0; k < problem->NTmodes; k++)
+    // {
+    //     LTmodes.append((problem->Tmodes[k]).clone());
+    // }
 }
 
 
@@ -134,13 +135,37 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
     Eigen::VectorXd M6 = problem->Y_matrix * c_tmp * (nu / Pr);
     // Mass Term Temperature
     Eigen::VectorXd M8 = problem->W_matrix * c_dot;
+    // Penalty term velocity
+    Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(Nphi_u, N_BC);
+    Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(Nphi_t, N_BC_t);
+    if (problem->bcMethod == "penalty")
+    {
+        for (int l = 0; l < N_BC; l++)
+        {
+            penaltyU.col(l) = tauU(l, 0) * (BC(l) * problem->bcVelVec[l] - problem->bcVelMat[l] *
+                              a_tmp);
+        }
+        for (int l = 0; l < N_BC_t; l++)
+        {
+            penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * problem->bcTempVec[l] - problem->bcTempMat[l] *
+                              c_tmp);
+        }
+    }
 
     for (int i = 0; i < Nphi_u; i++)
     {
         cc = a_tmp.transpose() * Eigen::SliceFromTensor(problem->C_tensor, 0, i) * a_tmp;
         ct = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->C_total_tensor, 0, i) * a_tmp;
         caveraged = nu_param.transpose() * Eigen::SliceFromTensor(problem->C_total_ave_tensor, 0, i) * a_tmp;
-        fvec(i) = -M5(i) + M11(i) - cc(0, 0) + ct(0, 0) + caveraged(0, 0) - M10(i) - M2(i);
+        fvec(i) = -M5(i) + M11(i) - M2(i) - cc(0, 0) - M10(i) + ct(0, 0) + caveraged(0, 0);
+    
+        if (problem->bcMethod == "penalty")
+        {
+          for (int l = 0; l < N_BC; l++)
+          {
+              fvec(i) += penaltyU(i, l);
+            }
+        }
     }
 
     for (int j = 0; j < Nphi_prgh; j++)
@@ -155,20 +180,30 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
         qq = a_tmp.transpose() * Eigen::SliceFromTensor(problem->Q_tensor, 0, j) * c_tmp;
         qt = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->YT_tensor, 0, j) * c_tmp;
         qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(problem->YT_ave_tensor, 0, j) * c_tmp;
-        fvec(k) = -M8(j) + M6(j) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t - qq(0, 0);
+        fvec(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t;
+    
+        if (problem->bcMethod == "penalty")
+        {
+          for (int l = 0; l < N_BC_t; l++)
+          {
+              fvec(k) += penaltyT(j, l);
+          }
+        }
     }
 
-    for (int j = 0; j < N_BC; j++)
+    if (problem->bcMethod == "lift")
     {
-        fvec(j) = x(j) - BC(j);
-    }
+      for (int j = 0; j < N_BC; j++)
+        {
+            fvec(j) = x(j) - BC(j);
+        }
 
-    for (int j = 0; j < N_BC_t; j++)
-    {
-        int k = j + Nphi_u + Nphi_prgh;
-        fvec(k) = x(k) - BC_t(j);
+      for (int j = 0; j < N_BC_t; j++)
+      {
+          int k = j + Nphi_u + Nphi_prgh;
+          fvec(k) = x(k) - BC_t(j);
+      }
     }
-
     return 0;
 }
 
@@ -256,8 +291,8 @@ int newton_unsteadyBBTurb_PPE::df(const Eigen::VectorXd& x,
 }
 
 // * * * * * * * * * * * * * * * Solve Functions  * * * * * * * * * * * * * //
-void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::Ref<const Eigen::RowVectorXd>& temp_now_BC,
-    const Eigen::Ref<const Eigen::RowVectorXd>& vel_now_BC, int NParaSet, int startSnap)
+void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC,
+    const Eigen::MatrixXd& velocityBC, int NParaSet, int startSnap)
 {
     Info << "Starting the online solve with supremizer stabilisation method."
          << "\nThe following time settings are used:"
@@ -279,9 +314,11 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::Ref<const Eigen::RowVec
         "The variable exportEvery must be an integer multiple of the time step dt.");
     M_Assert(ITHACAutilities::isInteger(exportEvery / storeEvery) == true,
         "The variable exportEvery must be an integer multiple of the variable storeEvery.");
+    
+    // Construct a BoundaryConditions object to handle time-dependent BCs
+    BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
 
     Info << "################## Online solve N° " << NParaSet << " ##################" << endl;
-    // Info << "Solving for the temperature parameter: " << temp_now_BC << endl;
 
     y.resize(Nphi_u + Nphi_prgh + Nphi_t, 1); // Solution vector
     y.setZero();
@@ -293,29 +330,32 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::Ref<const Eigen::RowVec
         {
             if (j == problem->inletIndexT(i, 0))
             {
-                T_IC.boundaryFieldRef()[problem->inletIndexT(i, 0)][j] = temp_now_BC(i);
+                T_IC.boundaryFieldRef()[problem->inletIndexT(i, 0)][j] = boundaryConditions.currentTemperatureBC(i);
             } else
             {
             }
         }
     }
-    y.head(Nphi_u) = ITHACAutilities::getCoeffs(problem->Ufield[startSnap], LUmodes);
+    y.head(Nphi_u) = ITHACAutilities::getCoeffs(problem->Ufield[startSnap], problem->L_U_SUPmodes);
     if (Nphi_prgh != 0)
     {
         y.segment(Nphi_u, Nphi_prgh) = ITHACAutilities::getCoeffs(
             problem->Prghfield[startSnap], problem->P_rghmodes);
     }
-    y.tail(Nphi_t) = ITHACAutilities::getCoeffs(T_IC, LTmodes);
+    y.tail(Nphi_t) = ITHACAutilities::getCoeffs(T_IC, problem->L_Tmodes);
 
     // Change initial condition for the lifting function
-    for (int i = 0; i < N_BC; i++)
+    if (problem->bcMethod == "lift")
     {
-        y(i) = vel_now_BC(i);
-    }
-    for (int i = 0; i < N_BC_t; i++)
-    {
-        int k = i + Nphi_prgh + Nphi_u;
-        y(k) = temp_now_BC(i);
+      for (int i = 0; i < N_BC; i++)
+      {
+          y(i) = boundaryConditions.currentVelocityBC(i);
+      }
+      for (int i = 0; i < N_BC_t; i++)
+      {
+          int k = i + Nphi_prgh + Nphi_u;
+          y(k) = boundaryConditions.currentTemperatureBC(i);
+      }
     }
 
     nut0 = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
@@ -324,10 +364,12 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::Ref<const Eigen::RowVec
     int firstRBFInd;
     if (skipLift == true && problem->bcMethod == "lift")
     {
-        firstRBFInd = N_BC;
+        firstRBFInd = problem->skipRBFIndex;
+        Info << "Skipping lifting modes in the RBF evaluation. This means that the first RBF index is set to " << firstRBFInd << endl;
     } else
     {
         firstRBFInd = 0;
+        Info << "## COMM - Not skipping lifting modes in the RBF evaluation. This means that the first RBF index is set to " << firstRBFInd << endl;
     }
 
     // Set some properties of the newton object
@@ -340,14 +382,16 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::Ref<const Eigen::RowVec
     newton_object_sup.Pr_t = Pr_t;
     newton_object_sup.BC_t.resize(N_BC_t);
     newton_object_sup.BC.resize(N_BC);
+    newton_object_sup.tauU = tauU;
+    newton_object_sup.tauT = tauT;
 
     for (int j = 0; j < N_BC; j++) // Velocity BC
     {
-        newton_object_sup.BC(j) = vel_now_BC(j);
+        newton_object_sup.BC(j) = boundaryConditions.currentVelocityBC(j);
     }
     for (int j = 0; j < N_BC_t; j++) // Temperature BC
     {
-        newton_object_sup.BC_t(j) = temp_now_BC(j);
+        newton_object_sup.BC_t(j) = boundaryConditions.currentTemperatureBC(j);
     }
 
     // Set number of online solutions - Time related
@@ -390,36 +434,52 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::Ref<const Eigen::RowVec
     while (time < finalTime)
     {
         time = time + dt;
+
+        boundaryConditions.updateTimeDependentBC(time);
+
+        if (problem->timedepbcMethod == "yes")
+        {
+            for (int j = 0; j < N_BC; j++)
+            {
+                newton_object_sup.BC(j) = boundaryConditions.currentVelocityBC(j);
+            }
+            for (int j = 0; j < N_BC_t; j++)
+            {
+                newton_object_sup.BC_t(j) = boundaryConditions.currentTemperatureBC(j);
+            }
+        }
+
         Eigen::VectorXd res(y);
         res.setZero();
         hnls.solve(y);
-        newton_object_sup.operator()(y, res);
 
         tv.setZero();
         aDer.setZero();
         aDer = (y.head(Nphi_u) - newton_object_sup.y_old.head(Nphi_u)) / dt;
         tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
-        // Now normalize each tv entry with the eigen::vectorXd problem->meanA and problem->stdA
-        for (int i = 0; i < dimA; i++)
-        {
-            tv(i) = (tv(i) - problem->meanA(i)) / problem->stdA(i);
-        }
+        
+        /// Now normalize each tv entry with the eigen::vectorXd problem->meanA and problem->stdA
+        // for (int i = 0; i < dimA; i++)
+        // {
+        //     tv(i) = (tv(i) - problem->meanA(i)) / problem->stdA(i);
+        // }
 
         for (int j = 0; j < Nphi_nut; j++)
         {
-            newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->eval(tv);
-            // Now denormalize the obtained nu_fluct with problem->meanG and problem->stdG
-            newton_object_sup.nu_fluct(j) = newton_object_sup.nu_fluct(j) * problem->stdG(j) + problem->meanG(j);
+            newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->eval(tv); // * problem->stdG(j) + problem->meanG(j);
         }
-
-        for (int j = 0; j < N_BC; j++)
+        
+        if (problem->bcMethod == "lift")
         {
-            y(j) = vel_now_BC(j);
-        }
-        for (int j = 0; j < N_BC_t; j++)
-        {
-            int k = j + Nphi_prgh + Nphi_u;
-            y(k) = temp_now_BC(j);
+          for (int j = 0; j < N_BC; j++)
+          {
+              y(j) = boundaryConditions.currentVelocityBC(j);
+          }
+          for (int j = 0; j < N_BC_t; j++)
+          {
+              int k = j + Nphi_prgh + Nphi_u;
+              y(k) = boundaryConditions.currentTemperatureBC(j);
+          }
         }
 
         newton_object_sup.operator()(y, res);
@@ -481,7 +541,6 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
     int timeStepCounter = 0;
     int nextWrite = 0;
     int exportEveryIndex = round(exportEvery / storeEvery);
-    volScalarField nutNow("nutNow", problem->nutmodes[0] * 0);
     List<Eigen::MatrixXd> CoeffU;
     List<Eigen::MatrixXd> CoeffPrgh;
     List<Eigen::MatrixXd> CoeffT;
@@ -511,17 +570,16 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
         }
         timeStepCounter++;
     }
-    volVectorField uRec("uRec", LUmodes[0]);
-    volScalarField prghRec("prghRec", Prghmodes[0]);
-    volScalarField TRec("TRec", LTmodes[0]);
+    volVectorField uRec("uRec", problem->L_U_SUPmodes[0]);
+    volScalarField TRec("TRec", problem->L_Tmodes[0]);
     volScalarField nutFluctRec("nutFluctRec", problem->nutmodes[0]);
-
+    volScalarField prghRec("prghRec", problem->P_rghmodes[0]);
+    // Implement a reconstruction of the field p_rgh using the reconstruc method instead of the messy one below
     uRecFields = problem->L_U_SUPmodes.reconstruct(uRec, CoeffU, "uRec");
     TRecFields = problem->L_Tmodes.reconstruct(TRec, CoeffT, "TRec");
     nutFluctRecFields = problem->nutmodes.reconstruct(nutFluctRec, CoeffNut, "nutFluctRec");
 
-    // Reconstruct the averaged eddy viscosity field as a linear combination of the
-    // nut_param_0 coefficients and the PtrList<volScalarField> avgNutfield;
+    // Reconstruct the averaged eddy viscosity field as a linear combination of the nut_param_0 coefficients and the PtrList<volScalarField> avgNutfield;
 
     volScalarField nutAvg(
         IOobject(
@@ -563,12 +621,21 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
         ITHACAstream::exportFields(nutFluctRecFields, folder, "nutFluctRec");
         ITHACAstream::exportFields(nutRecFields, folder, "nutRec");
     }
-    // TODO: Implement correct BC handling for shifted pressure reconstruction
+    // TODO: Implement correct BC handling for shifted pressure reconstruction (fixedFluxPressure in theory requires a gradient evaluation I guess)
     // prghRecFields = problem->P_rghmodes.reconstruct(prghRec, CoeffPrgh, "prghRec");
     // if (exportFields)
     // {
     //     ITHACAstream::exportFields(prghRecFields, folder, "prghRec");
     // }
+    for (int i = 0; i < CoeffPrgh.size(); i++)
+    {
+      volScalarField prghRec("prghRec", problem->P_rghmodes[0]);
+      for (int j =0; j < Nphi_prgh; j++)
+        {
+            prghRec += problem->P_rghmodes[j] * CoeffPrgh[i](j, 0);
+        }
+      ITHACAstream::exportSolution(prghRec, name(i+1), folder);
+    }
 }
 
 // * * * * * * * * *  Inverse Distance Weighting Functions  * * * * * * * * //

@@ -41,6 +41,7 @@ SourceFiles
 #include "IOmanip.H"
 #include "ReducedUnsteadyNS.H"
 #include "UnsteadyBBTurb.H"
+#include "BoundaryConditions.H"
 #include <Eigen/Dense>
 #include <unsupported/Eigen/NonLinearOptimization>
 #include <unsupported/Eigen/NumericalDiff>
@@ -82,6 +83,8 @@ public:
     Eigen::VectorXd y_old;
     Eigen::VectorXd BC_t;
     Eigen::VectorXd BC;
+    Eigen::MatrixXd tauT;
+    Eigen::MatrixXd tauU;
     std::vector<SPLINTER::RBFSpline*> SPLINES;
 };
 
@@ -118,6 +121,8 @@ public:
     scalar dt;
     int writeEvery;
     word BCmethod;
+    Eigen::MatrixXd tauT;
+    Eigen::MatrixXd tauU;
 
     Eigen::VectorXd y_old;
     Eigen::VectorXd BC_t;
@@ -148,16 +153,16 @@ public:
     ~ReducedUnsteadyBBTurb() { };
 
     /// List of pointers to store the modes for temperature including lift field modes
-    PtrList<volScalarField> LTmodes;
+    PtrList<volScalarModes> LTmodes;
 
     /// List of pointers to store the modes for velocity including lift field modes
-    PtrList<volVectorField> LUmodes;
+    PtrList<volVectorModes> LUmodes;
 
     /// List of pointers to store the eddy viscosity modes
-    PtrList<volScalarField> nutmodes;
+    PtrList<volScalarModes> nutmodes;
 
     /// List of pointers to store the shifted pressure (prgh) modes 
-    PtrList<volScalarField> Prghmodes;
+    PtrList<volScalarModes> Prghmodes;
 
     /// Function object to call the non linear solver sup approach
     newton_unsteadyBBTurb_sup newton_object_sup;
@@ -207,8 +212,14 @@ public:
     /// Matrix of eddy viscosity RBF coefficients, has the first row as time values
     Eigen::MatrixXd rbfCoeffMat;
 
+    /// Penalty term for the temperature equation
+    Eigen::MatrixXd penaltyT;
+
+    /// Penalty coefficient tauT for the temperature equation
+    Eigen::MatrixXd tauT;
+
     /// Boolean to choose whether to skip the lifting modes in the reconstruction
-    bool skipLift = false;
+    bool skipLift = true;
 
     /// Pointer to the FOM problem
     UnsteadyBBTurb* problem;
@@ -218,17 +229,17 @@ public:
     /// Method to perform an online solve using a supremizer stabilisation method
     ///
     /// @param[in]  temp_now_BC   The scalar of online temperature. It is defined in
-    /// with an Eigen::MatrixXd and must have one col and as many rows as the number
-    /// of parametrized boundary conditions.
+    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
+    /// then each nth column corresponds to the value of the n-th BC at that time.
     /// @param[in] vel_now_BC   The scalar of online velocity. It is defined in
-    /// with an Eigen::MatrixXd and must have one col and as many rows as the number
-    /// of parametrized boundary conditions.
+    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
+    /// then each nth column corresponds to the value of the n-th BC at that time.
     /// @param[in]  NParaSet The parameter sets number for which the online solution is solved.
     /// @param[in]  startSnap The first snapshot taken from the offline snapshots
     /// and used to get the reduced initial condition default = 0.
     ///
-    void solveOnline_sup(const Eigen::Ref<const Eigen::RowVectorXd>& temp_now_BC,
-        const Eigen::Ref<const Eigen::RowVectorXd>& vel_now_BC, int NParaSet = 0, int startSnap = 0);
+    void solveOnline_sup(const Eigen::MatrixXd& temp_now_BC,
+        const Eigen::MatrixXd& vel_now_BC, int NParaSet = 0, int startSnap = 0);
 
     /// @brief    Method to reconstruct a solution from an online solve
     ///
