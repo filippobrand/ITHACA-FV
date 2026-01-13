@@ -3,6 +3,7 @@ ReducedUnsteadyNS/ReducedUnsteadyNS.C
 ReducedUnsteadyBB/ReducedUnsteadyBB.C
 ReducedUnsteadyBBTurb/ReducedUnsteadyBBTurb.C
 ReducedUnsteadyNSTurb/ReducedUnsteadyNSTurb.C
+ReducedUnsteadyBBTurb/BoundaryConditions.C
 ReducedUnsteadyNST/ReducedUnsteadyNST.C
 ReducedUnsteadyNSTTurb/ReducedUnsteadyNSTTurb.C
 ReducedSteadyNS/ReducedSteadyNS.C
