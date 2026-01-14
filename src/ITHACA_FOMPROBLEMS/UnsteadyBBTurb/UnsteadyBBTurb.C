@@ -64,27 +64,26 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
 #include "createFields.H"
 #pragma GCC diagnostic pop
 #include "createFvOptions.H"
-    ITHACAdict = new IOdictionary
-    (
-        IOobject
-        (
+    ITHACAdict = new IOdictionary(
+        IOobject(
             "ITHACAdict",
             runTime.system(),
             mesh,
             IOobject::MUST_READ,
-            IOobject::NO_WRITE
-        )
-    );
-    // Are these calls necessary? Some of these also present in the constructor of unsteadyNS
+            IOobject::NO_WRITE));
+    // Are these calls necessary? Some of these also present in the constructor of unsteadyNS. Check please.
     method = ITHACAdict->lookupOrDefault<word>("method", "supremizer");
+    bcMethod = ITHACAdict->lookupOrDefault<word>("bcMethod", "lift");
+    timedepbcMethod = ITHACAdict->lookupOrDefault<word>("timedepbcMethod", "no");
+
+    M_Assert(!(bcMethod == "lift" && timedepbcMethod == "yes"),
+        "The lifting method is not compatible with time-dependent BCs. Please choose the penalty method.");
     M_Assert(method == "supremizer" || method == "PPE",
         "A method must be set to either 'supremizer' or 'PPE' in ITHACAdict");
-    bcMethod = ITHACAdict->lookupOrDefault<word>("bcMethod", "lift");
     M_Assert(bcMethod == "lift" || bcMethod == "penalty",
         "The BC method must be set to lift or penalty in ITHACAdict");
-    timedepbcMethod = ITHACAdict->lookupOrDefault<word>("timedepbcMethod", "no");
     M_Assert(timedepbcMethod == "yes" || timedepbcMethod == "no",
-             "The BC method can be set to yes or no");
+        "The BC method can be set to yes or no");
     turbulence->validate();
     offline = ITHACAutilities::check_off();
     podex = ITHACAutilities::check_pod();
@@ -598,14 +597,13 @@ void UnsteadyBBTurb::offlineRBFInterpolation(float RBFshapeParam) // TODO: Make 
     coeffL2vel.resize(0, 0);
     if (bcMethod == "lift")
     {
-      // TODO: Strong doubts about this. Check both Hijazi paper and PhD thesis. He/she says to use the Homogeneous field. Also says to drop the supremizer modes
-      // Should the firts liftfield.size() rows be dropped from coeffL2vel later when using the RBFs? Or should they forcefully be set to the BC values?
-      coeffL2vel = ITHACAutilities::getCoeffs(Uomfield, L_U_SUPmodes, NUmodes + liftfield.size()); // Returns a [modes x snapshots]
-      skipRBFIndex = liftfield.size();
-    }
-    else if (bcMethod == "penalty")
+        // TODO: Strong doubts about this. Check both Hijazi paper and PhD thesis. He/she says to use the Homogeneous field. Also says to drop the supremizer modes
+        // Should the firts liftfield.size() rows be dropped from coeffL2vel later when using the RBFs? Or should they forcefully be set to the BC values?
+        coeffL2vel = ITHACAutilities::getCoeffs(Uomfield, L_U_SUPmodes, NUmodes + liftfield.size()); // Returns a [modes x snapshots]
+        skipRBFIndex = liftfield.size();
+    } else if (bcMethod == "penalty")
     {
-      coeffL2vel = ITHACAutilities::getCoeffs(Ufield, L_U_SUPmodes, NUmodes); // Returns a [modes x snapshots]
+        coeffL2vel = ITHACAutilities::getCoeffs(Ufield, L_U_SUPmodes, NUmodes); // Returns a [modes x snapshots]
     }
     Info << "Obtained the L2 coefficients for velocity and eddy viscosity." << endl;
     Info << "Shape of the L2 velocity coeff matrix: " << coeffL2vel.rows() << " x " << coeffL2vel.cols() << endl;
@@ -813,7 +811,7 @@ List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(const Eigen::MatrixXd& 
     return newCoeffs;
 }
 
-void UnsteadyBBTurb::splitEddyViscositySnapshots() //TODO: (Maybe) Use the averaging/subtractions function from ITHACAutilities
+void UnsteadyBBTurb::splitEddyViscositySnapshots() // TODO: (Maybe) Use the averaging/subtractions function from ITHACAutilities
 {
     label nSamples = timeSnapshots.size();
     label globalIndex = 0;
@@ -1299,7 +1297,7 @@ List<Eigen::MatrixXd> UnsteadyBBTurb::bcTemperatureVec(label NTmodes)
 
     if (Pstream::master())
     {
-      ITHACAstream::exportMatrix(bcTempVec, "bcTempVec", "python", "./ITHACAoutput/Matrices/bcTempVec/");
+        ITHACAstream::exportMatrix(bcTempVec, "bcTempVec", "python", "./ITHACAoutput/Matrices/bcTempVec/");
     }
 
     return bcTempVec;
@@ -1308,16 +1306,16 @@ List<Eigen::MatrixXd> UnsteadyBBTurb::bcTemperatureVec(label NTmodes)
 List<Eigen::MatrixXd> UnsteadyBBTurb::bcTemperatureMat(label NTmodes)
 // Compute the L2 inner product matrix of the temperature BCs on the inlet patches
 {
-  label BCsize = NTmodes;
-  label BCTsize = inletIndexT.rows();
-  List <Eigen::MatrixXd> bcTempMat(BCTsize);
+    label BCsize = NTmodes;
+    label BCTsize = inletIndexT.rows();
+    List<Eigen::MatrixXd> bcTempMat(BCTsize);
 
-  for (label j=0; j<BCTsize; j++)
-  {
-    bcTempMat[j].resize(BCsize, BCsize);
-  }
+    for (label j = 0; j < BCTsize; j++)
+    {
+        bcTempMat[j].resize(BCsize, BCsize);
+    }
 
-  for (label k = 0; k < BCTsize; k++)
+    for (label k = 0; k < BCTsize; k++)
     {
         label BCind = inletIndexT(k);
 
@@ -1327,8 +1325,8 @@ List<Eigen::MatrixXd> UnsteadyBBTurb::bcTemperatureMat(label NTmodes)
             {
                 // Corrected to use bcTempMat and L_Tmodes (scalar) instead of velocity modes
                 bcTempMat[k](i, j) = gSum(L_Tmodes[i].boundaryField()[BCind] *
-                                         L_Tmodes[j].boundaryField()[BCind] * 
-                                         L_Tmodes[i].mesh().magSf().boundaryField()[BCind]);
+                    L_Tmodes[j].boundaryField()[BCind] *
+                    L_Tmodes[i].mesh().magSf().boundaryField()[BCind]);
             }
         }
     }
