@@ -24,7 +24,9 @@ License
 Class
     BoundaryConditions
 Description
-    A class to handle various boundary conditions for Reduced Order Models (time-dependent, temperature, ...)
+    A class to handle various boundary conditions for Reduced Order Models (time-dependent, temperature, ...).
+    At the moment this is only implemented for linear time-dependent BCs, where both temperature and velocity are given.
+    The input BCs are given as Eigen::MatrixXd, where the first column is a series of time steps, and the other columns are the BC values at those time steps.
 SourceFiles
     BoundaryConditions.C
 \*---------------------------------------------------------------------------*/
@@ -32,15 +34,13 @@ SourceFiles
 /// \file
 /// Header file of the BoundaryConditions class.
 /// \dir
-/// Directory containing the header and source files for the ReducedUnsteadyBBTurb class
+/// Directory containing the header and source files for the BoundaryConditions class
 
 #ifndef BoundaryConditions_H
 #define BoundaryConditions_H
 
 #include "fvCFD.H"
 #include "IOmanip.H"
-// #include "ReducedUnsteadyNS.H"
-// #include "UnsteadyBBTurb.H"
 #include <Eigen/Dense>
 
 /*---------------------------------------------------------------------------*\
@@ -49,7 +49,8 @@ SourceFiles
 
 /// Class where a general treatment of boundary conditions for ROMs is implemented
 /** The idea is to have the possibility to group temperature BC, velocity BC and have methods to interpolate them
- * in case of time-dependent BCs. In the future, maybe different time-dep expression can be implemented. */
+ * in case of time-dependent BCs. Inside the ROM solution, an update of the BC is called via the method updateTimeDependentBC.
+ *  In the future, maybe different time-dep expression can be implemented. */
 class BoundaryConditions
 {
 private:
