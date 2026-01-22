@@ -33,6 +33,7 @@ License
 /// Source file of the BoundaryConditions class
 
 #include "BoundaryConditions.H"
+#include "UnsteadyBBTurb.H"
 
 // * * * * * * * * * * * * * * * Constructors * * * * * * * * * * * * * * * * //
 
@@ -43,7 +44,7 @@ BoundaryConditions::BoundaryConditions(const Eigen::MatrixXd& velocityBC,
     temperatureBCMatrix_(temperatureBC),
     velocityBCMatrix_(velocityBC),
     timeDepMethod_(timeDepMethod)
-{   
+{
     temperatureTimeDep_ = false;
     velocityTimeDep_ = false;
 
@@ -59,7 +60,6 @@ BoundaryConditions::BoundaryConditions(const Eigen::MatrixXd& velocityBC,
     }
     currentTemperatureBC = temperatureBC.row(0).tail(temperatureBC.cols() - 1);
     currentVelocityBC = velocityBC.row(0).tail(velocityBC.cols() - 1);
-    
 }
 
 BoundaryConditions::BoundaryConditions(const Eigen::VectorXd& velocityBC,
@@ -93,7 +93,7 @@ void BoundaryConditions::updateTimeDependentBC(const scalar currentTime)
                     currentTime);
                 Eigen::Index k = std::distance(timestepsTempBC_.data(), it);
                 // Safety check - Should not happen due to how the solver in the ROM is written, but still...
-                // Maybe remove for performance, all gas no brakes 
+                // Maybe remove for performance, all gas no brakes
                 if (k > 0)
                 {
                     double t0 = timestepsTempBC_(k - 1);
@@ -144,5 +144,46 @@ double BoundaryConditions::linearInterpolate(const double t0, const double t1, c
     return interpolatedValue;
 }
 
+void BoundaryConditions::initializeReducedCoeffs(int startSnap, Eigen::VectorXd& y,
+    UnsteadyBBTurb* problem, const int Nphi_u, const int Nphi_p,
+    const int Nphi_t, int N_BC_t)
+{
+    y.head(Nphi_u) = ITHACAutilities::getCoeffs(problem->Ufield[startSnap], problem->L_U_SUPmodes);
+    if (Nphi_p != 0)
+    {
+        y.segment(Nphi_u, Nphi_p) = ITHACAutilities::getCoeffs(
+            problem->Prghfield[startSnap], problem->P_rghmodes);
+    }
+    volScalarField T_IC("T_IC", problem->Tfield[startSnap]);
+    for (int j = 0; j < T_IC.boundaryField().size(); j++)
+    {
+        for (int i = 0; i < N_BC_t; i++)
+        {
+            if (j == problem->inletIndexT(i, 0))
+            {
+                T_IC.boundaryFieldRef()[problem->inletIndexT(i, 0)][j] = currentTemperatureBC(i);
+            } else
+            {
+            }
+        }
+    }
+    y.tail(Nphi_t) = ITHACAutilities::getCoeffs(T_IC, problem->L_Tmodes);
+}
+
+void BoundaryConditions::correctLiftingCoeffs(Eigen::VectorXd& y, const int N_BC, const int N_BC_t, const int Nphi_u, const int Nphi_prgh)
+{
+    // for (int i = 0; i < N_BC; i++)
+    // {
+    //     y(i) = currentVelocityBC(i);
+    // }
+    // for (int i = 0; i < N_BC_t; i++)
+    // {
+    //     int k = i + Nphi_prgh + Nphi_u;
+    //     y(k) = currentTemperatureBC(i);
+    // }
+    // This should be equivalent and more efficient
+    y.head(N_BC) = currentVelocityBC.head(N_BC);
+    y.segment(Nphi_u + Nphi_prgh, N_BC_t) = currentTemperatureBC.head(N_BC_t);
+}
 
 // ************************************************************************ //

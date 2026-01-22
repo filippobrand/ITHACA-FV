@@ -42,6 +42,7 @@ SourceFiles
 #include "fvCFD.H"
 #include "IOmanip.H"
 #include <Eigen/Dense>
+#include "UnsteadyBBTurb.H"
 
 /*---------------------------------------------------------------------------*\
                         Class BoundaryConditions Declaration
@@ -65,7 +66,7 @@ private:
 
     /// Vector that stores the time instances at which the velocity BCs change
     Eigen::VectorXd timestepsVelBC_;
-    
+
     /// Word that stores how to treat time-dependent BCs. At the moment only "linear" is implemented
     word timeDepMethod_;
 
@@ -105,7 +106,30 @@ public:
     ///
     double linearInterpolate(const double t0, const double t1, const double v0, const double v1, const scalar currentTime);
 
-  };
+    /// @brief    Method to initialize the reduced coefficient given an initial snapshot index.
+    ///           This overload is used for problems with temperature equation.
+    ///
+    /// @param[in]  startSnap  The first snapshot taken from the offline snapshots
+    /// @param[in]  y The reduced coefficient vector to be initialized. Is a Eigen::VectorXd
+    /// @param[in]  problem The pointer to the FOM problem
+    /// @param[in]  Nphi_u Number of velocity modes
+    /// @param[in]  Nphi_p Number of pressure modes
+    /// @param[in]  Nphi_t Number of temperature modes
+    ///
+    void initializeReducedCoeffs(int startSnap, Eigen::VectorXd& y,
+        UnsteadyBBTurb* problem, const int Nphi_u, const int Nphi_p, const int Nphi_t, int N_BC_t);
+
+    /// @brief    Corrects the first N_BC and N_BC_t coefficients of the reduced solution vector, so that
+    ///           they match the current boundary conditions when using the lifting function approach.
+    ///
+    /// @param[in]  y The reduced coefficient vector to be corrected. Is a Eigen::VectorXd
+    /// @param[in]  N_BC Number of velocity boundary conditions
+    /// @param[in]  N_BC_t Number of temperature boundary conditions
+    /// @param[in]  problem The pointer to the FOM problem
+    /// @param[in]  Nphi_u Number of velocity modes
+    /// @param[in]  Nphi_prgh Number of pressure modes
+    void correctLiftingCoeffs(Eigen::VectorXd& y, const int N_BC, const int N_BC_t, const int Nphi_u, const int Nphi_prgh);
+};
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 

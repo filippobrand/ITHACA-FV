@@ -78,8 +78,8 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
 
     M_Assert(!(bcMethod == "lift" && timedepbcMethod == "yes"),
         "The lifting method is not compatible with time-dependent BCs. Please choose the penalty method.");
-    M_Assert(method == "supremizer" || method == "PPE",
-        "A method must be set to either 'supremizer' or 'PPE' in ITHACAdict");
+    M_Assert(method == "supremizer" || method == "PPE" || method == "VMB",
+        "A method must be set to either 'supremizer', 'VMB' or 'PPE' in ITHACAdict");
     M_Assert(bcMethod == "lift" || bcMethod == "penalty",
         "The BC method must be set to lift or penalty in ITHACAdict");
     M_Assert(timedepbcMethod == "yes" || timedepbcMethod == "no",
@@ -556,15 +556,15 @@ void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT
         W_matrix = mass_term_temperature(NU, NT, NSUP);
         Y_matrix = diffusive_term_temperature(NU, NT, NSUP);
         P_matrix = divergence_term(NU, NPrgh, NSUP);
-        BT_matrix = BTturbulence(NU, NSUP);
+        // BT_matrix = BTturbulence(NU, NSUP);
         C_tensor = convective_term_tens(NU, NPrgh, NSUP);
         Q_tensor = convective_tensor_temperature(NU, NT, NSUP);
-        CT1_tensor = turbulenceTensor1(NU, NSUP, Nnut);
-        CT2_tensor = turbulenceTensor2(NU, NSUP, Nnut);
-        CT1_ave_tensor = turbulenceAveTensor1(NU, NSUP);
-        CT2_ave_tensor = turbulenceAveTensor2(NU, NSUP);
-        YT_tensor = temperatureTurbulenceTensor(NT, Nnut);
-        YT_ave_tensor = turbulenceTemperatureAveTensor(NT);
+        // CT1_tensor = turbulenceTensor1(NU, NSUP, Nnut);
+        // CT2_tensor = turbulenceTensor2(NU, NSUP, Nnut);
+        // CT1_ave_tensor = turbulenceAveTensor1(NU, NSUP);
+        // CT2_ave_tensor = turbulenceAveTensor2(NU, NSUP);
+        // YT_tensor = temperatureTurbulenceTensor(NT, Nnut);
+        // YT_ave_tensor = turbulenceTemperatureAveTensor(NT);
     }
 
     if (bcMethod == "penalty")
@@ -576,8 +576,104 @@ void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT
         bcTempMat = bcTemperatureMat(NTmodes);
     }
 
-    B_total_matrix = B_matrix + BT_matrix;
+    B_total_matrix = B_matrix; // + BT_matrix;
     label cSize = NU + NSUP + liftfield.size();
+    // C_total_tensor.resize(cSize, Nnut, cSize);
+    // C_total_tensor = CT1_tensor + CT2_tensor;
+    // C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
+    // C_total_ave_tensor = CT1_ave_tensor + CT2_ave_tensor;
+
+    // offlineRBFInterpolation(float(RBFShapeParameter));
+}
+
+void UnsteadyBBTurb::projectVMB(fileName folder, label NU, label NT, label Nnut, float RBFShapeParameter)
+{
+    NUmodes = NU;
+    NTmodes = NT;
+    Nnutmodes = Nnut;
+
+    L_U_SUPmodes.resize(0);
+    if (liftfield.size() != 0)
+    {
+        for (label k = 0; k < liftfield.size(); k++)
+        {
+            L_U_SUPmodes.append(liftfield[k].clone());
+        }
+    }
+    if (NU != 0)
+    {
+        for (label k = 0; k < NU; k++)
+        {
+            L_U_SUPmodes.append(Umodes[k].clone());
+        }
+    }
+
+    L_Tmodes.resize(0);
+    if (liftfieldT.size() != 0)
+    {
+        for (label k = 0; k < liftfieldT.size(); k++)
+        {
+            L_Tmodes.append(liftfieldT[k].clone());
+        }
+    }
+    if (NT != 0)
+    {
+        for (label k = 0; k < NT; k++)
+        {
+            L_Tmodes.append(Tmodes[k].clone());
+        }
+    }
+
+    if (ITHACAutilities::check_folder("./ITHACAoutput/Matrices/"))
+    {
+        word W_str = "W_" + name(liftfieldT.size()) + "_" + name(NT);
+        word Y_str = "Y_" + name(liftfieldT.size()) + "_" + name(NT);
+
+        if (ITHACAutilities::check_file("./ITHACAoutput/Matrices/" + W_str))
+        {
+            ITHACAstream::ReadDenseMatrix(W_matrix, "./ITHACAoutput/Matrices/", W_str);
+        } else
+        {
+            W_matrix = mass_term_temperature(NU, NT, 0);
+        }
+
+        if (ITHACAutilities::check_file("./ITHACAoutput/Matrices/" + Y_str))
+        {
+            ITHACAstream::ReadDenseMatrix(Y_matrix, "./ITHACAoutput/Matrices/", Y_str);
+        } else
+        {
+            Y_matrix = diffusive_term_temperature(NU, NT, 0);
+        }
+
+    } else
+    {
+        M_matrix = mass_term(NU, NU, 0);
+        B_matrix = diffusive_term(NU, NU, 0);
+        K_matrix = pressure_gradient_term(NU, NU, 0);
+        H_matrix = buoyant_term(NU, NT, 0);
+        W_matrix = mass_term_temperature(NU, NT, 0);
+        Y_matrix = diffusive_term_temperature(NU, NT, 0);
+        BT_matrix = BTturbulence(NU, 0);
+        C_tensor = convective_term_tens(NU, NU, 0);
+        Q_tensor = convective_tensor_temperature(NU, NT, 0);
+        CT1_tensor = turbulenceTensor1(NU, 0, Nnut);
+        CT2_tensor = turbulenceTensor2(NU, 0, Nnut);
+        CT1_ave_tensor = turbulenceAveTensor1(NU, 0);
+        CT2_ave_tensor = turbulenceAveTensor2(NU, 0);
+        YT_tensor = temperatureTurbulenceTensor(NT, Nnut);
+        YT_ave_tensor = turbulenceTemperatureAveTensor(NT);
+    }
+    if (bcMethod == "penalty")
+    {
+        Info << "Assembling BC penalty matrices." << endl;
+        bcVelVec = bcVelocityVec(NUmodes, 0);
+        bcVelMat = bcVelocityMat(NUmodes, 0);
+        bcTempVec = bcTemperatureVec(NTmodes);
+        bcTempMat = bcTemperatureMat(NTmodes);
+    }
+
+    B_total_matrix = B_matrix + BT_matrix;
+    label cSize = NU + liftfield.size();
     C_total_tensor.resize(cSize, Nnut, cSize);
     C_total_tensor = CT1_tensor + CT2_tensor;
     C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
@@ -881,7 +977,7 @@ Eigen::MatrixXd UnsteadyBBTurb::pressure_gradient_term(label NUmodes,
     label K1size = NUmodes + NSUPmodes + liftfield.size();
     label K2size = NPrghmodes;
     Eigen::MatrixXd K_matrix(K1size, K2size);
-    dimensionedVector g = _g();
+    // dimensionedVector g = _g();
 
     // Project everything
     for (label i = 0; i < K1size; i++)
@@ -979,7 +1075,6 @@ Eigen::MatrixXd UnsteadyBBTurb::buoyant_term(label NUmodes, label NTmodes,
     dimensionedScalar beta = _beta();
     dimensionedScalar TRef = _TRef();
     dimensionedVector g = _g();
-    // volScalarField& gh = _gh();
     surfaceScalarField& ghf = _ghf();
 
     // Project everything
@@ -1043,7 +1138,9 @@ Eigen::MatrixXd UnsteadyBBTurb::BTturbulence(label NU, label NSUP)
     {
         for (label j = 0; j < btSize; j++)
         {
-            btMatrix(i, j) = fvc::domainIntegrate(L_U_SUPmodes[i] & (fvc::div(dev((T(fvc::grad(L_U_SUPmodes[j]))))))).value();
+            btMatrix(i, j) = fvc::domainIntegrate(L_U_SUPmodes[i] &
+                (fvc::div(dev2((T(fvc::grad(L_U_SUPmodes[j])))))))
+                                 .value();
         }
     }
     if (Pstream::parRun())
@@ -1161,7 +1258,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTensor2(label NU, label NSUP,
             for (label k = 0; k < cSize; k++)
             {
                 ct2Tensor(i, j, k) = fvc::domainIntegrate(L_U_SUPmodes[i] &
-                    (fvc::div(nutmodes[j] * dev((fvc::grad(L_U_SUPmodes[k]))().T()))))
+                    (fvc::div(nutmodes[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T()))))
                                          .value();
             }
         }
@@ -1194,7 +1291,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceAveTensor2(label NU, label NS
             for (label k = 0; k < cSize; k++)
             {
                 ct2AveTensor(i, j, k) = fvc::domainIntegrate(L_U_SUPmodes[i] &
-                    (fvc::div(avgNutfield[j] * dev((fvc::grad(L_U_SUPmodes[k]))().T()))))
+                    (fvc::div(avgNutfield[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T()))))
                                             .value();
             }
         }

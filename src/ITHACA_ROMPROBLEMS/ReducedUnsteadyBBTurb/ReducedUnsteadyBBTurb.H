@@ -88,6 +88,45 @@ public:
     std::vector<SPLINTER::RBFSpline*> SPLINES;
 };
 
+struct newton_unsteadyBBTurb_VMB : public newton_argument<double> {
+public:
+    newton_unsteadyBBTurb_VMB() { }
+
+    newton_unsteadyBBTurb_VMB(int Nx, int Ny,
+        UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
+                                  problem(&problem),
+                                  Nphi_u(problem.NUmodes + problem.liftfield.size()),
+                                  Nphi_t(problem.NTmodes + problem.liftfieldT.size()),
+                                  N_BC_t(problem.inletIndexT.rows()),
+                                  N_BC(problem.inletIndex.rows()),
+                                  Nphi_nut(problem.Nnutmodes),
+                                  nu_fluct(problem.Nnutmodes),
+                                  nu_param(problem.mu.rows())
+    { }
+
+    int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
+    int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
+    UnsteadyBBTurb* problem;
+    int Nphi_u;
+    int Nphi_t;
+    int N_BC_t;
+    int N_BC;
+    int Nphi_nut;
+    Eigen::VectorXd nu_fluct;
+    Eigen::VectorXd nu_param;
+    scalar nu;
+    scalar Pr;
+    scalar Pr_t;
+    scalar dt;
+
+    Eigen::VectorXd y_old;
+    Eigen::VectorXd BC_t;
+    Eigen::VectorXd BC;
+    Eigen::MatrixXd tauT;
+    Eigen::MatrixXd tauU;
+    std::vector<SPLINTER::RBFSpline*> SPLINES;
+};
+
 struct newton_unsteadyBBTurb_PPE : public newton_argument<double> {
 public:
     newton_unsteadyBBTurb_PPE() { }
@@ -140,7 +179,6 @@ equations. This class must be used together with the steadyNS class */
 class ReducedUnsteadyBBTurb : public reducedUnsteadyNS
 {
 private:
-
 public:
     // Constructors
     /// Construct Null
@@ -161,7 +199,7 @@ public:
     /// List of pointers to store the eddy viscosity modes
     PtrList<volScalarModes> nutmodes;
 
-    /// List of pointers to store the shifted pressure (prgh) modes 
+    /// List of pointers to store the shifted pressure (prgh) modes
     PtrList<volScalarModes> Prghmodes;
 
     /// Function object to call the non linear solver sup approach
@@ -169,6 +207,9 @@ public:
 
     /// Function object to call the non linear solver PPE approach
     newton_unsteadyBBTurb_PPE newton_object_PPE;
+
+    /// Function object to call the non linear solver VMB approach
+    newton_unsteadyBBTurb_VMB newton_object_VMB;
 
     /// Reconstructed temperature field
     PtrList<volScalarField> TRecFields;
@@ -200,14 +241,14 @@ public:
     /// Number of parametrized boundary conditions related to temperature field
     int N_BC_t;
 
+    /// Dimensions of the interpolation independent variable (for example the (A, A_dot) pair)
+    int dimA;
+
     /// DimensionedScalar Pr;
     scalar Pr;
 
     /// DimensionedScalar Prt;
     scalar Pr_t;
-
-    /// Dimensions of the interpolation independent variable (for example the (A, A_dot) pair)
-    int dimA;
 
     /// Matrix of eddy viscosity RBF coefficients, has the first row as time values
     Eigen::MatrixXd rbfCoeffMat;
@@ -220,6 +261,9 @@ public:
 
     /// Boolean to choose whether to skip the lifting modes in the reconstruction
     bool skipLift = true;
+
+    /// Word to indicate the stabilization method. It is used in the post-processing
+    word pressureMethod;
 
     /// Pointer to the FOM problem
     UnsteadyBBTurb* problem;
@@ -239,6 +283,21 @@ public:
     /// and used to get the reduced initial condition default = 0.
     ///
     void solveOnline_sup(const Eigen::MatrixXd& temp_now_BC,
+        const Eigen::MatrixXd& vel_now_BC, int NParaSet = 0, int startSnap = 0);
+
+    /// Method to perform an online solve using a VMB  method
+    ///
+    /// @param[in]  temp_now_BC   The scalar of online temperature. It is defined in
+    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
+    /// then each nth column corresponds to the value of the n-th BC at that time.
+    /// @param[in] vel_now_BC   The scalar of online velocity. It is defined in
+    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
+    /// then each nth column corresponds to the value of the n-th BC at that time.
+    /// @param[in]  NParaSet The parameter sets number for which the online solution is solved.
+    /// @param[in]  startSnap The first snapshot taken from the offline snapshots
+    /// and used to get the reduced initial condition default = 0.
+    ///
+    void solveOnline_VMB(const Eigen::MatrixXd& temp_now_BC,
         const Eigen::MatrixXd& vel_now_BC, int NParaSet = 0, int startSnap = 0);
 
     /// @brief    Method to reconstruct a solution from an online solve
@@ -265,6 +324,38 @@ public:
     /// @param[in]  solutionCounter  The counter of the current online solution, used to index the time settings
     ///
     void setTimeSettings(const Eigen::MatrixXd& timeMatrix, label solutionCounter);
+
+    /// @brief   Estimate the penalty factor using the iterative approach developed by S. Star.
+    ///
+    /// @param[in] velBC            Velocity boundary conditions
+    /// @param[in] temperatureBC    Temperature boundary conditions
+    /// @param[in] timeStepPenalty  Number of time steps to use for the penalty
+    /// @param[in] maxIter          Maximum number of iterations
+    /// @param[in] tol              Tolerance for convergence
+    /// @param[in] startSnap        Snapshot to use as initial condition
+
+    void estimatePenaltyFactorSupremizer(const Eigen::MatrixXd& velBC,
+        const Eigen::MatrixXd& temperatureBC, int NtimeStepPenalty,
+        int maxIter, double toleranceU, double toleranceT, int startSnap);
+
+    /// @brief   Carries out initial checks and assertions
+    ///
+    void validateSettings();
+
+    /// @brief      Set the boundary conditions in the (templated) Newton object
+    ///
+    /// @param[in,out]  newtonObject  The Newton object where to set the BCs
+    /// @param[in]      boundaryConditions  The BoundaryConditions object containing the BCs
+    template <typename NewtonType>
+    void setNewtonObjectBC(NewtonType& newtonObject, BoundaryConditions& boundaryConditions);
+
+    /// @brief      Method to configure a generic Newton object with the current settings. What it does is assign physical properties,
+    ///             time step, boundary conditions, stabilization coefficients, etc. Templated to support different Newton object types.
+    ///
+    /// @param[in,out]  newtonObject  The Newton object to be configured
+    /// @param[in]      currentY     The current reduced solution vector
+    template <typename NewtonType>
+    void configureNewtonObject(NewtonType& newtonObject, const Eigen::VectorXd& currentY, BoundaryConditions& boundaryConditions);
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

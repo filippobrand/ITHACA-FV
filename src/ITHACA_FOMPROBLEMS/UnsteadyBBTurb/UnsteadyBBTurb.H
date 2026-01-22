@@ -232,6 +232,18 @@ public:
     ///
     void projectSUP(fileName folder, label NU, label NPrgh, label NT, label NSUP, label Nnut, float RBFShapeParameter);
 
+
+    //--------------------------------------------------------------------------
+    /// Project using no stabilization approach, thus sharing the temporal coefficients between velocity and pressure
+    ///
+    /// @param[in]  folder     The folder used to save the reduced matrices.
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NT    The number of temperature modes.
+    /// @param[in]  Nnut  The number of eddy viscosity modes.
+    /// @param[in]  RBFShapeParameter  The RBF shape parameter for the interpolation of the eddy viscosity coefficients.
+
+    void projectVMB(fileName folder, label NU, label NT, label Nnut, float RBFShapeParameter);
+
     //--------------------------------------------------------------------------
     /// Gradient of pressure
     ///
