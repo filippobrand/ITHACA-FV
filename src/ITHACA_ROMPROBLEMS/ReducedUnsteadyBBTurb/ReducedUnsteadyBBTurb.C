@@ -493,7 +493,7 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC
     // Eigen::VectorXd tv;
     // Eigen::VectorXd aDer;
     // tv.resize(dimA);
-    
+
     while (time < finalTime)
     {
         time = time + dt;
@@ -973,6 +973,10 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
         currentTimeErrorsT.setConstant(1e6);
         currentIteration = 0;
         currentTimeStep += 1;
+        
+        bool convergedU = false;
+        bool convergedT = false; // These flags are used so that, when one of the two variables has converged, its penalty factor is not updated anymore
+
         time = time + dt;
         boundaryConditions.updateTimeDependentBC(time);
         if (problem->timedepbcMethod == "yes")
@@ -1005,39 +1009,51 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
                           << std::endl;
             }
 
-            uRecPen = problem->L_U_SUPmodes.reconstruct(uRecPen, y.head(Nphi_u), "uRecPen");
-            TRecPen = problem->L_Tmodes.reconstruct(TRecPen, y.tail(Nphi_t), "TRecPen");
+            if (convergedU == false)
+            {
+                uRecPen = problem->L_U_SUPmodes.reconstruct(uRecPen, y.head(Nphi_u), "uRecPen");
+                for (int k = 0; k < N_BC; k++)
+                {
+                    currentTimeU(k) = uRecPen.boundaryFieldRef()[problem->inletIndex(k, 0)][0].component(problem->inletIndex(k, 1));
+                }
+                currentTimeErrorsU = (currentTimeU - boundaryConditions.currentVelocityBC).cwiseAbs();
+                for (int k = 0; k < N_BC; k++)
+                {
+                    tauU(k, 0) = tauU(k, 0) * (currentTimeErrorsU(k) / tolerancePenaltyU);
+                }
+                newton_object_sup.tauU = tauU;
+                if (currentTimeErrorsU.maxCoeff() <= tolerancePenaltyU)
+                {
+                    convergedU = true;
+                }
+            }
 
-            for (int k = 0; k < N_BC; k++)
+            if (convergedT == false)
             {
-                currentTimeU(k) = uRecPen.boundaryFieldRef()[problem->inletIndex(k, 0)][0].component(problem->inletIndex(k, 1));
+                TRecPen = problem->L_Tmodes.reconstruct(TRecPen, y.tail(Nphi_t), "TRecPen");
+                for (int k = 0; k < N_BC_t; k++)
+                {
+                    currentTimeT(k) = TRecPen.boundaryFieldRef()[problem->inletIndexT(k, 0)][0];
+                }
+                currentTimeErrorsT = (currentTimeT - boundaryConditions.currentTemperatureBC).cwiseAbs();
+                for (int k = 0; k < N_BC_t; k++)
+                {
+                    tauT(k, 0) = tauT(k, 0) * (currentTimeErrorsT(k) / tolerancePenaltyT);
+                }
+                newton_object_sup.tauT = tauT;
+                if (currentTimeErrorsT.maxCoeff() <= tolerancePenaltyT)
+                {
+                    convergedT = true;
+                }
             }
-            for (int k = 0; k < N_BC_t; k++)
-            {
-                currentTimeT(k) = TRecPen.boundaryFieldRef()[problem->inletIndexT(k, 0)][0];
-            }
-            currentTimeErrorsU = (currentTimeU - boundaryConditions.currentVelocityBC).cwiseAbs();
-            currentTimeErrorsT = (currentTimeT - boundaryConditions.currentTemperatureBC).cwiseAbs();
-
-            for (int k = 0; k < N_BC; k++)
-            {
-                tauU(k, 0) = tauU(k, 0) * (currentTimeErrorsU(k) + 1e-5 / tolerancePenaltyU);
-            }
-
-            for (int k = 0; k < N_BC_t; k++)
-            {
-                tauT(k, 0) = tauT(k, 0) * (currentTimeErrorsT(k) + 1e-5 / tolerancePenaltyT);
-            }
-            newton_object_sup.tauU = tauU;
-            newton_object_sup.tauT = tauT;
         }
         newton_object_sup.y_old = y;
-        Info << "Penalty factor estimation finished for timeStep " << currentTimeStep << " after " << currentIteration << " iterations." << endl;
-        Info << "Final tauU values: " << tauU << endl;
-        Info << "Final tauT values: " << tauT << endl;
-        Info << "Final velocity BC errors: " << currentTimeErrorsU << endl;
-        Info << "Final temperature BC errors: " << currentTimeErrorsT << endl;
-    }    
+    }
+    Info << "Penalty factor estimation finished for timeStep " << currentTimeStep << " after " << currentIteration << " iterations." << endl;
+    Info << "Final tauU values: " << tauU << endl;
+    Info << "Final tauT values: " << tauT << endl;
+    Info << "Final velocity BC errors: " << currentTimeErrorsU << endl;
+    Info << "Final temperature BC errors: " << currentTimeErrorsT << endl;
 }
 
 
