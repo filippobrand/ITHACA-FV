@@ -76,8 +76,6 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
     bcMethod = ITHACAdict->lookupOrDefault<word>("bcMethod", "lift");
     timedepbcMethod = ITHACAdict->lookupOrDefault<word>("timedepbcMethod", "no");
 
-    M_Assert(!(bcMethod == "lift" && timedepbcMethod == "yes"),
-        "The lifting method is not compatible with time-dependent BCs. Please choose the penalty method.");
     M_Assert(method == "supremizer" || method == "PPE" || method == "VMB",
         "A method must be set to either 'supremizer', 'VMB' or 'PPE' in ITHACAdict");
     M_Assert(bcMethod == "lift" || bcMethod == "penalty",
@@ -163,12 +161,12 @@ void UnsteadyBBTurb::truthSolve(List<scalar> mu_now, label nSample)
              << nl << endl;
         if (checkWrite(runTime))
         {
-            // nut = turbulence->nut();
+            nut = turbulence->nut();
             ITHACAstream::exportSolution(U, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(p, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(p_rgh, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(T, name(counter), "./ITHACAoutput/Offline/");
-            // ITHACAstream::exportSolution(nut, name(counter), "./ITHACAoutput/Offline/");
+            ITHACAstream::exportSolution(nut, name(counter), "./ITHACAoutput/Offline/");
             std::ofstream of("./ITHACAoutput/Offline/" + name(counter) + "/" + runTime.timeName());
 
             timeSnapshots[nSample](stepCounter) = runTime.value();
@@ -177,7 +175,7 @@ void UnsteadyBBTurb::truthSolve(List<scalar> mu_now, label nSample)
             Ufield.append(U.clone());
             Prghfield.append(p_rgh.clone());
             Tfield.append(T.clone());
-            // Nutfield.append(nut.clone());
+            Nutfield.append(nut.clone());
             nextWrite += writeEvery;
             writeMu(mu_now);
             counter++;
@@ -577,7 +575,7 @@ void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT
     }
 
     B_total_matrix = B_matrix; // + BT_matrix;
-    label cSize = NU + NSUP + liftfield.size();
+    // label cSize = NU + NSUP + liftfield.size();
     // C_total_tensor.resize(cSize, Nnut, cSize);
     // C_total_tensor = CT1_tensor + CT2_tensor;
     // C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
@@ -701,8 +699,9 @@ void UnsteadyBBTurb::offlineRBFInterpolation(float RBFshapeParam) // TODO: Make 
     {
         coeffL2vel = ITHACAutilities::getCoeffs(Ufield, L_U_SUPmodes, NUmodes); // Returns a [modes x snapshots]
     }
-    Info << "Obtained the L2 coefficients for velocity and eddy viscosity." << endl;
     Info << "Shape of the L2 velocity coeff matrix: " << coeffL2vel.rows() << " x " << coeffL2vel.cols() << endl;
+    Info << "Shape of the L2 eddy viscosity coeff matrix: " << coeffL2nut.rows() << " x " << coeffL2nut.cols() << endl;
+    
     // // Substitute the BC rows with the appropriate values when using lifting approach
     // if (liftfield.size() > 0)
     // {
@@ -732,31 +731,6 @@ void UnsteadyBBTurb::offlineRBFInterpolation(float RBFshapeParam) // TODO: Make 
 
     List<Eigen::MatrixXd> velDerCoeff = velDerivativeCoeff(coeffL2vel.transpose(), coeffL2nut.transpose(), timeSnapshots);
     dimA = velDerCoeff[0].cols();
-    meanA.resize(velDerCoeff[0].cols());
-    stdA.resize(velDerCoeff[0].cols());
-    // Normalize and scale the data for better RBF performance. We save the mean and std for later use during the online phase.
-    for (label i = 0; i < velDerCoeff[0].cols(); i++)
-    {
-        meanA(i) = velDerCoeff[0].col(i).mean();
-        stdA(i) = std::sqrt((velDerCoeff[0].col(i).array() - meanA(i)).square().sum() / (velDerCoeff[0].rows() - 1));
-        if (stdA(i) == 0)
-        {
-            stdA(i) = 1; // To avoid division by zero in case of constant mode
-        }
-        // velDerCoeff[0].col(i) = (velDerCoeff[0].col(i).array() - meanA(i)) / stdA(i);
-    }
-    meanG.resize(velDerCoeff[1].cols());
-    stdG.resize(velDerCoeff[1].cols());
-    for (label i = 0; i < velDerCoeff[1].cols(); i++)
-    {
-        meanG(i) = velDerCoeff[1].col(i).mean();
-        stdG(i) = std::sqrt((velDerCoeff[1].col(i).array() - meanG(i)).square().sum() / (velDerCoeff[1].rows() - 1));
-        if (stdG(i) == 0)
-        {
-            stdG(i) = 1; // To avoid division by zero in case of constant mode
-        }
-        // velDerCoeff[1].col(i) = (velDerCoeff[1].col(i).array() - meanG(i)) / stdG(i);
-    }
 
     if (Pstream::master())
     {
@@ -765,9 +739,9 @@ void UnsteadyBBTurb::offlineRBFInterpolation(float RBFshapeParam) // TODO: Make 
         ITHACAstream::exportMatrix(velDerCoeff[1], "G_RBF", "python", "./ITHACAoutput/Debug/");
     }
 
-    // Guesstimation of the shapeParam of the RBFs based on the average distance between points
     if (ITHACAutilities::check_file("./ITHACAoutput/shapeParameters"))
     {
+        Info << "Reading RBF shape parameters from file..." << endl;
         shapeParameters = ITHACAstream::readMatrix("./ITHACAoutput/shapeParameters");
         M_Assert(shapeParameters.size() == Nnutmodes,
             "Thes size of the shape parameters vector must be equal to the number of eddy viscosity modes nNutModes");
@@ -863,6 +837,7 @@ void UnsteadyBBTurb::offlineRBFInterpolation(float RBFshapeParam) // TODO: Make 
             }
         }
     }
+    Info << "RBF interpolation setup completed." << endl;
 }
 
 List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(const Eigen::MatrixXd& A,
