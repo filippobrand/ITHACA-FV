@@ -584,6 +584,86 @@ void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT
     // offlineRBFInterpolation(float(RBFShapeParameter));
 }
 
+void UnsteadyBBTurb::projectPPE(fileName folder, label NU, label NPrgh, label NT,
+    label Nnut, float RBFShapeParameter)
+{
+    NUmodes = NU;
+    NTmodes = NT;
+    NPrghmodes = NPrgh;
+    Nnutmodes = Nnut;
+
+    L_U_SUPmodes.resize(0);
+    if (liftfield.size() != 0)
+    {
+        for (label k = 0; k < liftfield.size(); k++)
+        {
+            L_U_SUPmodes.append(liftfield[k].clone());
+        }
+    }
+    if (NU != 0)
+    {
+        for (label k = 0; k < NU; k++)
+        {
+            L_U_SUPmodes.append(Umodes[k].clone());
+        }
+    }
+
+    L_Tmodes.resize(0);
+    if (liftfieldT.size() != 0)
+    {
+        for (label k = 0; k < liftfieldT.size(); k++)
+        {
+            L_Tmodes.append(liftfieldT[k].clone());
+        }
+    }
+    if (NT != 0)
+    {
+        for (label k = 0; k < NT; k++)
+        {
+            L_Tmodes.append(Tmodes[k].clone());
+        }
+    }
+
+    M_matrix = mass_term(NU, NPrgh, 0);
+    B_matrix = diffusive_term(NU, NPrgh, 0);
+    K_matrix = pressure_gradient_term(NU, NPrgh, 0);
+    H_matrix = buoyant_term(NU, NT, 0);
+    W_matrix = mass_term_temperature(NU, NT, 0);
+    Y_matrix = diffusive_term_temperature(NU, NT, 0);
+    P_matrix = divergence_term(NU, NPrgh, 0);
+    // BT_matrix = BTturbulence(NU, 0);
+    C_tensor = convective_term_tens(NU, NPrgh, 0);
+    Q_tensor = convective_tensor_temperature(NU, NT, 0);
+    D_matrix = laplacian_pressure(NPrghmodes);
+    G_tensor = divMomentum(NUmodes, NPrghmodes);
+    HP_matrix = buoyant_term_poisson(NPrghmodes, NTmodes);
+    BC1_matrix = pressure_BC1(NUmodes, NPrghmodes);
+    BC2_tensor = pressure_BC2(NUmodes, NPrghmodes);
+    BC3_matrix = pressure_BC3(NUmodes, NPrghmodes);
+    // CT1_tensor = turbulenceTensor1(NU, 0, Nnut);
+    // CT2_tensor = turbulenceTensor2(NU, 0, Nnut);
+    // CT1_ave_tensor = turbulenceAveTensor1(NU, 0);
+    // CT2_ave_tensor = turbulenceAveTensor2(NU, 0);
+    // YT_tensor = temperatureTurbulenceTensor(NT, Nnut);
+    // YT_ave_tensor = turbulenceTemperatureAveTensor(NT);
+
+    if (bcMethod == "penalty")
+    {
+        Info << "Assembling BC penalty matrices." << endl;
+        bcVelVec = bcVelocityVec(NUmodes, 0);
+        bcVelMat = bcVelocityMat(NUmodes, 0);
+        bcTempVec = bcTemperatureVec(NTmodes);
+        bcTempMat = bcTemperatureMat(NTmodes);
+    }
+
+    B_total_matrix = B_matrix; // + BT_matrix;
+    // label cSize = NU + NSUP + liftfield.size();
+    // C_total_tensor.resize(cSize, Nnut, cSize);
+    // C_total_tensor = CT1_tensor + CT2_tensor;
+    // C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
+    // C_total_ave_tensor = CT1_ave_tensor + CT2_ave_tensor;
+}
+
 void UnsteadyBBTurb::projectVMB(fileName folder, label NU, label NT, label Nnut, float RBFShapeParameter)
 {
     NUmodes = NU;
@@ -701,7 +781,7 @@ void UnsteadyBBTurb::offlineRBFInterpolation(float RBFshapeParam) // TODO: Make 
     }
     Info << "Shape of the L2 velocity coeff matrix: " << coeffL2vel.rows() << " x " << coeffL2vel.cols() << endl;
     Info << "Shape of the L2 eddy viscosity coeff matrix: " << coeffL2nut.rows() << " x " << coeffL2nut.cols() << endl;
-    
+
     // // Substitute the BC rows with the appropriate values when using lifting approach
     // if (liftfield.size() > 0)
     // {
@@ -976,6 +1056,7 @@ Eigen::MatrixXd UnsteadyBBTurb::pressure_gradient_term(label NUmodes,
         // Export the matrix
         ITHACAstream::SaveDenseMatrix(K_matrix, "./ITHACAoutput/Matrices/",
             "K_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NSUPmodes) + "_" + name(NPrghmodes));
+        ITHACAstream::exportMatrix(K_matrix, "K_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
     return K_matrix;
@@ -1005,6 +1086,7 @@ Eigen::MatrixXd UnsteadyBBTurb::diffusive_term_temperature(label NUmodes,
         // Export the matrix
         ITHACAstream::SaveDenseMatrix(Y_matrix, "./ITHACAoutput/Matrices/",
             "Y_" + name(liftfieldT.size()) + "_" + name(NTmodes));
+        ITHACAstream::exportMatrix(Y_matrix, "Y_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
     return Y_matrix;
@@ -1036,6 +1118,7 @@ Eigen::MatrixXd UnsteadyBBTurb::divergence_term(label NUmodes, label NPrghmodes,
         // Export the matrix
         ITHACAstream::SaveDenseMatrix(P_matrix, "./ITHACAoutput/Matrices/",
             "P_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NSUPmodes) + "_" + name(NPrghmodes));
+        ITHACAstream::exportMatrix(P_matrix, "P_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
     return P_matrix;
@@ -1071,6 +1154,7 @@ Eigen::MatrixXd UnsteadyBBTurb::buoyant_term(label NUmodes, label NTmodes,
         // Export the matrix
         ITHACAstream::SaveDenseMatrix(H_matrix, "./ITHACAoutput/Matrices/",
             "H_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NSUPmodes) + "_" + name(liftfieldT.size()) + "_" + name(NTmodes));
+        ITHACAstream::exportMatrix(H_matrix, "H_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
     return H_matrix;
@@ -1098,6 +1182,7 @@ Eigen::MatrixXd UnsteadyBBTurb::mass_term_temperature(label NUmodes, label NTmod
     {
         ITHACAstream::SaveDenseMatrix(W_matrix, "./ITHACAoutput/Matrices/",
             "W_" + name(liftfieldT.size()) + "_" + name(NTmodes));
+        ITHACAstream::exportMatrix(W_matrix, "W_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
     return W_matrix;
@@ -1342,9 +1427,224 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::convective_tensor_temperature(label NU,
         ITHACAstream::SaveDenseTensor(Q_tensor, "./ITHACAoutput/Matrices/",
             "Q_" + name(liftfield.size()) + "_" + name(NU) + "_" +
                 name(NSUP) + "_" + name(liftfieldT.size()) + "_" + name(NT) + "_t");
+        ITHACAstream::exportTensor(Q_tensor, "Q_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
     return Q_tensor;
 }
+
+Eigen::MatrixXd UnsteadyBBTurb::laplacian_pressure(label NPrghmodes)
+{
+    label Dsize = NPrghmodes + liftfieldP.size();
+    Eigen::MatrixXd D_matrix(Dsize, Dsize);
+
+    // Project everything
+    for (label i = 0; i < Dsize; i++)
+    {
+        for (label j = 0; j < Dsize; j++)
+        {
+            D_matrix(i, j) = fvc::domainIntegrate(fvc::grad(P_rghmodes[i]) & fvc::grad(
+                    P_rghmodes[j])).value();
+        }
+    }
+
+    if (Pstream::master())
+    {
+        ITHACAstream::SaveDenseMatrix(D_matrix, "./ITHACAoutput/Matrices/",
+                                      "D_" + name(NPrghmodes));
+    }
+
+    return D_matrix;
+}
+
+Eigen::Tensor<double, 3> UnsteadyBBTurb::divMomentum(label NU, label NPrghmodes)
+{
+    label g1Size = NPrghmodes + liftfieldP.size();
+    label g2Size = NU + liftfield.size();
+    Eigen::Tensor<double, 3> gTensor;
+    gTensor.resize(g1Size, g2Size, g2Size);
+
+    for (label i = 0; i < g1Size; i++)
+    {
+        for (label j = 0; j < g2Size; j++)
+        {
+            for (label k = 0; k < g2Size; k++)
+            {
+                gTensor(i, j, k) = fvc::domainIntegrate(fvc::grad(P_rghmodes[i]) & (fvc::div(
+                        fvc::interpolate(L_U_SUPmodes[j]) & L_U_SUPmodes[j].mesh().Sf(),
+                        L_U_SUPmodes[k]))).value();
+            }
+        }
+    }
+
+    if (Pstream::master())
+    {
+        // Export the tensor
+        ITHACAstream::SaveDenseTensor(gTensor, "./ITHACAoutput/Matrices/",
+                                      "G_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(
+                                          NSUPmodes) + "_" + name(NPrghmodes) + "_t");
+    }
+
+    return gTensor;
+}
+
+Eigen::MatrixXd UnsteadyBBTurb::buoyant_term_poisson(label NPrghmodes,
+    label NTmodes)
+{
+    label H1size = NPrghmodes;
+    label H2size = NTmodes + liftfieldT.size();
+    Eigen::MatrixXd HP_matrix(H1size, H2size);
+    // Create PTRLIST with lift, velocities and temperatures
+    dimensionedScalar beta = _beta();
+    dimensionedScalar TRef = _TRef();
+    dimensionedVector g = _g();
+    volScalarField& gh = _gh();
+    surfaceScalarField& ghf = _ghf();
+
+    // Project everything
+    for (label i = 0; i < H1size; i++)
+    {
+        for (label j = 0; j < H2size; j++)
+        {
+            HP_matrix(i, j) = fvc::domainIntegrate(fvc::reconstruct(fvc::snGrad(
+                                                                        P_rghmodes[i]) *
+                                                       P_rghmodes[i].mesh().magSf()) &
+                fvc::reconstruct(
+                    ghf * fvc::snGrad(-(beta * (L_Tmodes[j]))) * L_Tmodes[j].mesh().magSf()))
+                                  .value();
+        }
+    }
+
+    if (Pstream::parRun())
+    {
+        reduce(HP_matrix, sumOp<Eigen::MatrixXd>());
+    }
+
+    if (Pstream::master())
+    {
+        ITHACAstream::SaveDenseMatrix(HP_matrix, "./ITHACAoutput/Matrices/",
+            "HP_" + name(NPrghmodes) + "_" + name(liftfieldT.size()) + "_" + name(NTmodes));
+    }
+
+    return HP_matrix;
+}
+
+Eigen::MatrixXd UnsteadyBBTurb::pressure_BC1(label NUmodes, label NPrghmodes)
+{
+    label P_BC1size = NPrghmodes;
+    label P_BC2size = NUmodes + liftfield.size();
+    Eigen::MatrixXd BC1_matrix(P_BC1size, P_BC2size);
+    const fvMesh& mesh = L_U_SUPmodes[0].mesh();
+
+    for (label i = 0; i < P_BC1size; i++)
+    {
+        for (label j = 0; j < P_BC2size; j++)
+        {
+            surfaceScalarField lpl((fvc::interpolate(fvc::laplacian(
+                                        L_U_SUPmodes[j])) & mesh.Sf()) * fvc::interpolate(P_rghmodes[i]));
+            double s = 0;
+
+            for (label k = 0; k < lpl.boundaryField().size(); k++)
+            {
+                if (lpl.boundaryField()[k].type() != "processor")
+                {
+                    s += gSum(lpl.boundaryField()[k]);
+                }
+            }
+
+            BC1_matrix(i, j) = s;
+        }
+    }
+
+    if (Pstream::master())
+    {
+        ITHACAstream::SaveDenseMatrix(BC1_matrix, "./ITHACAoutput/Matrices/",
+                                      "BC1_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NPrghmodes));
+    }
+
+    return BC1_matrix;
+}
+
+Eigen::Tensor<double, 3> UnsteadyBBTurb::pressure_BC2(label NUmodes, label NPrghmodes)
+{
+    label pressureBC1Size = NPrghmodes;
+    label pressureBC2Size = NUmodes + liftfield.size();
+    Eigen::Tensor<double, 3> bc2Tensor;
+    const fvMesh& mesh = L_U_SUPmodes[0].mesh();
+    bc2Tensor.resize(pressureBC1Size, pressureBC2Size, pressureBC2Size);
+
+    for (label i = 0; i < pressureBC1Size; i++)
+    {
+        for (label j = 0; j < pressureBC2Size; j++)
+        {
+            for (label k = 0; k < pressureBC2Size; k++)
+            {
+                surfaceScalarField div_m(fvc::interpolate(fvc::div(fvc::interpolate(
+                                             L_U_SUPmodes[j]) & mesh.Sf(),
+                                         L_U_SUPmodes[k])) & mesh.Sf() * fvc::interpolate(P_rghmodes[i]));
+                double s = 0;
+
+                for (label k = 0; k < div_m.boundaryField().size(); k++)
+                {
+                    if (div_m.boundaryField()[k].type() != "processor")
+                    {
+                        s += gSum(div_m.boundaryField()[k]);
+                    }
+                }
+
+                bc2Tensor(i, j, k) = s;
+            }
+        }
+    }
+
+    if (Pstream::master())
+    {
+        // Export the tensor
+        ITHACAstream::SaveDenseTensor(bc2Tensor, "./ITHACAoutput/Matrices/",
+                                      "BC2_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(
+                                          NSUPmodes) + "_" + name(NPrghmodes) + "_t");
+    }
+
+    return bc2Tensor;
+  }
+
+Eigen::MatrixXd UnsteadyBBTurb::pressure_BC3(label NUmodes, label NPrghmodes)
+{
+    label P3_BC1size = NPrghmodes;
+    label P3_BC2size = NUmodes + liftfield.size();
+    Eigen::MatrixXd BC3_matrix(P3_BC1size, P3_BC2size);
+    const fvMesh& mesh = L_U_SUPmodes[0].mesh();
+    surfaceVectorField n(mesh.Sf() / mesh.magSf());
+
+    for (label i = 0; i < P3_BC1size; i++)
+    {
+        for (label j = 0; j < P3_BC2size; j++)
+        {
+            surfaceVectorField BC3 = fvc::interpolate(fvc::curl(L_U_SUPmodes[j])).ref();
+            surfaceVectorField BC4 = (n ^ fvc::interpolate(fvc::grad(P_rghmodes[i]))).ref();
+            surfaceScalarField BC5 = ((BC3 & BC4) * mesh.magSf()).ref();
+            double s = 0;
+
+            for (label k = 0; k < BC5.boundaryField().size(); k++)
+            {
+                if (BC5.boundaryField()[k].type() != "processor")
+                {
+                    s += gSum(BC5.boundaryField()[k]);
+                }
+            }
+
+            BC3_matrix(i, j) = s;
+        }
+    }
+
+    if (Pstream::master())
+    {
+        ITHACAstream::SaveDenseMatrix(BC3_matrix, "./ITHACAoutput/Matrices/",
+                                      "BC3_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NPrghmodes));
+    }
+
+    return BC3_matrix;
+}
+
 
 // * * * * * * * * * * * * * * Penalty term methods * * * * * * * * * * * * * //
 

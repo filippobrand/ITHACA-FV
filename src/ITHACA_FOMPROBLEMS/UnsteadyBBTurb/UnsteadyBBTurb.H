@@ -142,6 +142,12 @@ public:
     /// Turbulent viscosity term
     Eigen::MatrixXd BT_matrix;
 
+    /// G tensor for the PPE approach
+    Eigen::Tensor<double, 3> G_tensor;
+
+    /// BC2 tensor for the PPE approach
+    Eigen::Tensor<double, 3> BC2_tensor;
+
     /// Turbulent viscosity tensor CT1 for the momentum equation
     Eigen::Tensor<double, 3> CT1_tensor;
 
@@ -232,6 +238,15 @@ public:
     ///
     void projectSUP(fileName folder, label NU, label NPrgh, label NT, label NSUP, label Nnut, float RBFShapeParameter);
 
+    //--------------------------------------------------------------------------
+    /// Project using a supremizer approach
+    ///
+    /// @param[in]  folder     The folder used to save the reduced matrices.
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NPrgh    The number of pressure modes.
+    /// @param[in]  NSUP  The number of supremizer modes.
+    ///
+    void projectPPE(fileName folder, label NU, label NPrgh, label NT, label Nnut, float RBFShapeParameter);
 
     //--------------------------------------------------------------------------
     /// Project using no stabilization approach, thus sharing the temporal coefficients between velocity and pressure
@@ -308,6 +323,30 @@ public:
     /// @return     BT matrix for turbulence treatment
     ///
     Eigen::MatrixXd BTturbulence(label NU, label NSUP);
+
+    //--------------------------------------------------------------------------
+    /// @brief      Laplacian term of the PPE approach
+    Eigen::MatrixXd laplacian_pressure(label NPrghmodes);
+
+    //--------------------------------------------------------------------------
+    /// @brief       Buoyancy term for the PPE equation
+    Eigen::MatrixXd buoyant_term_poisson(label NPrghmodes, label NTmodes);
+    
+    //--------------------------------------------------------------------------
+    /// @brief      Pressure BC1 matrix for the PPE approach
+    Eigen::MatrixXd pressure_BC1(label NUmodes, label NPrghmodes);
+
+    //--------------------------------------------------------------------------
+    /// @brief      Pressure BC2 matrix for the PPE approach
+    Eigen::Tensor<double, 3> pressure_BC2(label NUmodes, label NPrghmodes);
+
+    //--------------------------------------------------------------------------
+    /// @brief      Pressure BC3 matrix for the PPE approach
+    Eigen::MatrixXd pressure_BC3(label NUmodes, label NPrghmodes);
+
+    //--------------------------------------------------------------------------
+    /// @brief      Divergence of the momentum equation for the PPE approach
+    Eigen::Tensor<double, 3> divMomentum(label NUmodes, label NPrghmodes);
 
     //--------------------------------------------------------------------------
     /// @brief      S added tensor for the thermal turbulence treatement

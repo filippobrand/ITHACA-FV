@@ -1030,6 +1030,7 @@ Eigen::Tensor<double, 3> steadyNS::convective_term_tens(label NUmodes,
         ITHACAstream::SaveDenseTensor(C_tensor, "./ITHACAoutput/Matrices/",
                                       "C_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(
                                           NSUPmodes) + "_t");
+        ITHACAstream::exportTensor(C_tensor, "C_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
 
     return C_tensor;

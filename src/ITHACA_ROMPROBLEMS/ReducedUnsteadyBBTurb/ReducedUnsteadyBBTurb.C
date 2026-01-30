@@ -372,44 +372,89 @@ int newton_unsteadyBBTurb_PPE::operator()(const Eigen::VectorXd& x,
     // Convective term temperature
     Eigen::MatrixXd qq(1, 1);
     // Momentum Term
-    Eigen::VectorXd M1 = problem->B_matrix * a_tmp * nu;
+    Eigen::VectorXd M11 = problem->B_total_matrix * a_tmp * nu;
     // Gradient of pressure
     Eigen::VectorXd M2 = problem->K_matrix * b_tmp;
     // Mass Term
     Eigen::VectorXd M5 = problem->M_matrix * a_dot;
-    // Pressure Term
+    // Pressure Term - Laplacian
     Eigen::VectorXd M3 = problem->D_matrix * b_tmp;
     // BC PPE
     Eigen::VectorXd M6 = problem->BC1_matrix * a_tmp * nu;
     // BC PPE
     // Buoyancy Term
     Eigen::VectorXd M10 = problem->H_matrix * c_tmp;
-    Eigen::VectorXd M11 = problem->HP_matrix * c_tmp;
+    Eigen::VectorXd M12 = problem->HP_matrix * c_tmp;
     Eigen::VectorXd M7 = problem->BC3_matrix * a_tmp * nu;
     // diffusive term temperature
     Eigen::VectorXd M9 = problem->Y_matrix * c_tmp * (nu / Pr);
     // Mass Term Temperature
     Eigen::VectorXd M8 = problem->W_matrix * c_dot;
+    // Penalty term velocity
+    Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(Nphi_u, N_BC);
+    Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(Nphi_t, N_BC_t);
+    if (problem->bcMethod == "penalty")
+    {
+        for (int l = 0; l < N_BC; l++)
+        {
+            penaltyU.col(l) = tauU(l, 0) * (BC(l) * problem->bcVelVec[l] - problem->bcVelMat[l] * a_tmp);
+        }
+        for (int l = 0; l < N_BC_t; l++)
+        {
+            penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * problem->bcTempVec[l] - problem->bcTempMat[l] * c_tmp);
+        }
+    }
 
     for (int i = 0; i < Nphi_u; i++)
     {
         cc = a_tmp.transpose() * Eigen::SliceFromTensor(problem->C_tensor, 0, i) * a_tmp;
-        fvec(i) = -M5(i) + M1(i) - cc(0, 0) - M10(i) - M2(i);
-    }
+        fvec(i) = -M5(i) + M11(i) - cc(0, 0) - M10(i) - M2(i);
 
+        if (problem->bcMethod == "penalty")
+        {
+            for (int l = 0; l < N_BC; l++)
+            {
+                fvec(i) += penaltyU(i, l);
+            }
+        }
+    }
     for (int j = 0; j < Nphi_prgh; j++)
     {
         int k = j + Nphi_u;
-        gg = a_tmp.transpose() * problem->G_matrix[j] * a_tmp;
-        bb = a_tmp.transpose() * problem->BC2_matrix[j] * a_tmp;
-        fvec(k) = M3(j, 0) + gg(0, 0) + M11(j, 0) - M7(j, 0);
+        gg = a_tmp.transpose() * Eigen::SliceFromTensor(problem->G_tensor, 0, j) * a_tmp;
+        // bb = a_tmp.transpose() * Eigen::SliceFromTensor(problem->BC2_tensor, 0, j) * a_tmp;
+        fvec(k) = M3(j, 0) + gg(0, 0) + M12(j, 0) - M7(j, 0);
     }
-
     for (int j = 0; j < Nphi_t; j++)
     {
         int k = j + Nphi_u + Nphi_prgh;
-        qq = a_tmp.transpose() * problem->Q_matrix[j] * c_tmp;
-        fvec(k) = -M8(j) + M9(j) - qq(0, 0);
+        qq = a_tmp.transpose() * Eigen::SliceFromTensor(problem->Q_tensor, 0, j) * c_tmp;
+        // qt = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->YT_tensor, 0, j) * c_tmp;
+        // qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(problem->YT_ave_tensor, 0, j) * c_tmp;
+        fvec(k) = -M8(j) + M6(j) - qq(0, 0);// + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t; //DEBUG: to disable turbulence
+        Info << "### PPE Temp Residual at mode " << j << " : " << fvec(k) << endl;
+        if (problem->bcMethod == "penalty")
+        {
+            for (int l = 0; l < N_BC_t; l++)
+            {
+                fvec(k) += penaltyT(j, l);
+                Info << "### PPE Temp Penalty at mode " << j << " from BC " << l << " : " << penaltyT(j, l) << endl;
+            }
+        }
+    }
+
+    if (problem->bcMethod == "lift")
+    {
+        for (int j = 0; j < N_BC; j++)
+        {
+            fvec(j) = x(j) - BC(j);
+        }
+
+        for (int j = 0; j < N_BC_t; j++)
+        {
+            int k = j + Nphi_u + Nphi_prgh;
+            fvec(k) = x(k) - BC_t(j);
+        }
     }
     return 0;
 }
@@ -532,6 +577,141 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC
 
         newton_object_sup.operator()(y, res);
         newton_object_sup.y_old = y;
+
+        Info << "Time = " << time << endl;
+        if (res.norm() < 1e-5)
+        {
+            std::cout << green << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
+                      << std::endl;
+        } else
+        {
+            std::cout << red << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
+                      << std::endl;
+        }
+
+        count_online_solve += 1;
+        tmp_sol(0) = time;
+        tmp_sol.col(0).tail(y.rows()) = y;
+
+        if (timeStepCounter == nextStore)
+        {
+            if (storedSnapshotsCounter >= online_solution.size())
+            {
+                online_solution.append(tmp_sol);
+            } else
+            {
+                online_solution[storedSnapshotsCounter] = tmp_sol;
+            }
+            // rbfCoeffMat(0, storedSnapshotsCounter) = time;
+            // rbfCoeffMat.block(1, storedSnapshotsCounter, Nphi_nut, 1) = newton_object_sup.nu_fluct;
+            nextStore += numberOfStores;
+            storedSnapshotsCounter++;
+        }
+        timeStepCounter++;
+    }
+    if (Pstream::master())
+    {
+        ITHACAstream::exportMatrix(online_solution, "red_coeff", "python",
+            "./ITHACAoutput/red_coeff_" + name(NParaSet) + "/");
+    }
+    Info << "Online solve finished, total time steps solved: " << timeStepCounter << endl;
+    count_online_solve += 1;
+}
+
+void ReducedUnsteadyBBTurb::solveOnline_PPE(const Eigen::MatrixXd& temperatureBC,
+    const Eigen::MatrixXd& velocityBC, int NParaSet, int startSnap)
+{
+    Info << "################## Online solve N° " << NParaSet << " ##################" << endl;
+    validateSettings();
+    BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
+
+    y.resize(Nphi_u + Nphi_prgh + Nphi_t, 1);
+    y.setZero();
+
+    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
+    if (problem->bcMethod == "lift")
+    {
+        boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
+    }
+    // nut0 = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
+    // nut_param_0 = interpolateIDW();
+
+    int firstRBFInd;
+    if (skipLift == true && problem->bcMethod == "lift")
+    {
+        firstRBFInd = problem->skipRBFIndex;
+        Info << "Skipping lifting modes in the RBF evaluation. This means that the first RBF index is set to " << firstRBFInd << endl;
+    } else
+    {
+        firstRBFInd = 0;
+        Info << "## COMM - Not skipping lifting modes in the RBF evaluation. This means that the first RBF index is set to " << firstRBFInd << endl;
+    }
+
+    configureNewtonObject(newton_object_PPE, y, boundaryConditions);
+
+    // Set number of online solutions - Time related
+    int numberOfStores = round((storeEvery) / dt); // Number of time steps between two stored solutions
+    int Ntsteps = static_cast<int>((finalTime - tstart) / dt);
+    int onlineSize = static_cast<int>(Ntsteps / numberOfStores); // Total stored solutions, excluding initial condition
+    online_solution.resize(onlineSize);
+    // rbfCoeffMat.resize(Nphi_nut + 1, onlineSize + 3);
+    time = tstart;
+    int nextStore = 0;
+    int timeStepCounter = 0;
+    int storedSnapshotsCounter = 0;
+
+    // Creates a vector to store the temporal solution, while saving the initial condition as first solution
+    Eigen::MatrixXd tmp_sol(Nphi_u + Nphi_prgh + Nphi_t + 1, 1);
+    tmp_sol(0) = time;
+    tmp_sol.col(0).tail(y.rows()) = y;
+
+    Eigen::HybridNonLinearSolver<newton_unsteadyBBTurb_PPE> hnls(newton_object_PPE);
+    // Set output colors for fancy output
+    Color::Modifier red(Color::FG_RED);
+    Color::Modifier green(Color::FG_GREEN);
+    Color::Modifier def(Color::FG_DEFAULT);
+
+    // Eigen::VectorXd tv;
+    // Eigen::VectorXd aDer;
+    // tv.resize(dimA);
+    while (time < finalTime - dt)
+    {
+        time = time + dt;
+        boundaryConditions.updateTimeDependentBC(time);
+
+        if (problem->timedepbcMethod == "yes")
+        {
+            setNewtonObjectBC(newton_object_PPE, boundaryConditions);
+        }
+
+        Eigen::VectorXd res(y);
+        res.setZero();
+        Info << "### DEBUG: Solving the linear system ###" << endl;
+        hnls.solve(y);
+
+        // tv.setZero();
+        // aDer.setZero();
+        // aDer = (y.head(Nphi_u) - newton_object_sup.y_old.head(Nphi_u)) / dt;
+        // tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+
+        /// Now normalize each tv entry with the eigen::vectorXd problem->meanA and problem->stdA
+        // for (int i = 0; i < dimA; i++)
+        // {
+        //     tv(i) = (tv(i) - problem->meanA(i)) / problem->stdA(i);
+        // }
+
+        // for (int j = 0; j < Nphi_nut; j++)
+        // {
+        //     newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->eval(tv); // * problem->stdG(j) + problem->meanG(j);
+        // }
+
+        if (problem->bcMethod == "lift")
+        {
+            boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
+        }
+
+        newton_object_PPE.operator()(y, res);
+        newton_object_PPE.y_old = y;
 
         Info << "Time = " << time << endl;
         if (res.norm() < 1e-5)
@@ -1070,7 +1250,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
 // * * * * * * * * *  Validation and setup helpers  * * * * * * * * //
 void ReducedUnsteadyBBTurb::validateSettings()
 {
-    Info << "Starting the online solve with supremizer stabilisation method."
+    Info << "Starting the online solve."
          << "\nThe following time settings are used:"
          << "\nExport fields every: " << exportEvery
          << "\nStore coefficients every: " << storeEvery

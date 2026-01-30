@@ -138,9 +138,11 @@ public:
                                   Nphi_t(problem.NTmodes + problem.liftfieldT.size()),
                                   N_BC_t(problem.inletIndexT.rows()),
                                   N_BC(problem.inletIndex.rows()),
-                                  Nphi_p(problem.NPmodes),
                                   Nphi_prgh(problem.NPrghmodes),
-                                  Nphi_nut(problem.Nnutmodes)
+                                  Nphi_nut(problem.Nnutmodes),
+                                  nu_fluct(problem.Nnutmodes),
+                                  nu_param(problem.mu.rows())
+
     { }
 
     int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
@@ -148,24 +150,23 @@ public:
 
     UnsteadyBBTurb* problem;
     int Nphi_u;
-    int Nphi_p;
     int Nphi_t;
     int Nphi_prgh;
     int Nphi_nut;
     int N_BC_t;
     int N_BC;
+    Eigen::VectorXd nu_fluct;
+    Eigen::VectorXd nu_param;
     scalar nu;
     scalar Pr;
     scalar Pr_t;
     scalar dt;
-    int writeEvery;
-    word BCmethod;
-    Eigen::MatrixXd tauT;
-    Eigen::MatrixXd tauU;
 
     Eigen::VectorXd y_old;
     Eigen::VectorXd BC_t;
     Eigen::VectorXd BC;
+    Eigen::MatrixXd tauT;
+    Eigen::MatrixXd tauU;
     std::vector<SPLINTER::RBFSpline*> SPLINES;
 };
 
@@ -283,6 +284,21 @@ public:
     /// and used to get the reduced initial condition default = 0.
     ///
     void solveOnline_sup(const Eigen::MatrixXd& temp_now_BC,
+        const Eigen::MatrixXd& vel_now_BC, int NParaSet = 0, int startSnap = 0);
+
+    /// Method to perform an online solve using a PPE stabilisation method
+    ///
+    /// @param[in]  temp_now_BC   The scalar of online temperature. It is defined in
+    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
+    /// then each nth column corresponds to the value of the n-th BC at that time.
+    /// @param[in] vel_now_BC   The scalar of online velocity. It is defined in
+    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
+    /// then each nth column corresponds to the value of the n-th BC at that time.
+    /// @param[in]  NParaSet The parameter sets number for which the online solution is solved.
+    /// @param[in]  startSnap The first snapshot taken from the offline snapshots
+    /// and used to get the reduced initial condition default = 0.
+    ///
+    void solveOnline_PPE(const Eigen::MatrixXd& temp_now_BC,
         const Eigen::MatrixXd& vel_now_BC, int NParaSet = 0, int startSnap = 0);
 
     /// Method to perform an online solve using a VMB  method
