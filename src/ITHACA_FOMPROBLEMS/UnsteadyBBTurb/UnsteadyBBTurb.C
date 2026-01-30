@@ -554,15 +554,15 @@ void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT
         W_matrix = mass_term_temperature(NU, NT, NSUP);
         Y_matrix = diffusive_term_temperature(NU, NT, NSUP);
         P_matrix = divergence_term(NU, NPrgh, NSUP);
-        // BT_matrix = BTturbulence(NU, NSUP);
+        BT_matrix = BTturbulence(NU, NSUP);
         C_tensor = convective_term_tens(NU, NPrgh, NSUP);
         Q_tensor = convective_tensor_temperature(NU, NT, NSUP);
-        // CT1_tensor = turbulenceTensor1(NU, NSUP, Nnut);
-        // CT2_tensor = turbulenceTensor2(NU, NSUP, Nnut);
-        // CT1_ave_tensor = turbulenceAveTensor1(NU, NSUP);
-        // CT2_ave_tensor = turbulenceAveTensor2(NU, NSUP);
-        // YT_tensor = temperatureTurbulenceTensor(NT, Nnut);
-        // YT_ave_tensor = turbulenceTemperatureAveTensor(NT);
+        CT1_tensor = turbulenceTensor1(NU, NSUP, Nnut);
+        CT2_tensor = turbulenceTensor2(NU, NSUP, Nnut);
+        CT1_ave_tensor = turbulenceAveTensor1(NU, NSUP);
+        CT2_ave_tensor = turbulenceAveTensor2(NU, NSUP);
+        YT_tensor = temperatureTurbulenceTensor(NT, Nnut);
+        YT_ave_tensor = turbulenceTemperatureAveTensor(NT);
     }
 
     if (bcMethod == "penalty")
@@ -575,13 +575,13 @@ void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT
     }
 
     B_total_matrix = B_matrix; // + BT_matrix;
-    // label cSize = NU + NSUP + liftfield.size();
-    // C_total_tensor.resize(cSize, Nnut, cSize);
-    // C_total_tensor = CT1_tensor + CT2_tensor;
-    // C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
-    // C_total_ave_tensor = CT1_ave_tensor + CT2_ave_tensor;
+    label cSize = NU + NSUP + liftfield.size();
+    C_total_tensor.resize(cSize, Nnut, cSize);
+    C_total_tensor = CT1_tensor + CT2_tensor;
+    C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
+    C_total_ave_tensor = CT1_ave_tensor + CT2_ave_tensor;
 
-    // offlineRBFInterpolation(float(RBFShapeParameter));
+    offlineRBFInterpolation(float(RBFShapeParameter));
 }
 
 void UnsteadyBBTurb::projectPPE(fileName folder, label NU, label NPrgh, label NT,
@@ -631,7 +631,7 @@ void UnsteadyBBTurb::projectPPE(fileName folder, label NU, label NPrgh, label NT
     W_matrix = mass_term_temperature(NU, NT, 0);
     Y_matrix = diffusive_term_temperature(NU, NT, 0);
     P_matrix = divergence_term(NU, NPrgh, 0);
-    // BT_matrix = BTturbulence(NU, 0);
+    BT_matrix = BTturbulence(NU, 0);
     C_tensor = convective_term_tens(NU, NPrgh, 0);
     Q_tensor = convective_tensor_temperature(NU, NT, 0);
     D_matrix = laplacian_pressure(NPrghmodes);
@@ -640,12 +640,12 @@ void UnsteadyBBTurb::projectPPE(fileName folder, label NU, label NPrgh, label NT
     BC1_matrix = pressure_BC1(NUmodes, NPrghmodes);
     BC2_tensor = pressure_BC2(NUmodes, NPrghmodes);
     BC3_matrix = pressure_BC3(NUmodes, NPrghmodes);
-    // CT1_tensor = turbulenceTensor1(NU, 0, Nnut);
-    // CT2_tensor = turbulenceTensor2(NU, 0, Nnut);
-    // CT1_ave_tensor = turbulenceAveTensor1(NU, 0);
-    // CT2_ave_tensor = turbulenceAveTensor2(NU, 0);
-    // YT_tensor = temperatureTurbulenceTensor(NT, Nnut);
-    // YT_ave_tensor = turbulenceTemperatureAveTensor(NT);
+    CT1_tensor = turbulenceTensor1(NU, 0, Nnut);
+    CT2_tensor = turbulenceTensor2(NU, 0, Nnut);
+    CT1_ave_tensor = turbulenceAveTensor1(NU, 0);
+    CT2_ave_tensor = turbulenceAveTensor2(NU, 0);
+    YT_tensor = temperatureTurbulenceTensor(NT, Nnut);
+    YT_ave_tensor = turbulenceTemperatureAveTensor(NT);
 
     if (bcMethod == "penalty")
     {
@@ -656,12 +656,12 @@ void UnsteadyBBTurb::projectPPE(fileName folder, label NU, label NPrgh, label NT
         bcTempMat = bcTemperatureMat(NTmodes);
     }
 
-    B_total_matrix = B_matrix; // + BT_matrix;
-    // label cSize = NU + NSUP + liftfield.size();
-    // C_total_tensor.resize(cSize, Nnut, cSize);
-    // C_total_tensor = CT1_tensor + CT2_tensor;
-    // C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
-    // C_total_ave_tensor = CT1_ave_tensor + CT2_ave_tensor;
+    B_total_matrix = B_matrix + BT_matrix;
+    label cSize = NU + NSUP + liftfield.size();
+    C_total_tensor.resize(cSize, Nnut, cSize);
+    C_total_tensor = CT1_tensor + CT2_tensor;
+    C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
+    C_total_ave_tensor = CT1_ave_tensor + CT2_ave_tensor;
 }
 
 void UnsteadyBBTurb::projectVMB(fileName folder, label NU, label NT, label Nnut, float RBFShapeParameter)
