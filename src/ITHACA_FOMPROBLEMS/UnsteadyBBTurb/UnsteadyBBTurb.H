@@ -43,6 +43,7 @@ SourceFiles
 #include "pisoControl.H"
 #include "fvOptions.H"
 #include "UnsteadyBB.H"
+#include "ithacaInterpolator.H"
 #include "Modes.H"
 #include <iostream>
 
@@ -104,17 +105,14 @@ public:
     // Dimension of the interpolation matrix A
     label dimA;
 
-    /// sample object for RBF interpolation
-    std::vector<SPLINTER::DataTable*> samples;
+    /// Interpolators for nut coefficient interpolation
+    std::vector<std::shared_ptr<ithacaInterpolator>> rbfSplines;
 
-    /// RBF spline objects for interpolation
-    std::vector<SPLINTER::RBFSpline*> rbfSplines;
+    /// Dictionary to hold details about computing the nut
+    dictionary viscDict;
 
     /// RBF shape parameters vector
     Eigen::VectorXd shapeParameters;
-
-    /// Default RBF shape parameter
-    double shapeParam = 0.005;
 
     /// Vector with column means for normalization during RBF for matrix A
     Eigen::VectorXd meanA;
@@ -127,9 +125,6 @@ public:
 
     /// Vector with column std for normalization during RBF for matrix G
     Eigen::VectorXd stdG;
-
-    /// Bool to enable/disable automatic radius estimation
-    bool estimateShapeParam = false;
 
     /// Create a Eigen vector with the time instant for each snapshot
     List<Eigen::VectorXd> timeSnapshots;
@@ -236,7 +231,7 @@ public:
     /// @param[in]  NPrgh    The number of pressure modes.
     /// @param[in]  NSUP  The number of supremizer modes.
     ///
-    void projectSUP(fileName folder, label NU, label NPrgh, label NT, label NSUP, label Nnut, float RBFShapeParameter);
+    void projectSUP(fileName folder, label NU, label NPrgh, label NT, label NSUP, label Nnut);
 
     //--------------------------------------------------------------------------
     /// Project using a supremizer approach
@@ -246,7 +241,7 @@ public:
     /// @param[in]  NPrgh    The number of pressure modes.
     /// @param[in]  NSUP  The number of supremizer modes.
     ///
-    void projectPPE(fileName folder, label NU, label NPrgh, label NT, label Nnut, float RBFShapeParameter);
+    void projectPPE(fileName folder, label NU, label NPrgh, label NT, label Nnut);
 
     //--------------------------------------------------------------------------
     /// Project using no stabilization approach, thus sharing the temporal coefficients between velocity and pressure
@@ -257,7 +252,7 @@ public:
     /// @param[in]  Nnut  The number of eddy viscosity modes.
     /// @param[in]  RBFShapeParameter  The RBF shape parameter for the interpolation of the eddy viscosity coefficients.
 
-    void projectVMB(fileName folder, label NU, label NT, label Nnut, float RBFShapeParameter);
+    void projectVMB(fileName folder, label NU, label NT, label Nnut);
 
     //--------------------------------------------------------------------------
     /// Gradient of pressure
@@ -446,7 +441,7 @@ public:
     //--------------------------------------------------------------------------
     /// @brief     Carries out the RBF interpolation
     ///
-    void offlineRBFInterpolation(float RBFshapeParam);
+    void offlineRBFInterpolation();
 
     //--------------------------------------------------------------------------
     /// @brief      Resets the fields after a truthSolve, reading from disk the initial conditions.

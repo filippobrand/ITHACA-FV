@@ -86,6 +86,7 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
     offline = ITHACAutilities::check_off();
     podex = ITHACAutilities::check_pod();
     supex = ITHACAutilities::check_sup();
+    viscDict = ITHACAdict->subDict("viscDict");
 }
 
 
@@ -352,7 +353,7 @@ void UnsteadyBBTurb::solvesupremizer(word type)
 // * * * * * * * * * * * * * * Projection Methods * * * * * * * * * * * * * * //
 
 void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT,
-    label NSUP, label Nnut, float RBFShapeParameter)
+    label NSUP, label Nnut)
 {
     NUmodes = NU;
     NTmodes = NT;
@@ -581,11 +582,11 @@ void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT
     C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
     C_total_ave_tensor = CT1_ave_tensor + CT2_ave_tensor;
 
-    offlineRBFInterpolation(float(RBFShapeParameter));
+    offlineRBFInterpolation();
 }
 
 void UnsteadyBBTurb::projectPPE(fileName folder, label NU, label NPrgh, label NT,
-    label Nnut, float RBFShapeParameter)
+    label Nnut)
 {
     NUmodes = NU;
     NTmodes = NT;
@@ -657,14 +658,14 @@ void UnsteadyBBTurb::projectPPE(fileName folder, label NU, label NPrgh, label NT
     }
 
     B_total_matrix = B_matrix + BT_matrix;
-    label cSize = NU + NSUP + liftfield.size();
+    label cSize = NU + liftfield.size();
     C_total_tensor.resize(cSize, Nnut, cSize);
     C_total_tensor = CT1_tensor + CT2_tensor;
     C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
     C_total_ave_tensor = CT1_ave_tensor + CT2_ave_tensor;
 }
 
-void UnsteadyBBTurb::projectVMB(fileName folder, label NU, label NT, label Nnut, float RBFShapeParameter)
+void UnsteadyBBTurb::projectVMB(fileName folder, label NU, label NT, label Nnut)
 {
     NUmodes = NU;
     NTmodes = NT;
@@ -757,14 +758,12 @@ void UnsteadyBBTurb::projectVMB(fileName folder, label NU, label NT, label Nnut,
     C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
     C_total_ave_tensor = CT1_ave_tensor + CT2_ave_tensor;
 
-    offlineRBFInterpolation(float(RBFShapeParameter));
+    offlineRBFInterpolation();
 }
 
 // * * * * * * * * * * * * * * RBF Prep Methods * * * * * * * * * * * * * * //
-void UnsteadyBBTurb::offlineRBFInterpolation(float RBFshapeParam) // TODO: Make this runnable in parallel
-{
-    samples.resize(Nnutmodes);
-    rbfSplines.resize(Nnutmodes);
+void UnsteadyBBTurb::offlineRBFInterpolation() // TODO: Make this runnable in parallel
+{    
     Eigen::MatrixXd weights;
     Eigen::MatrixXd coeffL2nut = ITHACAutilities::getCoeffs(fluctNutfield, nutmodes, Nnutmodes);
     Eigen::MatrixXd coeffL2vel;
@@ -809,6 +808,8 @@ void UnsteadyBBTurb::offlineRBFInterpolation(float RBFshapeParam) // TODO: Make 
     //     }
     // }
 
+    // Returns a list of two matrices: [0] = velocity derivative coeffs, [1] = eddy viscosity coeffs. Each 
+    // matrix is [snapshots x coeffs]
     List<Eigen::MatrixXd> velDerCoeff = velDerivativeCoeff(coeffL2vel.transpose(), coeffL2nut.transpose(), timeSnapshots);
     dimA = velDerCoeff[0].cols();
 
@@ -821,103 +822,27 @@ void UnsteadyBBTurb::offlineRBFInterpolation(float RBFshapeParam) // TODO: Make 
 
     if (ITHACAutilities::check_file("./ITHACAoutput/shapeParameters"))
     {
-        Info << "Reading RBF shape parameters from file..." << endl;
-        shapeParameters = ITHACAstream::readMatrix("./ITHACAoutput/shapeParameters");
-        M_Assert(shapeParameters.size() == Nnutmodes,
-            "Thes size of the shape parameters vector must be equal to the number of eddy viscosity modes nNutModes");
-        Info << "RBF shape parameters (shapeParameters) read from file as: " << shapeParameters << endl;
-    } else
-    {
-        shapeParameters = Eigen::MatrixXd::Ones(Nnutmodes, 1) * RBFshapeParam;
+        Info << "### MESSAGE - Reading RBF shape parameters from file is not yet implemented for mathtoolbox usage. Using the one provided in the dictionary." << endl;
     }
 
-    if (estimateShapeParam)
-    {
-        Info << "Estimating RBF shape parameters using LOOCV..." << endl;
-
-        // Define search range around the provided guess
-        double minEps = 0.1 * RBFshapeParam;
-        double maxEps = 10.0 * RBFshapeParam;
-        int nSteps = 10;
-
-        for (label i = 0; i < Nnutmodes; i++)
-        {
-            double bestEps = RBFshapeParam;
-            double minErr = 1.0e30;
-
-            for (int s = 0; s < nSteps; ++s)
-            {
-                double eps = minEps + (maxEps - minEps) * double(s) / double(nSteps - 1);
-                double errSum = 0.0;
-                label nSamples = velDerCoeff[0].rows();
-
-                for (label k = 0; k < nSamples; ++k)
-                {
-                    SPLINTER::DataTable looSamples(true, true);
-                    for (label j = 0; j < nSamples; ++j)
-                    {
-                        if (j == k)
-                            continue;
-                        looSamples.addSample(Eigen::VectorXd(velDerCoeff[0].row(j)), velDerCoeff[1](j, i));
-                    }
-                    SPLINTER::RBFSpline spline(looSamples, SPLINTER::RadialBasisFunctionType::GAUSSIAN, false, eps);
-
-                    double pred = spline.eval(Eigen::VectorXd(velDerCoeff[0].row(k)));
-                    double act = velDerCoeff[1](k, i);
-                    errSum += std::pow(pred - act, 2);
-                }
-
-                if (errSum < minErr)
-                {
-                    minErr = errSum;
-                    bestEps = eps;
-                }
-            }
-            shapeParameters(i) = bestEps;
-            Info << "Mode " << i << " optimized shape param: " << bestEps << " (MSE: " << minErr / velDerCoeff[0].rows() << ")" << endl;
-        }
-
-        Info << "RBF shape parameters (shapeParameters) estimated as: " << shapeParameters << endl;
-        if (Pstream::master())
-        {
-            ITHACAstream::SaveDenseMatrix(shapeParameters, "./ITHACAoutput/", "RBFshapeParameters");
-        }
-    }
-
-    // Interpolation of the eddy viscosity proceeds per-mode
+    rbfSplines.resize(Nnutmodes);
     for (label i = 0; i < Nnutmodes; i++)
     {
-        word weightName = "wRBF_N" + name(i + 1) + "_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NSUPmodes);
-        if (ITHACAutilities::check_file("./ITHACAoutput/weightsRBF/" + weightName))
-        {
-            samples[i] = new SPLINTER::DataTable(true, true);
-            for (label j = 0; j < velDerCoeff[1].rows(); j++)
-            {
-                samples[i]->addSample(velDerCoeff[0].row(j), velDerCoeff[1](j, i));
-            }
-            ITHACAstream::ReadDenseMatrix(weights, "./ITHACAoutput/weightsRBF/", weightName);
-            rbfSplines[i] = new SPLINTER::RBFSpline(*samples[i],
-                SPLINTER::RadialBasisFunctionType::GAUSSIAN, weights, shapeParameters(i));
-        } else
-        {
-            samples[i] = new SPLINTER::DataTable(true, true);
-            for (label j = 0; j < velDerCoeff[1].rows(); j++)
-            {
-                samples[i]->addSample(velDerCoeff[0].row(j), velDerCoeff[1](j, i));
-            }
+      // Create a RBF interpolator instance
+      rbfSplines[i] = std::make_shared<ithacaInterpolator>(viscDict);
 
-            rbfSplines[i] = new SPLINTER::RBFSpline(*samples[i],
-                SPLINTER::RadialBasisFunctionType::GAUSSIAN, false, shapeParameters(i));
-            if (Pstream::master())
-            {
-                ITHACAstream::SaveDenseMatrix(rbfSplines[i]->weights,
-                    "./ITHACAoutput/weightsRBF/", weightName);
-                ITHACAstream::exportMatrix(rbfSplines[i]->weights,
-                    "weightsRBF", "python", "./ITHACAoutput/weightsRBF/");
-            }
-        }
+      Eigen::MatrixXd x = velDerCoeff[0].transpose();
+      Eigen::VectorXd y = velDerCoeff[1].col(i);
+      Info << "### DEBUG: Shape of x: " << x.rows() << " x " << x.cols() << endl;
+      Info << "### DEBUG: Shape of y: " << y.rows() << " x " << y.cols() << endl;
+
+      rbfSplines[i]->fit(x, y);
+
+      Info << "Fitting ithacaInterpolator for mode " << i + 1 << " completed." << endl;
     }
-    Info << "RBF interpolation setup completed." << endl;
+
+    Info << "RBF Interpolation completed. Some details of the interpolation are as follows." << endl;
+    rbfSplines[0]->printInfo();
 }
 
 List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(const Eigen::MatrixXd& A,

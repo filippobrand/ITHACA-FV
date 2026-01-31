@@ -183,7 +183,7 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
         cc = a_tmp.transpose() * Eigen::SliceFromTensor(problem->C_tensor, 0, i) * a_tmp;
         ct = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->C_total_tensor, 0, i) * a_tmp;
         caveraged = nu_param.transpose() * Eigen::SliceFromTensor(problem->C_total_ave_tensor, 0, i) * a_tmp;
-        fvec(i) = -M5(i) + M11(i) - M2(i) - cc(0, 0) - M10(i) + ct(0, 0) + caveraged(0, 0);  //DEBUG: to disable turbulence
+        fvec(i) = -M5(i) + M11(i) - M2(i) - cc(0, 0)  + ct(0, 0) + caveraged(0, 0);  // - M10(i) DEBUG: to disable turbulence
 
         if (problem->bcMethod == "penalty")
         {
@@ -567,7 +567,7 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC
 
         for (int j = 0; j < Nphi_nut; j++)
         {
-            newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->eval(tv); // * problem->stdG(j) + problem->meanG(j);
+            newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->predict(tv); // * problem->stdG(j) + problem->meanG(j);
         }
 
         if (problem->bcMethod == "lift")
@@ -702,7 +702,7 @@ void ReducedUnsteadyBBTurb::solveOnline_PPE(const Eigen::MatrixXd& temperatureBC
 
         for (int j = 0; j < Nphi_nut; j++)
         {
-            newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->eval(tv); // * problem->stdG(j) + problem->meanG(j);
+            newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->predict(tv); // * problem->stdG(j) + problem->meanG(j);
         }
 
         if (problem->bcMethod == "lift")
@@ -875,7 +875,7 @@ void ReducedUnsteadyBBTurb::solveOnline_VMB(const Eigen::MatrixXd& temperatureBC
 
         for (int j = 0; j < Nphi_nut; j++)
         {
-            newton_object_VMB.nu_fluct(j) = problem->rbfSplines[j]->eval(tv); // * problem->stdG(j) + problem->meanG(j);
+            newton_object_VMB.nu_fluct(j) = problem->rbfSplines[j]->predict(tv); // * problem->stdG(j) + problem->meanG(j);
         }
 
         if (problem->bcMethod == "lift")
@@ -1030,7 +1030,7 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
         ITHACAstream::exportFields(uRecFields, folder, "uRec");
         ITHACAstream::exportFields(TRecFields, folder, "TRec");
         ITHACAstream::exportFields(nutFluctRecFields, folder, "nutFluctRec");
-        // ITHACAstream::exportFields(nutRecFields, folder, "nutRec");
+        ITHACAstream::exportFields(nutRecFields, folder, "nutRec");
     }
     // TODO: Implement correct BC handling for shifted pressure reconstruction (fixedFluxPressure in theory requires a gradient evaluation I guess)
     // prghRecFields = problem->P_rghmodes.reconstruct(prghRec, CoeffPrgh, "prghRec");
@@ -1182,7 +1182,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
 
             for (int j = 0; j < Nphi_nut; j++)
             {
-                newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->eval(tv); // * problem->stdG(j) + problem->meanG(j);
+                newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->predict(tv); // * problem->stdG(j) + problem->meanG(j);
             }
 
             newton_object_sup.operator()(y, res);
