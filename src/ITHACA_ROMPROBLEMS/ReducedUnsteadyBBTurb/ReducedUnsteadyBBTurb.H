@@ -96,6 +96,7 @@ public:
         UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
                                   problem(&problem),
                                   Nphi_u(problem.NUmodes + problem.liftfield.size()),
+                                  Nphi_prgh(problem.NPrghmodes),
                                   Nphi_t(problem.NTmodes + problem.liftfieldT.size()),
                                   N_BC_t(problem.inletIndexT.rows()),
                                   N_BC(problem.inletIndex.rows()),
@@ -109,6 +110,7 @@ public:
     UnsteadyBBTurb* problem;
     int Nphi_u;
     int Nphi_t;
+    int Nphi_prgh;
     int N_BC_t;
     int N_BC;
     int Nphi_nut;
@@ -372,6 +374,15 @@ public:
     /// @param[in]      currentY     The current reduced solution vector
     template <typename NewtonType>
     void configureNewtonObject(NewtonType& newtonObject, const Eigen::VectorXd& currentY, BoundaryConditions& boundaryConditions);
+
+    /// @brief      Carries out the time loop for the online solve. Templated to support different Newton object types.
+    ///
+    /// @param[in,out]  newtonObject      The Newton object to be used in the time loop
+    /// @param[in,out]  boundaryConditions  The BoundaryConditions object containing the BCs
+    /// @param[in]      firstRBFInd      The first RBF index to use
+    /// @param[in]      numberOfStores   The number of stores to be used in the time loop
+    template <typename NewtonType>
+    void onlineTimeLoop(NewtonType& newtonObject, BoundaryConditions& boundaryConditions, int firstRBFInd, int numberOfStores);
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

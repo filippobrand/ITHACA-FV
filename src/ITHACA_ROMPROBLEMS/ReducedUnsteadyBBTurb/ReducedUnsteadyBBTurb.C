@@ -54,44 +54,12 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     dimA = problem->dimA;
     newton_object_sup = newton_unsteadyBBTurb_sup(Nphi_u + Nphi_prgh + Nphi_t,
         Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
-    newton_object_VMB = newton_unsteadyBBTurb_VMB(Nphi_u + Nphi_t, Nphi_u + Nphi_t, FOMproblem);
+    newton_object_VMB = newton_unsteadyBBTurb_VMB(Nphi_u + Nphi_prgh + Nphi_t, Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
     newton_object_PPE = newton_unsteadyBBTurb_PPE(Nphi_u + Nphi_prgh + Nphi_t,
         Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
 
-    // Create locally the velocity modes, with lifting and supremizer. Now it's commented
-    // but maybe this could be useful so that the FOM problem can be deleted to free memory.
-
-    // for (int k = 0; k < problem->liftfield.size(); k++)
-    // {
-    //     LUmodes.append((problem->liftfield[k]).clone());
-    // }
-
-    // for (int k = 0; k < problem->NUmodes; k++)
-    // {
-    //     LUmodes.append((problem->Umodes[k]).clone());
-    // }
-
-    // for (int k = 0; k < problem->NSUPmodes; k++)
-    // {
-    //     LUmodes.append((problem->supmodes[k]).clone());
-    // }
-
-    // // Create locally the Prgh modes - Probably unnecessary
-    // for (int k = 0; k < problem->NPrghmodes; k++)
-    // {
-    //     Prghmodes.append((problem->P_rghmodes[k]).clone());
-    // }
-
-    // // Create locally the temperature modes including BC with liftfield
-    // for (int k = 0; k < problem->liftfieldT.size(); k++)
-    // {
-    //     LTmodes.append((problem->liftfieldT[k]).clone());
-    // }
-
-    // for (int k = 0; k < problem->NTmodes; k++)
-    // {
-    //     LTmodes.append((problem->Tmodes[k]).clone());
-    // }
+    // Note: some other reduced class in ITHACA-FV in the constructor create a local copy of the
+    // modes from the FOM problem. Maybe in the future the same could be done here
 }
 
 // * * * * * * * * * * * * * * * Newton Object Setters * * * * * * * * * * * * * * * * //
@@ -183,7 +151,7 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
         cc = a_tmp.transpose() * Eigen::SliceFromTensor(problem->C_tensor, 0, i) * a_tmp;
         ct = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->C_total_tensor, 0, i) * a_tmp;
         caveraged = nu_param.transpose() * Eigen::SliceFromTensor(problem->C_total_ave_tensor, 0, i) * a_tmp;
-        fvec(i) = -M5(i) + M11(i) - M2(i) - cc(0, 0)  + ct(0, 0) + caveraged(0, 0);  // - M10(i) DEBUG: to disable turbulence
+        fvec(i) = -M5(i) + M11(i) - M2(i) - cc(0, 0) + ct(0, 0) + caveraged(0, 0); // - M10(i) DEBUG: disables buoyancy effect
 
         if (problem->bcMethod == "penalty")
         {
@@ -206,7 +174,7 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
         qq = a_tmp.transpose() * Eigen::SliceFromTensor(problem->Q_tensor, 0, j) * c_tmp;
         qt = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->YT_tensor, 0, j) * c_tmp;
         qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(problem->YT_ave_tensor, 0, j) * c_tmp;
-        fvec(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t; //DEBUG: to disable turbulence
+        fvec(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t;
 
         if (problem->bcMethod == "penalty")
         {
@@ -307,6 +275,12 @@ int newton_unsteadyBBTurb_VMB::operator()(const Eigen::VectorXd& x,
                 fvec(i) += penaltyU(i, l);
             }
         }
+    }
+
+    for (int i = 0; i < Nphi_prgh; i++)
+    {
+        int k = i + Nphi_u;
+        fvec(k) = 0; // No equation for pressure in VMB
     }
 
     for (int j = 0; j < Nphi_t; j++)
@@ -431,7 +405,7 @@ int newton_unsteadyBBTurb_PPE::operator()(const Eigen::VectorXd& x,
         qq = a_tmp.transpose() * Eigen::SliceFromTensor(problem->Q_tensor, 0, j) * c_tmp;
         // qt = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->YT_tensor, 0, j) * c_tmp;
         // qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(problem->YT_ave_tensor, 0, j) * c_tmp;
-        fvec(k) = -M8(j) + M6(j) - qq(0, 0);// + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t; //DEBUG: to disable turbulence
+        fvec(k) = -M8(j) + M6(j) - qq(0, 0); // + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t; //DEBUG: to disable turbulence
         Info << "### PPE Temp Residual at mode " << j << " : " << fvec(k) << endl;
         if (problem->bcMethod == "penalty")
         {
@@ -507,114 +481,18 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC
     int Ntsteps = static_cast<int>((finalTime - tstart) / dt);
     int onlineSize = static_cast<int>(Ntsteps / numberOfStores); // Total stored solutions, excluding initial condition
     online_solution.resize(onlineSize);
-    rbfCoeffMat.resize(Nphi_nut + 1, onlineSize + 3);
+    rbfCoeffMat.resize(Nphi_nut + 1, onlineSize);
     time = tstart;
-    int nextStore = 0;
-    int timeStepCounter = 0;
-    int storedSnapshotsCounter = 0;
+    
+    onlineTimeLoop(newton_object_sup, boundaryConditions, firstRBFInd, numberOfStores);
 
-    // Creates a vector to store the temporal solution, while saving the initial condition as first solution
-    Eigen::MatrixXd tmp_sol(Nphi_u + Nphi_prgh + Nphi_t + 1, 1);
-    tmp_sol(0) = time;
-    tmp_sol.col(0).tail(y.rows()) = y;
-
-    // // This part up to the while loop is just to compute the eddy viscosity field at time = startTime if time is not equal to zero
-    // if ((time != 0) || (startFromZero == true))
-    // {
-    //     online_solution[timeStepCounter] = tmp_sol;
-    //     timeStepCounter++;
-    //     rbfCoeffMat(0, storedSnapshotsCounter) = time;
-    //     rbfCoeffMat.block(1, storedSnapshotsCounter, Nphi_nut, 1) = nut0;
-    //     storedSnapshotsCounter++;
-    //     nextStore += numberOfStores;
-    // }
-
-    Eigen::HybridNonLinearSolver<newton_unsteadyBBTurb_sup> hnls(newton_object_sup);
-    // Set output colors for fancy output
-    Color::Modifier red(Color::FG_RED);
-    Color::Modifier green(Color::FG_GREEN);
-    Color::Modifier def(Color::FG_DEFAULT);
-
-    Eigen::VectorXd tv;
-    Eigen::VectorXd aDer;
-    tv.resize(dimA);
-
-    while (time < finalTime - dt)
-    {
-        time = time + dt;
-
-        boundaryConditions.updateTimeDependentBC(time);
-
-        if (problem->timedepbcMethod == "yes")
-        {
-            setNewtonObjectBC(newton_object_sup, boundaryConditions);
-        }
-
-        Eigen::VectorXd res(y);
-        res.setZero();
-        hnls.solve(y);
-
-        tv.setZero();
-        aDer.setZero();
-        aDer = (y.head(Nphi_u) - newton_object_sup.y_old.head(Nphi_u)) / dt;
-        tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
-
-        /// Now normalize each tv entry with the eigen::vectorXd problem->meanA and problem->stdA
-        // for (int i = 0; i < dimA; i++)
-        // {
-        //     tv(i) = (tv(i) - problem->meanA(i)) / problem->stdA(i);
-        // }
-
-        for (int j = 0; j < Nphi_nut; j++)
-        {
-            newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->predict(tv); // * problem->stdG(j) + problem->meanG(j);
-        }
-
-        if (problem->bcMethod == "lift")
-        {
-            boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
-        }
-
-        newton_object_sup.operator()(y, res);
-        newton_object_sup.y_old = y;
-
-        Info << "Time = " << time << endl;
-        if (res.norm() < 1e-5)
-        {
-            std::cout << green << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                      << std::endl;
-        } else
-        {
-            std::cout << red << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                      << std::endl;
-        }
-
-        count_online_solve += 1;
-        tmp_sol(0) = time;
-        tmp_sol.col(0).tail(y.rows()) = y;
-
-        if (timeStepCounter == nextStore)
-        {
-            if (storedSnapshotsCounter >= online_solution.size())
-            {
-                online_solution.append(tmp_sol);
-            } else
-            {
-                online_solution[storedSnapshotsCounter] = tmp_sol;
-            }
-            rbfCoeffMat(0, storedSnapshotsCounter) = time;
-            rbfCoeffMat.block(1, storedSnapshotsCounter, Nphi_nut, 1) = newton_object_sup.nu_fluct;
-            nextStore += numberOfStores;
-            storedSnapshotsCounter++;
-        }
-        timeStepCounter++;
-    }
     if (Pstream::master())
     {
         ITHACAstream::exportMatrix(online_solution, "red_coeff", "python",
             "./ITHACAoutput/red_coeff_" + name(NParaSet) + "/");
+        ITHACAstream::exportMatrix(rbfCoeffMat, "rbf_coeff", "python",
+            "./ITHACAoutput/rbf_coeff_" + name(NParaSet) + "/");
     }
-    Info << "Online solve finished, total time steps solved: " << timeStepCounter << endl;
     count_online_solve += 1;
 }
 
@@ -656,100 +534,16 @@ void ReducedUnsteadyBBTurb::solveOnline_PPE(const Eigen::MatrixXd& temperatureBC
     online_solution.resize(onlineSize);
     // rbfCoeffMat.resize(Nphi_nut + 1, onlineSize + 3);
     time = tstart;
-    int nextStore = 0;
-    int timeStepCounter = 0;
-    int storedSnapshotsCounter = 0;
+    
+    onlineTimeLoop(newton_object_PPE, boundaryConditions, firstRBFInd, numberOfStores);
 
-    // Creates a vector to store the temporal solution, while saving the initial condition as first solution
-    Eigen::MatrixXd tmp_sol(Nphi_u + Nphi_prgh + Nphi_t + 1, 1);
-    tmp_sol(0) = time;
-    tmp_sol.col(0).tail(y.rows()) = y;
-
-    Eigen::HybridNonLinearSolver<newton_unsteadyBBTurb_PPE> hnls(newton_object_PPE);
-    // Set output colors for fancy output
-    Color::Modifier red(Color::FG_RED);
-    Color::Modifier green(Color::FG_GREEN);
-    Color::Modifier def(Color::FG_DEFAULT);
-
-    Eigen::VectorXd tv;
-    Eigen::VectorXd aDer;
-    tv.resize(dimA);
-    while (time < finalTime - dt)
-    {
-        time = time + dt;
-        boundaryConditions.updateTimeDependentBC(time);
-
-        if (problem->timedepbcMethod == "yes")
-        {
-            setNewtonObjectBC(newton_object_PPE, boundaryConditions);
-        }
-
-        Eigen::VectorXd res(y);
-        res.setZero();
-        Info << "### DEBUG: Solving the linear system ###" << endl;
-        hnls.solve(y);
-
-        tv.setZero();
-        aDer.setZero();
-        aDer = (y.head(Nphi_u) - newton_object_sup.y_old.head(Nphi_u)) / dt;
-        tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
-
-        /// Now normalize each tv entry with the eigen::vectorXd problem->meanA and problem->stdA
-        // for (int i = 0; i < dimA; i++)
-        // {
-        //     tv(i) = (tv(i) - problem->meanA(i)) / problem->stdA(i);
-        // }
-
-        for (int j = 0; j < Nphi_nut; j++)
-        {
-            newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->predict(tv); // * problem->stdG(j) + problem->meanG(j);
-        }
-
-        if (problem->bcMethod == "lift")
-        {
-            boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
-        }
-
-        newton_object_PPE.operator()(y, res);
-        newton_object_PPE.y_old = y;
-
-        Info << "Time = " << time << endl;
-        if (res.norm() < 1e-5)
-        {
-            std::cout << green << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                      << std::endl;
-        } else
-        {
-            std::cout << red << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                      << std::endl;
-        }
-
-        count_online_solve += 1;
-        tmp_sol(0) = time;
-        tmp_sol.col(0).tail(y.rows()) = y;
-
-        if (timeStepCounter == nextStore)
-        {
-            if (storedSnapshotsCounter >= online_solution.size())
-            {
-                online_solution.append(tmp_sol);
-            } else
-            {
-                online_solution[storedSnapshotsCounter] = tmp_sol;
-            }
-            rbfCoeffMat(0, storedSnapshotsCounter) = time;
-            rbfCoeffMat.block(1, storedSnapshotsCounter, Nphi_nut, 1) = newton_object_sup.nu_fluct;
-            nextStore += numberOfStores;
-            storedSnapshotsCounter++;
-        }
-        timeStepCounter++;
-    }
     if (Pstream::master())
     {
         ITHACAstream::exportMatrix(online_solution, "red_coeff", "python",
             "./ITHACAoutput/red_coeff_" + name(NParaSet) + "/");
+        ITHACAstream::exportMatrix(rbfCoeffMat, "rbf_coeff", "python",
+            "./ITHACAoutput/rbf_coeff_" + name(NParaSet) + "/");
     }
-    Info << "Online solve finished, total time steps solved: " << timeStepCounter << endl;
     count_online_solve += 1;
 }
 
@@ -762,25 +556,12 @@ void ReducedUnsteadyBBTurb::solveOnline_VMB(const Eigen::MatrixXd& temperatureBC
 
     Info << "################## Online solve N° " << NParaSet << " ##################" << endl;
 
-    y.resize(Nphi_u + Nphi_t, 1); // Solution vector
+    y.resize(Nphi_u + Nphi_prgh + Nphi_t, 1); // Solution vector
     y.setZero();
 
-    volScalarField T_IC("T_IC", problem->Tfield[startSnap]);
-    for (int j = 0; j < T_IC.boundaryField().size(); j++)
-    {
-        for (int i = 0; i < N_BC_t; i++)
-        {
-            if (j == problem->inletIndexT(i, 0))
-            {
-                T_IC.boundaryFieldRef()[problem->inletIndexT(i, 0)][j] = boundaryConditions.currentTemperatureBC(i);
-            } else
-            {
-            }
-        }
-    }
-    y.head(Nphi_u) = ITHACAutilities::getCoeffs(problem->Ufield[startSnap], problem->L_U_SUPmodes);
-    y.tail(Nphi_t) = ITHACAutilities::getCoeffs(T_IC, problem->L_Tmodes);
-
+    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
+    // Correct the pressure coefficients by using the same value as the velocity ones.
+    y.segment(Nphi_u, Nphi_prgh) = y.head(Nphi_u);
 
     // Change initial condition for the lifting function
     if (problem->bcMethod == "lift")
@@ -817,112 +598,18 @@ void ReducedUnsteadyBBTurb::solveOnline_VMB(const Eigen::MatrixXd& temperatureBC
     int Ntsteps = static_cast<int>((finalTime - tstart) / dt);
     int onlineSize = static_cast<int>(Ntsteps / numberOfStores); // Total stored solutions, excluding initial condition
     online_solution.resize(onlineSize);
-    rbfCoeffMat.resize(Nphi_nut + 1, onlineSize + 3);
+    rbfCoeffMat.resize(Nphi_nut + 1, onlineSize);
     time = tstart;
-    int nextStore = 0;
-    int timeStepCounter = 0;
-    int storedSnapshotsCounter = 0;
+    
+    onlineTimeLoop(newton_object_VMB, boundaryConditions, firstRBFInd, numberOfStores);
 
-    // Creates a vector to store the temporal solution, while saving the initial condition as first solution
-    Eigen::MatrixXd tmp_sol(Nphi_u + Nphi_t + 1, 1);
-    tmp_sol(0) = time;
-    tmp_sol.col(0).tail(y.rows()) = y;
-
-    // This part up to the while loop is just to compute the eddy viscosity field at time = startTime if time is not equal to zero
-    if ((time != 0) || (startFromZero == true))
-    {
-        online_solution[timeStepCounter] = tmp_sol;
-        timeStepCounter++;
-        rbfCoeffMat(0, storedSnapshotsCounter) = time;
-        rbfCoeffMat.block(1, storedSnapshotsCounter, Nphi_nut, 1) = nut0;
-        storedSnapshotsCounter++;
-        nextStore += numberOfStores;
-    }
-
-    Eigen::HybridNonLinearSolver<newton_unsteadyBBTurb_VMB> hnls(newton_object_VMB);
-    // Set output colors for fancy output
-    Color::Modifier red(Color::FG_RED);
-    Color::Modifier green(Color::FG_GREEN);
-    Color::Modifier def(Color::FG_DEFAULT);
-
-    Eigen::VectorXd tv;
-    Eigen::VectorXd aDer;
-    tv.resize(dimA);
-    while (time < finalTime)
-    {
-        time = time + dt;
-
-        boundaryConditions.updateTimeDependentBC(time);
-
-        if (problem->timedepbcMethod == "yes")
-        {
-            setNewtonObjectBC(newton_object_VMB, boundaryConditions);
-        }
-        Eigen::VectorXd res(y);
-        res.setZero();
-        hnls.solve(y);
-
-        tv.setZero();
-        aDer.setZero();
-        aDer = (y.head(Nphi_u) - newton_object_VMB.y_old.head(Nphi_u)) / dt;
-        tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
-
-        /// Now normalize each tv entry with the eigen::vectorXd problem->meanA and problem->stdA
-        for (int i = 0; i < dimA; i++)
-        {
-            tv(i) = (tv(i) - problem->meanA(i)) / problem->stdA(i);
-        }
-
-        for (int j = 0; j < Nphi_nut; j++)
-        {
-            newton_object_VMB.nu_fluct(j) = problem->rbfSplines[j]->predict(tv); // * problem->stdG(j) + problem->meanG(j);
-        }
-
-        if (problem->bcMethod == "lift")
-        {
-            boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, 0);
-        }
-
-        newton_object_VMB.operator()(y, res);
-        newton_object_VMB.y_old = y;
-        Info << "######### Online solve N° " << count_online_solve << " ##########" << endl;
-        Info << "Time = " << time << endl;
-        if (res.norm() < 1e-5)
-        {
-            std::cout << green << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                      << std::endl;
-        } else
-        {
-            std::cout << red << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                      << std::endl;
-        }
-
-        count_online_solve += 1;
-        tmp_sol(0) = time;
-        tmp_sol.col(0).tail(y.rows()) = y;
-
-        if (timeStepCounter == nextStore)
-        {
-            if (storedSnapshotsCounter >= online_solution.size())
-            {
-                online_solution.append(tmp_sol);
-            } else
-            {
-                online_solution[storedSnapshotsCounter] = tmp_sol;
-            }
-            rbfCoeffMat(0, storedSnapshotsCounter) = time;
-            rbfCoeffMat.block(1, storedSnapshotsCounter, Nphi_nut, 1) = newton_object_VMB.nu_fluct;
-            nextStore += numberOfStores;
-            storedSnapshotsCounter++;
-        }
-        timeStepCounter++;
-    }
     if (Pstream::master())
     {
         ITHACAstream::exportMatrix(online_solution, "red_coeff", "python",
             "./ITHACAoutput/red_coeff_" + name(NParaSet) + "/");
+        ITHACAstream::exportMatrix(rbfCoeffMat, "rbf_coeff", "python",
+            "./ITHACAoutput/rbf_coeff_" + name(NParaSet) + "/");
     }
-    Info << "Online solve finished, total time steps solved: " << timeStepCounter << endl;
     count_online_solve += 1;
 }
 
@@ -1125,11 +812,10 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
     }
 
     configureNewtonObject(newton_object_sup, y, boundaryConditions);
-    
+
     int numberOfStores = round((storeEvery) / dt); // Number of time steps between two stored solutions
     int Ntsteps = static_cast<int>((finalTime - tstart) / dt);
     int onlineSize = static_cast<int>(Ntsteps / numberOfStores); // Total stored solutions, excluding initial condition
-    rbfCoeffMat.resize(Nphi_nut + 1, onlineSize + 3);
     time = tstart;
 
     // Creates a vector to store the temporal solution, while saving the initial condition as first solution
@@ -1157,7 +843,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
         currentTimeErrorsT.setConstant(1e6);
         currentIteration = 0;
         currentTimeStep += 1;
-        
+
         bool convergedU = false;
         bool convergedT = false; // These flags are used so that, when one of the two variables has converged, its penalty factor is not updated anymore
 
@@ -1237,7 +923,6 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
             }
         }
         newton_object_sup.y_old = y;
-
     }
     Info << "Penalty factor estimation finished for timeStep " << currentTimeStep << " after " << currentIteration << " iterations." << endl;
     Info << "Final tauU values: " << tauU << endl;
@@ -1271,5 +956,91 @@ void ReducedUnsteadyBBTurb::validateSettings()
     M_Assert(ITHACAutilities::isInteger(exportEvery / storeEvery) == true,
         "The variable exportEvery must be an integer multiple of the variable storeEvery.");
 }
+
+
+template <typename NewtonType>
+void ReducedUnsteadyBBTurb::onlineTimeLoop(
+    NewtonType& newtonObject, BoundaryConditions& boundaryConditions,
+    int firstRBFInd, int numberOfStores)
+{
+    Eigen::HybridNonLinearSolver<NewtonType> hnls(newtonObject);
+    Color::Modifier red(Color::FG_RED);
+    Color::Modifier green(Color::FG_GREEN);
+    Color::Modifier def(Color::FG_DEFAULT);
+
+    Eigen::VectorXd res(y); // Residual vector
+    Eigen::VectorXd aDer; // Vector for the time derivative of velocity coefficients
+    Eigen::VectorXd RBFInput;
+    RBFInput.resize(dimA);
+
+    int timeStepCounter = 0;
+    int nextStore = 0;
+    int storedSnapshotsCounter = 0;
+
+    Eigen::MatrixXd tmp_sol(y.rows() + 1, 1);
+    tmp_sol(0) = time;
+    tmp_sol.col(0).tail(y.rows()) = y;
+
+    while (time < finalTime - dt)
+    {
+        time += dt;
+        boundaryConditions.updateTimeDependentBC(time);
+        if (problem->timedepbcMethod == "yes")
+        {
+            setNewtonObjectBC(newtonObject, boundaryConditions);
+        }
+        res.setZero();
+        hnls.solve(y);
+
+        aDer = (y.head(Nphi_u) - newtonObject.y_old.head(Nphi_u)) / dt;
+        RBFInput << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+        for (int j = 0; j < Nphi_nut; j++)
+        {
+            newtonObject.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
+        }
+
+        if (problem->bcMethod == "lift")
+        {
+            boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
+        }
+
+        newtonObject.operator()(y, res);
+        newtonObject.y_old = y;
+
+        Info << "Time = " << time << endl;
+        if (res.norm() < 1e-5)
+        {
+            std::cout << green << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
+                      << std::endl;
+        } else
+        {
+            std::cout << red << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
+                      << std::endl;
+        }
+
+        count_online_solve++;
+
+        tmp_sol(0) = time;
+        tmp_sol.col(0).tail(y.rows()) = y;
+
+        if (timeStepCounter == nextStore)
+        {
+            if (storedSnapshotsCounter >= online_solution.size())
+            {
+                online_solution.append(tmp_sol);
+            } else
+            {
+                online_solution[storedSnapshotsCounter] = tmp_sol;
+            }
+            rbfCoeffMat(0, storedSnapshotsCounter) = time;
+            rbfCoeffMat.block(1, storedSnapshotsCounter, Nphi_nut, 1) = newtonObject.nu_fluct;
+            nextStore += numberOfStores;
+            storedSnapshotsCounter++;
+        }
+        timeStepCounter++;
+    }
+    Info << "Online solution computed, with total time steps solved: " << timeStepCounter << endl;
+}
+
 
 // ************************************************************************ //
