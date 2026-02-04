@@ -34,7 +34,26 @@ License
 
 
 #include "ReducedUnsteadyBBTurb.H"
+#include <atomic>
+#include <fstream>
 
+static std::ofstream g_logFile;
+static std::atomic_bool g_printOperatorDebug(false);
+
+static void openLogFile(const std::string& path)
+{
+    g_logFile.open(path, std::ios::out | std::ios::app);
+    if (!g_logFile.is_open())
+        Info << "Failed to open log file: " << path << endl;
+}
+
+#define LOG(x)                   \
+    do                           \
+    {                            \
+        Info << x;               \
+        if (g_logFile.is_open()) \
+            g_logFile << x;      \
+    } while (0)
 // * * * * * * * * * * * * * * * Constructors * * * * * * * * * * * * * * * * //
 
 // Constructor
@@ -57,6 +76,12 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     newton_object_VMB = newton_unsteadyBBTurb_VMB(Nphi_u + Nphi_prgh + Nphi_t, Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
     newton_object_PPE = newton_unsteadyBBTurb_PPE(Nphi_u + Nphi_prgh + Nphi_t,
         Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
+    newton_object_sup_momentum = newtonUnsteadyBBTurbSUPMomentum(Nphi_u + Nphi_prgh + Nphi_t,
+        Nphi_u + Nphi_prgh, FOMproblem);
+    newton_object_sup_temperature = newtonUnsteadyBBTurbSUPTemperature(Nphi_u + Nphi_t,
+        Nphi_t, FOMproblem);
+    separateMomentumTemperature = problem->ITHACAdict->lookupOrDefault<bool>("separateMomentumTemperature", false);
+    openLogFile("./log.residuals");
 
     // Note: some other reduced class in ITHACA-FV in the constructor create a local copy of the
     // modes from the FOM problem. Maybe in the future the same could be done here
@@ -151,8 +176,7 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
         cc = a_tmp.transpose() * Eigen::SliceFromTensor(problem->C_tensor, 0, i) * a_tmp;
         ct = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->C_total_tensor, 0, i) * a_tmp;
         caveraged = nu_param.transpose() * Eigen::SliceFromTensor(problem->C_total_ave_tensor, 0, i) * a_tmp;
-        fvec(i) = -M5(i) + M11(i) - M2(i) - cc(0, 0) + ct(0, 0) + caveraged(0, 0); // - M10(i) DEBUG: disables buoyancy effect
-
+        fvec(i) = -M5(i) + M11(i) - M2(i) - cc(0, 0) + ct(0, 0) + caveraged(0, 0); // - M10(i);
         if (problem->bcMethod == "penalty")
         {
             for (int l = 0; l < N_BC; l++)
@@ -175,7 +199,10 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
         qt = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->YT_tensor, 0, j) * c_tmp;
         qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(problem->YT_ave_tensor, 0, j) * c_tmp;
         fvec(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t;
-
+        if (g_printOperatorDebug)
+        {
+            LOG(j << "," << M8(j) << "," << M6(j) << "," << qq(0, 0) << "," << (qt(0, 0) / Pr_t) << "," << (qt_averaged(0, 0) / Pr_t) << "\n");
+        }
         if (problem->bcMethod == "penalty")
         {
             for (int l = 0; l < N_BC_t; l++)
@@ -201,11 +228,158 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
     return 0;
 }
 
+int newtonUnsteadyBBTurbSUPMomentum::operator()(const Eigen::VectorXd& x,
+    Eigen::VectorXd& fvec) const
+{
+    Eigen::VectorXd a_dot(Nphi_u);
+    Eigen::VectorXd a_tmp(Nphi_u);
+    Eigen::VectorXd b_tmp(Nphi_prgh);
+    Eigen::VectorXd c_tmp(Nphi_t);
+
+    a_tmp = x.head(Nphi_u);
+    a_dot = (x.head(Nphi_u) - y_old.head(Nphi_u)) / dt;
+    b_tmp = x.segment(Nphi_u, Nphi_prgh);
+    c_tmp = y_old.tail(Nphi_t);
+    // Convective term
+    Eigen::MatrixXd cc(1, 1);
+    // Turbulence term
+    Eigen::MatrixXd ct(1, 1);
+    // Averaged turbulence term;
+    Eigen::MatrixXd caveraged(1, 1);
+    // Total Diffusive Term - In the laminar version it's just B_matrix.
+    Eigen::VectorXd M11 = problem->B_total_matrix * a_tmp * nu;
+    // Mass Term Velocity
+    Eigen::VectorXd M5 = problem->M_matrix * a_dot;
+    // Gradient of pressure
+    Eigen::VectorXd M2 = problem->K_matrix * b_tmp;
+    // Continuity
+    Eigen::VectorXd M3 = problem->P_matrix * a_tmp;
+    // Buoyancy Term
+    Eigen::VectorXd M10 = problem->H_matrix * c_tmp;
+    // Penalty term velocity
+    Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(Nphi_u, N_BC);
+    if (problem->bcMethod == "penalty")
+    {
+        for (int l = 0; l < N_BC; l++)
+        {
+            penaltyU.col(l) = tauU(l, 0) * (BC(l) * problem->bcVelVec[l] - problem->bcVelMat[l] * a_tmp);
+        }
+    }
+
+    for (int i = 0; i < Nphi_u; i++)
+    {
+        cc = a_tmp.transpose() * Eigen::SliceFromTensor(problem->C_tensor, 0, i) * a_tmp;
+        ct = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->C_total_tensor, 0, i) * a_tmp;
+        caveraged = nu_param.transpose() * Eigen::SliceFromTensor(problem->C_total_ave_tensor, 0, i) * a_tmp;
+        fvec(i) = -M5(i) + M11(i) - M2(i) - cc(0, 0) + ct(0, 0) + caveraged(0, 0); // - M10(i);
+
+        if (problem->bcMethod == "penalty")
+        {
+            for (int l = 0; l < N_BC; l++)
+            {
+                fvec(i) += penaltyU(i, l);
+            }
+        }
+    }
+
+    for (int j = 0; j < Nphi_prgh; j++)
+    {
+        int k = j + Nphi_u;
+        fvec(k) = M3(j);
+    }
+
+    if (problem->bcMethod == "lift")
+    {
+        for (int j = 0; j < N_BC; j++)
+        {
+            fvec(j) = x(j) - BC(j);
+        }
+    }
+    return 0;
+}
+
+int newtonUnsteadyBBTurbSUPTemperature::operator()(const Eigen::VectorXd& x,
+    Eigen::VectorXd& fvec) const
+{
+    Eigen::VectorXd a_tmp(Nphi_u);
+    Eigen::VectorXd c_dot(Nphi_t);
+    Eigen::VectorXd c_tmp(Nphi_t);
+
+    a_tmp = y_old.head(Nphi_u);
+    c_tmp = x;
+    c_dot = (x - y_old.tail(Nphi_t)) / dt;
+
+    // Convective term temperature
+    Eigen::MatrixXd qq(1, 1);
+    // // Convective term temperature (turbulence)
+    Eigen::MatrixXd qt(1, 1);
+    // // Convective term temperature averaged (turbulence)
+    Eigen::MatrixXd qt_averaged(1, 1);
+    // diffusive term temperature
+    Eigen::VectorXd M6 = problem->Y_matrix * c_tmp * (nu / Pr);
+    // Mass Term Temperature
+    Eigen::VectorXd M8 = problem->W_matrix * c_dot;
+    // Penalty term velocity
+    Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(Nphi_t, N_BC_t);
+    if (problem->bcMethod == "penalty")
+    {
+        for (int l = 0; l < N_BC_t; l++)
+        {
+            penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * problem->bcTempVec[l] - problem->bcTempMat[l] * c_tmp);
+        }
+    }
+
+    for (int j = 0; j < Nphi_t; j++)
+    {
+        qq = a_tmp.transpose() * Eigen::SliceFromTensor(problem->Q_tensor, 0, j) * c_tmp;
+        qt = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->YT_tensor, 0, j) * c_tmp;
+        qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(problem->YT_ave_tensor, 0, j) * c_tmp;
+        fvec(j) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t;
+
+        if (problem->bcMethod == "penalty")
+        {
+            for (int l = 0; l < N_BC_t; l++)
+            {
+                fvec(j) += penaltyT(j, l);
+            }
+        }
+        if (g_printOperatorDebug)
+        {
+            LOG(j << "," << M8(j) << "," << M6(j) << "," << qq(0, 0) << "," << (qt(0, 0) / Pr_t) << "," << (qt_averaged(0, 0) / Pr_t) << "\n");
+        }
+    }
+
+    if (problem->bcMethod == "lift")
+    {
+        for (int j = 0; j < N_BC_t; j++)
+        {
+            fvec(j) = x(j) - BC_t(j);
+        }
+    }
+    return 0;
+}
+
 // Operator to evaluate the Jacobian for the supremizer approach
 int newton_unsteadyBBTurb_sup::df(const Eigen::VectorXd& x,
     Eigen::MatrixXd& fjac) const
 {
     Eigen::NumericalDiff<newton_unsteadyBBTurb_sup> numDiff(*this);
+    numDiff.df(x, fjac);
+    return 0;
+}
+
+int newtonUnsteadyBBTurbSUPMomentum::df(const Eigen::VectorXd& x,
+    Eigen::MatrixXd& fjac) const
+{
+    Eigen::NumericalDiff<newtonUnsteadyBBTurbSUPMomentum> numDiff(*this);
+    numDiff.df(x, fjac);
+    return 0;
+}
+
+int newtonUnsteadyBBTurbSUPTemperature::df(const Eigen::VectorXd& x,
+    Eigen::MatrixXd& fjac) const
+{
+    Eigen::NumericalDiff<newtonUnsteadyBBTurbSUPTemperature> numDiff(*this);
     numDiff.df(x, fjac);
     return 0;
 }
@@ -285,7 +459,7 @@ int newton_unsteadyBBTurb_VMB::operator()(const Eigen::VectorXd& x,
 
     for (int j = 0; j < Nphi_t; j++)
     {
-        int k = j + Nphi_u;
+        int k = j + Nphi_u + Nphi_prgh;
         qq = a_tmp.transpose() * Eigen::SliceFromTensor(problem->Q_tensor, 0, j) * c_tmp;
         qt = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->YT_tensor, 0, j) * c_tmp;
         qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(problem->YT_ave_tensor, 0, j) * c_tmp;
@@ -309,7 +483,7 @@ int newton_unsteadyBBTurb_VMB::operator()(const Eigen::VectorXd& x,
 
         for (int j = 0; j < N_BC_t; j++)
         {
-            int k = j + Nphi_u;
+            int k = j + Nphi_u + Nphi_prgh;
             fvec(k) = x(k) - BC_t(j);
         }
     }
@@ -454,7 +628,7 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC
     y.setZero();
 
     boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
-
+    Info << "### Initial coefficients: " << y << endl;
     if (problem->bcMethod == "lift")
     {
         boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
@@ -474,7 +648,16 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC
         Info << "## COMM - Not skipping lifting modes in the RBF evaluation. This means that the first RBF index is set to " << firstRBFInd << endl;
     }
 
-    configureNewtonObject(newton_object_sup, y, boundaryConditions);
+    if (separateMomentumTemperature == true)
+    {
+        Info << "### Configuring both newton objects for segregated approach." << endl;
+        configureNewtonObject(newton_object_sup_momentum, y, boundaryConditions);
+        configureNewtonObject(newton_object_sup_temperature, y, boundaryConditions);
+    } else if (separateMomentumTemperature == false)
+    {
+        Info << "### Configuring single newton object for coupled approach." << endl;
+        configureNewtonObject(newton_object_sup, y, boundaryConditions);
+    }
 
     // Set number of online solutions - Time related
     int numberOfStores = round((storeEvery) / dt); // Number of time steps between two stored solutions
@@ -483,8 +666,15 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC
     online_solution.resize(onlineSize);
     rbfCoeffMat.resize(Nphi_nut + 1, onlineSize);
     time = tstart;
-    
-    onlineTimeLoop(newton_object_sup, boundaryConditions, firstRBFInd, numberOfStores);
+
+    if (separateMomentumTemperature == false)
+    {
+        onlineTimeLoop(newton_object_sup, boundaryConditions, firstRBFInd, numberOfStores);
+    } else if (separateMomentumTemperature == true)
+    {
+        onlineTimeLoopSegregated(newton_object_sup_momentum, newton_object_sup_temperature,
+            boundaryConditions, firstRBFInd, numberOfStores);
+    }
 
     if (Pstream::master())
     {
@@ -494,6 +684,8 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC
             "./ITHACAoutput/rbf_coeff_" + name(NParaSet) + "/");
     }
     count_online_solve += 1;
+    if (g_logFile.is_open())
+        g_logFile.close();
 }
 
 void ReducedUnsteadyBBTurb::solveOnline_PPE(const Eigen::MatrixXd& temperatureBC,
@@ -534,7 +726,7 @@ void ReducedUnsteadyBBTurb::solveOnline_PPE(const Eigen::MatrixXd& temperatureBC
     online_solution.resize(onlineSize);
     // rbfCoeffMat.resize(Nphi_nut + 1, onlineSize + 3);
     time = tstart;
-    
+
     onlineTimeLoop(newton_object_PPE, boundaryConditions, firstRBFInd, numberOfStores);
 
     if (Pstream::master())
@@ -592,7 +784,7 @@ void ReducedUnsteadyBBTurb::solveOnline_VMB(const Eigen::MatrixXd& temperatureBC
     }
 
     configureNewtonObject(newton_object_VMB, y, boundaryConditions);
-
+    Info << "### Newton object configured." << endl;
     // Set number of online solutions - Time related
     int numberOfStores = round((storeEvery) / dt); // Number of time steps between two stored solutions
     int Ntsteps = static_cast<int>((finalTime - tstart) / dt);
@@ -600,7 +792,7 @@ void ReducedUnsteadyBBTurb::solveOnline_VMB(const Eigen::MatrixXd& temperatureBC
     online_solution.resize(onlineSize);
     rbfCoeffMat.resize(Nphi_nut + 1, onlineSize);
     time = tstart;
-    
+    Info << "Starting the VMB time loop" << endl;
     onlineTimeLoop(newton_object_VMB, boundaryConditions, firstRBFInd, numberOfStores);
 
     if (Pstream::master())
@@ -704,8 +896,7 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
         problem->nutmodes[0].mesh(),
         dimensionedScalar("zero", problem->nutmodes[0].dimensions(), 0.0));
 
-    PtrList<volScalarField> nutRecFields;
-
+    nutRecFields.resize(0);
     // Now sum the reconstructed fluctuating and averaged eddy viscosity fields
     forAll(nutFluctRecFields, i)
     {
@@ -811,7 +1002,15 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
         firstRBFInd = 0;
     }
 
-    configureNewtonObject(newton_object_sup, y, boundaryConditions);
+    if (separateMomentumTemperature == true)
+    {
+        configureNewtonObject(newton_object_sup_momentum, y, boundaryConditions);
+        configureNewtonObject(newton_object_sup_temperature, y, boundaryConditions);
+    } else
+    {
+        configureNewtonObject(newton_object_sup, y, boundaryConditions);
+    }
+    Info << "### Newton object configured." << endl;
 
     int numberOfStores = round((storeEvery) / dt); // Number of time steps between two stored solutions
     int Ntsteps = static_cast<int>((finalTime - tstart) / dt);
@@ -824,6 +1023,8 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
     tmp_sol.col(0).tail(y.rows()) = y;
 
     Eigen::HybridNonLinearSolver<newton_unsteadyBBTurb_sup> hnls(newton_object_sup);
+    Eigen::HybridNonLinearSolver<newtonUnsteadyBBTurbSUPMomentum> hnls_momentum(newton_object_sup_momentum);
+    Eigen::HybridNonLinearSolver<newtonUnsteadyBBTurbSUPTemperature> hnls_temperature(newton_object_sup_temperature);
     Color::Modifier red(Color::FG_RED);
     Color::Modifier green(Color::FG_GREEN);
     Color::Modifier def(Color::FG_DEFAULT);
@@ -833,6 +1034,12 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
     Eigen::VectorXd tv;
     Eigen::VectorXd aDer;
     tv.resize(dimA);
+
+    Eigen::VectorXd momentumCoeffs;
+    Eigen::VectorXd temperatureCoeffs;
+    Eigen::VectorXd resMomentum(y.head(Nphi_u + Nphi_prgh));
+    Eigen::VectorXd resTemperature(y.tail(Nphi_t));
+    Eigen::VectorXd res(y);
 
     int currentTimeStep = 0;
     int currentIteration = 0;
@@ -851,38 +1058,92 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
         boundaryConditions.updateTimeDependentBC(time);
         if (problem->timedepbcMethod == "yes")
         {
-            setNewtonObjectBC(newton_object_sup, boundaryConditions);
+            if (separateMomentumTemperature == true)
+            {
+                setNewtonObjectBC(newton_object_sup_momentum, boundaryConditions);
+                setNewtonObjectBC(newton_object_sup_temperature, boundaryConditions);
+            } else
+            {
+                setNewtonObjectBC(newton_object_sup, boundaryConditions);
+            }
         }
 
         while ((currentTimeErrorsU.maxCoeff() > tolerancePenaltyU || currentTimeErrorsT.maxCoeff() > tolerancePenaltyT) && currentIteration < maxIter)
         {
             currentIteration++;
-            Eigen::VectorXd res(y);
-            res.setZero();
-            hnls.solve(y);
 
-            tv.setZero();
-            aDer.setZero();
-            aDer = (y.head(Nphi_u) - newton_object_sup.y_old.head(Nphi_u)) / dt;
-            tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
-
-            for (int j = 0; j < Nphi_nut; j++)
+            if (separateMomentumTemperature == true)
             {
-                newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->predict(tv); // * problem->stdG(j) + problem->meanG(j);
-            }
+                Info << "### Solving momentum Newton object." << endl;
+                momentumCoeffs = y.head(Nphi_u + Nphi_prgh);
 
-            newton_object_sup.operator()(y, res);
+                resMomentum.setZero();
+                hnls_momentum.solve(momentumCoeffs);
+                y.head(Nphi_u + Nphi_prgh) = momentumCoeffs;
 
-            Info << "Time = " << time << endl;
-            if (res.norm() < 1e-5)
-            {
-                std::cout << green << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                          << std::endl;
+                Info << "Time = " << time << endl;
+                if (resMomentum.norm() < 1e-5)
+                {
+                    std::cout << green << "|F_momentum(x)| = " << resMomentum.norm() << " - Minimun reached in " << hnls_momentum.iter << " iterations " << def << std::endl
+                              << std::endl;
+                } else
+                {
+                    std::cout << red << "|F_momentum(x)| = " << resMomentum.norm() << " - Minimun reached in " << hnls_momentum.iter << " iterations " << def << std::endl
+                              << std::endl;
+                }
+                Info << "### Solving temperature Newton object." << endl;
+                temperatureCoeffs = y.tail(Nphi_t);
+                resTemperature.setZero();
+                hnls_temperature.solve(temperatureCoeffs);
+                aDer.setZero();
+                aDer = (y.head(Nphi_u) - newton_object_sup_momentum.y_old.head(Nphi_u)) / dt;
+                tv.setZero();
+                tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+                for (int j = 0; j < Nphi_nut; j++)
+                {
+                    newton_object_sup_momentum.nu_fluct(j) = problem->rbfSplines[j]->predict(tv);
+                    newton_object_sup_temperature.nu_fluct(j) = problem->rbfSplines[j]->predict(tv);
+                }
+                Info << "Time = " << time << endl;
+                if (resTemperature.norm() < 1e-5)
+                {
+                    std::cout << green << "|F_temperature(x)| = " << resTemperature.norm() << " - Minimun reached in " << hnls_temperature.iter << " iterations " << def << std::endl
+                              << std::endl;
+                } else
+                {
+                    std::cout << red << "|F_temperature(x)| = " << resTemperature.norm() << " - Minimun reached in " << hnls_temperature.iter << " iterations " << def << std::endl
+                              << std::endl;
+                }
+                y.tail(Nphi_t) = temperatureCoeffs;
             } else
             {
-                std::cout << red << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                          << std::endl;
+                Info << "### Solving coupled Newton object." << endl;
+                res.setZero();
+                hnls.solve(y);
+                tv.setZero();
+                aDer.setZero();
+                aDer = (y.head(Nphi_u) - newton_object_sup.y_old.head(Nphi_u)) / dt;
+                tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+
+                for (int j = 0; j < Nphi_nut; j++)
+                {
+                    newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->predict(tv); // * problem->stdG(j) + problem->meanG(j);
+                }
+
+                newton_object_sup.operator()(y, res);
+
+                Info << "Time = " << time << endl;
+                if (res.norm() < 1e-5)
+                {
+                    std::cout << green << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
+                              << std::endl;
+                } else
+                {
+                    std::cout << red << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
+                              << std::endl;
+                }
             }
+
 
             if (convergedU == false)
             {
@@ -895,6 +1156,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
                 for (int k = 0; k < N_BC; k++)
                 {
                     tauU(k, 0) = tauU(k, 0) * (currentTimeErrorsU(k) / tolerancePenaltyU);
+                    tauU(k, 0) = max(tauU(k, 0), 1e-8); // Avoid tauU to be zero
                 }
                 newton_object_sup.tauU = tauU;
                 if (currentTimeErrorsU.maxCoeff() <= tolerancePenaltyU)
@@ -914,6 +1176,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
                 for (int k = 0; k < N_BC_t; k++)
                 {
                     tauT(k, 0) = tauT(k, 0) * (currentTimeErrorsT(k) / tolerancePenaltyT);
+                    tauT(k, 0) = max(tauT(k, 0), 1e-8); // Avoid tauT to be zero
                 }
                 newton_object_sup.tauT = tauT;
                 if (currentTimeErrorsT.maxCoeff() <= tolerancePenaltyT)
@@ -922,7 +1185,20 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
                 }
             }
         }
-        newton_object_sup.y_old = y;
+        if (separateMomentumTemperature == true)
+        {
+            newton_object_sup_momentum.y_old = y;
+            newton_object_sup_temperature.y_old = y;
+        } else
+        {
+            newton_object_sup.y_old = y;
+        }
+        Info << "Penalty factor estimation - Current timeStep: " << currentTimeStep << endl;
+        Info << "Current tauU values: " << tauU << endl;
+        Info << "Current tauT values: " << tauT << endl;
+        Info << "Current velocity BC errors: " << currentTimeErrorsU << endl;
+        Info << "Current temperature BC errors: " << currentTimeErrorsT << "\n"
+             << endl;
     }
     Info << "Penalty factor estimation finished for timeStep " << currentTimeStep << " after " << currentIteration << " iterations." << endl;
     Info << "Final tauU values: " << tauU << endl;
@@ -990,6 +1266,7 @@ void ReducedUnsteadyBBTurb::onlineTimeLoop(
             setNewtonObjectBC(newtonObject, boundaryConditions);
         }
         res.setZero();
+        g_printOperatorDebug = false;
         hnls.solve(y);
 
         aDer = (y.head(Nphi_u) - newtonObject.y_old.head(Nphi_u)) / dt;
@@ -1003,7 +1280,7 @@ void ReducedUnsteadyBBTurb::onlineTimeLoop(
         {
             boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
         }
-
+        g_printOperatorDebug = true;
         newtonObject.operator()(y, res);
         newtonObject.y_old = y;
 
@@ -1042,5 +1319,120 @@ void ReducedUnsteadyBBTurb::onlineTimeLoop(
     Info << "Online solution computed, with total time steps solved: " << timeStepCounter << endl;
 }
 
+template <typename NewtonTypeMomentum, typename NewtonTypeTemperature>
+void ReducedUnsteadyBBTurb::onlineTimeLoopSegregated(
+    NewtonTypeMomentum& newtonObjectMomentum, NewtonTypeTemperature& newtonObjectTemperature, BoundaryConditions& boundaryConditions,
+    int firstRBFInd, int numberOfStores)
+{
+    Eigen::HybridNonLinearSolver<NewtonTypeMomentum> hnlsMomentum(newtonObjectMomentum);
+    Eigen::HybridNonLinearSolver<NewtonTypeTemperature> hnlsTemperature(newtonObjectTemperature);
+    Color::Modifier red(Color::FG_RED);
+    Color::Modifier green(Color::FG_GREEN);
+    Color::Modifier def(Color::FG_DEFAULT);
 
+    Eigen::VectorXd resMomentum(y.head(Nphi_u + Nphi_prgh)); // Residual vector for momentum
+    Eigen::VectorXd resTemperature(y.tail(Nphi_t)); // Residual vector for temperature
+    Eigen::VectorXd aDer; // Vector for the time derivative of velocity coefficients
+    Eigen::VectorXd RBFInput;
+    RBFInput.resize(dimA);
+
+    int timeStepCounter = 0;
+    int nextStore = 0;
+    int storedSnapshotsCounter = 0;
+
+    Eigen::MatrixXd tmp_sol(y.rows() + 1, 1);
+    tmp_sol(0) = time;
+    tmp_sol.col(0).tail(y.rows()) = y;
+
+    Eigen::VectorXd momentumCoeffs;
+    Eigen::VectorXd temperatureCoeffs;
+
+    while (time < finalTime - dt)
+    {
+        time += dt;
+        momentumCoeffs = y.head(Nphi_u + Nphi_prgh);
+        temperatureCoeffs = y.tail(Nphi_t);
+        boundaryConditions.updateTimeDependentBC(time);
+        if (problem->timedepbcMethod == "yes")
+        {
+            setNewtonObjectBC(newtonObjectMomentum, boundaryConditions);
+            setNewtonObjectBC(newtonObjectTemperature, boundaryConditions);
+        }
+
+        // Solve momentum equations
+        resMomentum.setZero();
+        hnlsMomentum.solve(momentumCoeffs);
+        y.head(Nphi_u + Nphi_prgh) = momentumCoeffs;
+
+        aDer = (momentumCoeffs.head(Nphi_u) - newtonObjectMomentum.y_old.head(Nphi_u)) / dt;
+        RBFInput << momentumCoeffs.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+        for (int j = 0; j < Nphi_nut; j++)
+        {
+            newtonObjectMomentum.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
+            newtonObjectTemperature.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
+        }
+        newtonObjectTemperature.y_old = y;
+
+        // Solve temperature equations
+        resTemperature.setZero();
+        hnlsTemperature.solve(temperatureCoeffs);
+
+        y.tail(Nphi_t) = temperatureCoeffs;
+
+        if (problem->bcMethod == "lift")
+        {
+            boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
+        }
+
+        newtonObjectMomentum.operator()(momentumCoeffs, resMomentum);
+        g_printOperatorDebug = true;
+        newtonObjectTemperature.operator()(temperatureCoeffs, resTemperature);
+        g_printOperatorDebug = false;
+        newtonObjectMomentum.y_old = y;
+        newtonObjectTemperature.y_old = y;
+
+        Info << "Time = " << time << endl;
+        if (resMomentum.norm() < 1e-5)
+        {
+            std::cout << green << "|F(x)| = " << resMomentum.norm() << " - Minimun reached in " << hnlsMomentum.iter << " iterations " << def << std::endl
+                      << std::endl;
+        } else
+        {
+            std::cout << red << "|F(x)| = " << resMomentum.norm() << " - Minimun reached in " << hnlsMomentum.iter << " iterations " << def << std::endl
+                      << std::endl;
+        }
+
+        if (resTemperature.norm() < 1e-5)
+        {
+            std::cout << green << "|F(x)| = " << resTemperature.norm() << " - Minimun reached in " << hnlsTemperature.iter << " iterations " << def << std::endl
+                      << std::endl;
+        } else
+        {
+            std::cout << red << "|F(x)| = " << resTemperature.norm() << " - Minimun reached in " << hnlsTemperature.iter << " iterations " << def << std::endl
+                      << std::endl;
+        }
+
+        count_online_solve++;
+
+        tmp_sol(0) = time;
+        tmp_sol.col(0).tail(y.rows()) = y;
+
+        if (timeStepCounter == nextStore)
+        {
+            if (storedSnapshotsCounter >= online_solution.size())
+            {
+                online_solution.append(tmp_sol);
+            } else
+            {
+                online_solution[storedSnapshotsCounter] = tmp_sol;
+            }
+            rbfCoeffMat(0, storedSnapshotsCounter) = time;
+            rbfCoeffMat.block(1, storedSnapshotsCounter, Nphi_nut, 1) = newtonObjectMomentum.nu_fluct;
+            nextStore += numberOfStores;
+            storedSnapshotsCounter++;
+        }
+        timeStepCounter++;
+    }
+    Info << "Online solution computed, with total time steps solved: " << timeStepCounter << endl;
+}
 // ************************************************************************ //

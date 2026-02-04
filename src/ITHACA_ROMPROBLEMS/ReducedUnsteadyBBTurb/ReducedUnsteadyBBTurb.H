@@ -88,6 +88,86 @@ public:
     std::vector<SPLINTER::RBFSpline*> SPLINES;
 };
 
+struct newtonUnsteadyBBTurbSUPMomentum : public newton_argument<double> {
+public:
+    newtonUnsteadyBBTurbSUPMomentum() { }
+
+    newtonUnsteadyBBTurbSUPMomentum(int Nx, int Ny,
+        UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
+                                  problem(&problem),
+                                  Nphi_u(problem.NUmodes + problem.liftfield.size() + problem.NSUPmodes),
+                                  Nphi_t(problem.NTmodes + problem.liftfieldT.size()),
+                                  N_BC_t(problem.inletIndexT.rows()),
+                                  N_BC(problem.inletIndex.rows()),
+                                  Nphi_prgh(problem.NPrghmodes),
+                                  Nphi_nut(problem.Nnutmodes),
+                                  nu_fluct(problem.Nnutmodes),
+                                  nu_param(problem.mu.rows())
+    { }
+    int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
+    int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
+    UnsteadyBBTurb* problem;
+    int Nphi_u;
+    int Nphi_t;
+    int N_BC_t;
+    int N_BC;
+    int Nphi_prgh;
+    int Nphi_nut;
+    Eigen::VectorXd nu_fluct;
+    Eigen::VectorXd nu_param;
+    scalar nu;
+    scalar Pr;
+    scalar Pr_t;
+    scalar dt;
+
+    Eigen::VectorXd y_old;
+    Eigen::VectorXd BC_t;
+    Eigen::VectorXd BC;
+    Eigen::MatrixXd tauT;
+    Eigen::MatrixXd tauU;
+    std::vector<SPLINTER::RBFSpline*> SPLINES;
+};
+
+struct newtonUnsteadyBBTurbSUPTemperature : public newton_argument<double> {
+public:
+    newtonUnsteadyBBTurbSUPTemperature() { }
+
+    newtonUnsteadyBBTurbSUPTemperature(int Nx, int Ny,
+        UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
+                                  problem(&problem),
+                                  Nphi_u(problem.NUmodes + problem.liftfield.size() + problem.NSUPmodes),
+                                  Nphi_t(problem.NTmodes + problem.liftfieldT.size()),
+                                  N_BC_t(problem.inletIndexT.rows()),
+                                  N_BC(problem.inletIndex.rows()),
+                                  Nphi_prgh(problem.NPrghmodes),
+                                  Nphi_nut(problem.Nnutmodes),
+                                  nu_fluct(problem.Nnutmodes),
+                                  nu_param(problem.mu.rows())
+    { }
+    int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
+    int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
+    UnsteadyBBTurb* problem;
+    int Nphi_u;
+    int Nphi_t;
+    int N_BC_t;
+    int N_BC;
+    int Nphi_prgh;
+    int Nphi_nut;
+    Eigen::VectorXd nu_fluct;
+    Eigen::VectorXd nu_param;
+    scalar nu;
+    scalar Pr;
+    scalar Pr_t;
+    scalar dt;
+
+    Eigen::VectorXd y_old;
+    Eigen::VectorXd BC_t;
+    Eigen::VectorXd BC;
+    Eigen::MatrixXd tauT;
+    Eigen::MatrixXd tauU;
+    std::vector<SPLINTER::RBFSpline*> SPLINES;
+};
+
 struct newton_unsteadyBBTurb_VMB : public newton_argument<double> {
 public:
     newton_unsteadyBBTurb_VMB() { }
@@ -208,6 +288,12 @@ public:
     /// Function object to call the non linear solver sup approach
     newton_unsteadyBBTurb_sup newton_object_sup;
 
+    ///
+    newtonUnsteadyBBTurbSUPMomentum newton_object_sup_momentum;
+
+    ///
+    newtonUnsteadyBBTurbSUPTemperature newton_object_sup_temperature;
+
     /// Function object to call the non linear solver PPE approach
     newton_unsteadyBBTurb_PPE newton_object_PPE;
 
@@ -222,6 +308,9 @@ public:
 
     /// Reconstructed turbulent viscosity field
     PtrList<volScalarField> nutFluctRecFields;
+
+    /// Reconstructed total turbulent viscosity field
+    PtrList<volScalarField> nutRecFields;
 
     /// Initial eddy viscosity reduced coefficients - fluctuating part
     Eigen::VectorXd nut0;
@@ -264,6 +353,9 @@ public:
 
     /// Boolean to choose whether to skip the lifting modes in the reconstruction
     bool skipLift = true;
+
+    /// Boolean flag to chose whether to solve the momentum and temperature equations separately using two different Newton solvers
+    bool separateMomentumTemperature = false;
 
     /// Word to indicate the stabilization method. It is used in the post-processing
     word pressureMethod;
@@ -383,6 +475,15 @@ public:
     /// @param[in]      numberOfStores   The number of stores to be used in the time loop
     template <typename NewtonType>
     void onlineTimeLoop(NewtonType& newtonObject, BoundaryConditions& boundaryConditions, int firstRBFInd, int numberOfStores);
+
+    /// @brief      Carries out the time loop for the online solve, but uses a newton object for momentum and one for temperature. Templated to support different Newton object types.
+    ///
+    /// @param[in,out]  newtonObject      The Newton object to be used in the time loop
+    /// @param[in,out]  boundaryConditions  The BoundaryConditions object containing the BCs
+    /// @param[in]      firstRBFInd      The first RBF index to use
+    /// @param[in]      numberOfStores   The number of stores to be used in the time loop
+    template <typename NewtonTypeMomentum, typename NewtonTypeTemperature>
+    void onlineTimeLoopSegregated(NewtonTypeMomentum& newtonObjectMomentum, NewtonTypeTemperature& newtonObjectTemperature, BoundaryConditions& boundaryConditions, int firstRBFInd, int numberOfStores);
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
