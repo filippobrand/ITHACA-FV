@@ -262,6 +262,7 @@ void UnsteadyBBTurb::truthSolve(fileName folder)
 
 void UnsteadyBBTurb::solvesupremizer(word type)
 {
+    Info << "Called the supremizer for UnsteadyBBTurb." << nl << endl;
     M_Assert(type == "modes" || type == "snapshots",
         "You must specify the variable type with either snapshots or modes");
     PtrList<volScalarField> P_sup;
@@ -575,7 +576,7 @@ void UnsteadyBBTurb::projectSUP(fileName folder, label NU, label NPrgh, label NT
         bcTempMat = bcTemperatureMat(NTmodes);
     }
 
-    B_total_matrix = B_matrix; // + BT_matrix;
+    B_total_matrix = B_matrix + BT_matrix;
     label cSize = NU + NSUP + liftfield.size();
     C_total_tensor.resize(cSize, Nnut, cSize);
     C_total_tensor = CT1_tensor + CT2_tensor;
@@ -763,15 +764,13 @@ void UnsteadyBBTurb::projectVMB(fileName folder, label NU, label NT, label Nnut)
 
 // * * * * * * * * * * * * * * RBF Prep Methods * * * * * * * * * * * * * * //
 void UnsteadyBBTurb::offlineRBFInterpolation() // TODO: Make this runnable in parallel
-{    
+{
     Eigen::MatrixXd weights;
     Eigen::MatrixXd coeffL2nut = ITHACAutilities::getCoeffs(fluctNutfield, nutmodes, Nnutmodes);
     Eigen::MatrixXd coeffL2vel;
     coeffL2vel.resize(0, 0);
     if (bcMethod == "lift")
     {
-        // TODO: Strong doubts about this. Check both Hijazi paper and PhD thesis. He says to use the Homogeneous field. Also says to drop the supremizer modes
-        // Should the firts liftfield.size() rows be dropped from coeffL2vel later when using the RBFs? Or should they forcefully be set to the BC values?
         coeffL2vel = ITHACAutilities::getCoeffs(Uomfield, Umodes, NUmodes); // Returns a [modes x snapshots]
         skipRBFIndex = liftfield.size();
     } else if (bcMethod == "penalty")
@@ -781,34 +780,7 @@ void UnsteadyBBTurb::offlineRBFInterpolation() // TODO: Make this runnable in pa
     Info << "Shape of the L2 velocity coeff matrix: " << coeffL2vel.rows() << " x " << coeffL2vel.cols() << endl;
     Info << "Shape of the L2 eddy viscosity coeff matrix: " << coeffL2nut.rows() << " x " << coeffL2nut.cols() << endl;
 
-    // // Substitute the BC rows with the appropriate values when using lifting approach
-    // if (liftfield.size() > 0)
-    // {
-    //     M_Assert(coeffL2vel.rows() >= liftfield.size(), "coeffL2vel has fewer rows than liftfield.size()");
-    //     // precompute total snapshots and check
-    //     label totalSnapshots = 0;
-    //     for (label jj = 0; jj < timeSnapshots.size(); ++jj)
-    //         totalSnapshots += timeSnapshots[jj].size();
-    //     M_Assert(totalSnapshots == coeffL2vel.cols(),
-    //         "Total timeSnapshots columns do not match coeffL2vel.columns()");
-
-    //     for (label i = 0; i < liftfield.size(); i++) // For each BC
-    //     {
-    //         label blockStart = 0;
-    //         for (label j = 0; j < timeSnapshots.size(); j++)
-    //         {
-    //             label n = timeSnapshots[j].size();
-    //             double BCValue = liftBCMatrix(j, i);
-    //             // bounds check and set the correct block (columns [blockStart, blockStart+n))
-    //             M_Assert(blockStart + n <= coeffL2vel.cols(),
-    //                 "blockStart + n exceeds coeffL2vel columns");
-    //             coeffL2vel.row(i).segment(blockStart, n).setConstant(BCValue);
-    //             blockStart += n;
-    //         }
-    //     }
-    // }
-
-    // Returns a list of two matrices: [0] = velocity derivative coeffs, [1] = eddy viscosity coeffs. Each 
+    // Returns a list of two matrices: [0] = velocity derivative coeffs, [1] = eddy viscosity coeffs. Each
     // matrix is [snapshots x coeffs]
     List<Eigen::MatrixXd> velDerCoeff = velDerivativeCoeff(coeffL2vel.transpose(), coeffL2nut.transpose(), timeSnapshots);
     dimA = velDerCoeff[0].cols();
@@ -828,17 +800,17 @@ void UnsteadyBBTurb::offlineRBFInterpolation() // TODO: Make this runnable in pa
     rbfSplines.resize(Nnutmodes);
     for (label i = 0; i < Nnutmodes; i++)
     {
-      // Create a RBF interpolator instance
-      rbfSplines[i] = std::make_shared<ithacaInterpolator>(viscDict);
+        // Create a RBF interpolator instance
+        rbfSplines[i] = std::make_shared<ithacaInterpolator>(viscDict);
 
-      Eigen::MatrixXd x = velDerCoeff[0].transpose();
-      Eigen::VectorXd y = velDerCoeff[1].col(i);
-      Info << "### DEBUG: Shape of x: " << x.rows() << " x " << x.cols() << endl;
-      Info << "### DEBUG: Shape of y: " << y.rows() << " x " << y.cols() << endl;
+        Eigen::MatrixXd x = velDerCoeff[0].transpose();
+        Eigen::VectorXd y = velDerCoeff[1].col(i);
+        Info << "### DEBUG: Shape of x: " << x.rows() << " x " << x.cols() << endl;
+        Info << "### DEBUG: Shape of y: " << y.rows() << " x " << y.cols() << endl;
 
-      rbfSplines[i]->fit(x, y);
+        rbfSplines[i]->fit(x, y);
 
-      Info << "Fitting ithacaInterpolator for mode " << i + 1 << " completed." << endl;
+        Info << "Fitting ithacaInterpolator for mode " << i + 1 << " completed." << endl;
     }
 
     Info << "RBF Interpolation completed. Some details of the interpolation are as follows." << endl;
@@ -898,8 +870,18 @@ void UnsteadyBBTurb::splitEddyViscositySnapshots() // TODO: (Maybe) Use the aver
     {
         label nSnapshotPerSample = timeSnapshots[i].size();
         Info << "Processing sample " << i + 1 << " with " << nSnapshotPerSample << " snapshots." << endl;
-        M_Assert(nSnapshotPerSample > 0,
-            "Each parameter sample must have at least one snapshot");
+        M_Assert(nSnapshotPerSample > 0, "Each parameter sample must have at least one snapshot");
+
+        // PtrList<volScalarField> sampleNutFieldPtr;
+        // sampleNutFieldPtr.setSize(nSnapshotPerSample);
+        // label startIndex = globalIndex;
+        // label endIndex = globalIndex + nSnapshotPerSample - 1;
+        // for (label j = startIndex; j <= endIndex; j++)
+        // {
+        //     sampleNutFieldPtr.set(j - startIndex, Nutfield[j]);
+        // }
+        // ITHACAutilities::computeAverage(sampleNutFieldPtr);
+
         autoPtr<volScalarField> avgPtr(
             new volScalarField(
                 IOobject(
@@ -913,6 +895,7 @@ void UnsteadyBBTurb::splitEddyViscositySnapshots() // TODO: (Maybe) Use the aver
         for (label j = 1; j < nSnapshotPerSample; j++)
         {
             avgPtr() += Nutfield[globalIndex + j];
+
         }
 
         avgPtr() /= scalar(nSnapshotPerSample);
@@ -1374,15 +1357,14 @@ Eigen::MatrixXd UnsteadyBBTurb::laplacian_pressure(label NPrghmodes)
     {
         for (label j = 0; j < Dsize; j++)
         {
-            D_matrix(i, j) = fvc::domainIntegrate(fvc::grad(P_rghmodes[i]) & fvc::grad(
-                    P_rghmodes[j])).value();
+            D_matrix(i, j) = fvc::domainIntegrate(fvc::grad(P_rghmodes[i]) & fvc::grad(P_rghmodes[j])).value();
         }
     }
 
     if (Pstream::master())
     {
         ITHACAstream::SaveDenseMatrix(D_matrix, "./ITHACAoutput/Matrices/",
-                                      "D_" + name(NPrghmodes));
+            "D_" + name(NPrghmodes));
     }
 
     return D_matrix;
@@ -1401,9 +1383,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::divMomentum(label NU, label NPrghmodes)
         {
             for (label k = 0; k < g2Size; k++)
             {
-                gTensor(i, j, k) = fvc::domainIntegrate(fvc::grad(P_rghmodes[i]) & (fvc::div(
-                        fvc::interpolate(L_U_SUPmodes[j]) & L_U_SUPmodes[j].mesh().Sf(),
-                        L_U_SUPmodes[k]))).value();
+                gTensor(i, j, k) = fvc::domainIntegrate(fvc::grad(P_rghmodes[i]) & (fvc::div(fvc::interpolate(L_U_SUPmodes[j]) & L_U_SUPmodes[j].mesh().Sf(), L_U_SUPmodes[k]))).value();
             }
         }
     }
@@ -1412,8 +1392,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::divMomentum(label NU, label NPrghmodes)
     {
         // Export the tensor
         ITHACAstream::SaveDenseTensor(gTensor, "./ITHACAoutput/Matrices/",
-                                      "G_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(
-                                          NSUPmodes) + "_" + name(NPrghmodes) + "_t");
+            "G_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NSUPmodes) + "_" + name(NPrghmodes) + "_t");
     }
 
     return gTensor;
@@ -1472,7 +1451,9 @@ Eigen::MatrixXd UnsteadyBBTurb::pressure_BC1(label NUmodes, label NPrghmodes)
         for (label j = 0; j < P_BC2size; j++)
         {
             surfaceScalarField lpl((fvc::interpolate(fvc::laplacian(
-                                        L_U_SUPmodes[j])) & mesh.Sf()) * fvc::interpolate(P_rghmodes[i]));
+                                        L_U_SUPmodes[j])) &
+                                       mesh.Sf()) *
+                fvc::interpolate(P_rghmodes[i]));
             double s = 0;
 
             for (label k = 0; k < lpl.boundaryField().size(); k++)
@@ -1490,7 +1471,7 @@ Eigen::MatrixXd UnsteadyBBTurb::pressure_BC1(label NUmodes, label NPrghmodes)
     if (Pstream::master())
     {
         ITHACAstream::SaveDenseMatrix(BC1_matrix, "./ITHACAoutput/Matrices/",
-                                      "BC1_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NPrghmodes));
+            "BC1_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NPrghmodes));
     }
 
     return BC1_matrix;
@@ -1511,8 +1492,10 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::pressure_BC2(label NUmodes, label NPrgh
             for (label k = 0; k < pressureBC2Size; k++)
             {
                 surfaceScalarField div_m(fvc::interpolate(fvc::div(fvc::interpolate(
-                                             L_U_SUPmodes[j]) & mesh.Sf(),
-                                         L_U_SUPmodes[k])) & mesh.Sf() * fvc::interpolate(P_rghmodes[i]));
+                                                                       L_U_SUPmodes[j]) &
+                                                 mesh.Sf(),
+                                             L_U_SUPmodes[k])) &
+                    mesh.Sf() * fvc::interpolate(P_rghmodes[i]));
                 double s = 0;
 
                 for (label k = 0; k < div_m.boundaryField().size(); k++)
@@ -1532,12 +1515,11 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::pressure_BC2(label NUmodes, label NPrgh
     {
         // Export the tensor
         ITHACAstream::SaveDenseTensor(bc2Tensor, "./ITHACAoutput/Matrices/",
-                                      "BC2_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(
-                                          NSUPmodes) + "_" + name(NPrghmodes) + "_t");
+            "BC2_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NSUPmodes) + "_" + name(NPrghmodes) + "_t");
     }
 
     return bc2Tensor;
-  }
+}
 
 Eigen::MatrixXd UnsteadyBBTurb::pressure_BC3(label NUmodes, label NPrghmodes)
 {
@@ -1571,7 +1553,7 @@ Eigen::MatrixXd UnsteadyBBTurb::pressure_BC3(label NUmodes, label NPrghmodes)
     if (Pstream::master())
     {
         ITHACAstream::SaveDenseMatrix(BC3_matrix, "./ITHACAoutput/Matrices/",
-                                      "BC3_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NPrghmodes));
+            "BC3_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NPrghmodes));
     }
 
     return BC3_matrix;
@@ -1634,7 +1616,7 @@ List<Eigen::MatrixXd> UnsteadyBBTurb::bcTemperatureMat(label NTmodes)
             }
         }
     }
-    
+
     if (Pstream::master())
     {
         ITHACAstream::exportMatrix(bcTempMat, "bcTempMat", "python", "./ITHACAoutput/Matrices/python/");
