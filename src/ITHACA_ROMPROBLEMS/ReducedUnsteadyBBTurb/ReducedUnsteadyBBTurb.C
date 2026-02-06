@@ -1370,6 +1370,8 @@ void ReducedUnsteadyBBTurb::onlineTimeLoopSegregated(
         {
             newtonObjectMomentum.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
             newtonObjectTemperature.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
+            Info << "RBF Input[" << j << "] = " << RBFInput << endl;
+            Info << "Predicted nut fluct[" << j << "] = " << newtonObjectMomentum.nu_fluct(j) << endl;
         }
         newtonObjectTemperature.y_old = y;
 
@@ -1435,4 +1437,25 @@ void ReducedUnsteadyBBTurb::onlineTimeLoopSegregated(
     }
     Info << "Online solution computed, with total time steps solved: " << timeStepCounter << endl;
 }
+
+void ReducedUnsteadyBBTurb::inf_sup_constant()
+{
+  double a;
+  Eigen::VectorXd sup(Nphi_u);
+  Eigen::VectorXd inf(Nphi_prgh);
+
+  for (int i = 0; i < Nphi_prgh; i++)
+  {
+    for (int j = 0; j < Nphi_u; j++)
+    {
+      sup(j) = fvc::domainIntegrate(fvc::div(problem->L_U_SUPmodes[j]) * problem->P_rghmodes[i]).value() /
+                     ITHACAutilities::H1Seminorm(problem->L_U_SUPmodes[j]) / ITHACAutilities::L2Norm(problem->P_rghmodes[i]);
+    }
+    inf(i) = sup.maxCoeff();
+  }
+  a = inf.minCoeff();
+  Info << "### STABILITY: The inf-sup constant is: " << a << endl;
+}
+
+
 // ************************************************************************ //

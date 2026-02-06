@@ -484,7 +484,11 @@ public:
     /// @param[in]      numberOfStores   The number of stores to be used in the time loop
     template <typename NewtonTypeMomentum, typename NewtonTypeTemperature>
     void onlineTimeLoopSegregated(NewtonTypeMomentum& newtonObjectMomentum, NewtonTypeTemperature& newtonObjectTemperature, BoundaryConditions& boundaryConditions, int firstRBFInd, int numberOfStores);
-};
+
+    ///@brief       Computes the reduced version of the inf_sup constant
+    ///
+    void inf_sup_constant();
+  };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
