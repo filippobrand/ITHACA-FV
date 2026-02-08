@@ -114,18 +114,6 @@ public:
     /// RBF shape parameters vector
     Eigen::VectorXd shapeParameters;
 
-    /// Vector with column means for normalization during RBF for matrix A
-    Eigen::VectorXd meanA;
-
-    /// Vector with column std for normalization during RBF for matrix A
-    Eigen::VectorXd stdA;
-
-    /// Vector with column means for normalization during RBF for matrix G
-    Eigen::VectorXd meanG;
-
-    /// Vector with column std for normalization during RBF for matrix G
-    Eigen::VectorXd stdG;
-
     /// Create a Eigen vector with the time instant for each snapshot
     List<Eigen::VectorXd> timeSnapshots;
 
@@ -140,8 +128,32 @@ public:
     /// G tensor for the PPE approach
     Eigen::Tensor<double, 3> G_tensor;
 
-    /// BC2 tensor for the PPE approach
-    Eigen::Tensor<double, 3> BC2_tensor;
+    ///  Buoyancy term for the PPE approach
+    Eigen::MatrixXd HP_matrix;
+    
+    /// BC term in the PPE approach related to the laminar viscosity
+    Eigen::MatrixXd nuBC_matrix;
+
+    /// BC term in the PPE approach related to the time-dependent BC
+    Eigen::MatrixXd timedepBC_matrix;
+
+    /// PPE Tensor 1 for the PPE approach (average contribution)
+    Eigen::Tensor<double, 3> CT1_PPE_ave_tensor;
+
+    /// PPE Tensor 1 for the PPE approach (fluctuating contribution)
+    Eigen::Tensor<double, 3> CT1_PPE_tensor;
+
+    /// PPE Tensor 2 for the PPE approach (average contribution)
+    Eigen::Tensor<double, 3> CT2_PPE_ave_tensor;
+
+    /// PPE Tensor 2 for the PPE approach (fluctuating contribution)
+    Eigen::Tensor<double, 3> CT2_PPE_tensor;
+
+    /// Total PPE tensor for the PPE approach (average contribution)
+    Eigen::Tensor<double, 3> cTotalPPEAveTensor;
+
+    /// Total PPE tensor for the PPE approach (fluctuating contribution)
+    Eigen::Tensor<double, 3> cTotalPPEFluctTensor;
 
     /// Turbulent viscosity tensor CT1 for the momentum equation
     Eigen::Tensor<double, 3> CT1_tensor;
@@ -258,7 +270,7 @@ public:
     /// Gradient of pressure
     ///
     /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NPmodes    The number of pressure modes.
+    /// @param[in]  NPrghmodes    The number of pressure modes.
     /// @param[in]  NSUPmodes  The number of supremizer modes.
     ///
     /// @return     reduced matrix in Eigen::MatrixXd format for the Gradient of pressure term.
@@ -280,7 +292,7 @@ public:
     /// Divergence Term (supremizer approach)
     ///
     /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NPmodes    The number of pressure modes.
+    /// @param[in]  NPrghmodes    The number of pressure modes.
     /// @param[in]  NSUPmodes  The number of supremizer modes.
     ///
     /// @return     reduced matrix in Eigen::MatrixXd format for the divergence term.
@@ -321,23 +333,44 @@ public:
 
     //--------------------------------------------------------------------------
     /// @brief      Laplacian term of the PPE approach
+    ///
+    /// @param[in]  NPrghmodes    The number of pressure modes.
     Eigen::MatrixXd laplacian_pressure(label NPrghmodes);
 
     //--------------------------------------------------------------------------
     /// @brief       Buoyancy term for the PPE equation
+    ///
+    /// @param[in]  NPrghmodes    The number of pressure modes.
+    /// @param[in]  NTmodes    The number of temperature modes.
     Eigen::MatrixXd buoyant_term_poisson(label NPrghmodes, label NTmodes);
     
     //--------------------------------------------------------------------------
     /// @brief      Pressure BC1 matrix for the PPE approach
+    ///
+    /// @param[in]  NUmodes    The number of velocity modes.
+    /// @param[in]  NPrghmodes    The number of pressure modes.
     Eigen::MatrixXd pressure_BC1(label NUmodes, label NPrghmodes);
 
     //--------------------------------------------------------------------------
     /// @brief      Pressure BC2 matrix for the PPE approach
+    ///
+    /// @param[in]  NUmodes    The number of velocity modes.
+    /// @param[in]  NPrghmodes    The number of pressure modes.
     Eigen::Tensor<double, 3> pressure_BC2(label NUmodes, label NPrghmodes);
 
     //--------------------------------------------------------------------------
     /// @brief      Pressure BC3 matrix for the PPE approach
+    ///
+    /// @param[in]  NUmodes    The number of velocity modes.
+    /// @param[in]  NPrghmodes    The number of pressure modes.
     Eigen::MatrixXd pressure_BC3(label NUmodes, label NPrghmodes);
+
+    //--------------------------------------------------------------------------
+    /// @brief      PPE BC4 matrix, takes into account the time-dependent BC
+    ///
+    /// @param[in]  NUmodes    The number of velocity modes.
+    /// @param[in]  NPrghmodes    The number of pressure modes.
+    Eigen::MatrixXd pressure_BC4(label NUmodes, label NPrghmodes);
 
     //--------------------------------------------------------------------------
     /// @brief      Divergence of the momentum equation for the PPE approach
@@ -417,6 +450,37 @@ public:
     ///  of the eddy viscosity for the turbulence treatement in the energy equation
     ///
     Eigen::Tensor<double, 3> turbulenceTemperatureAveTensor(label NT);
+
+    //--------------------------------------------------------------------------
+    /// @brief      PPE Average nut related tensor for the split turbulence treatment
+    /// @param[in]  NUmodes    The number of velocity modes.
+    /// @param[in]  NSUPmodes  The number of supremizer modes.
+    /// @param[in]  NPrghmodes    The number of pressure modes.
+
+    Eigen::Tensor<double, 3> turbulencePPEAveTensor1(label NUmodes, label NPrghmodes);
+
+    //--------------------------------------------------------------------------
+    /// @brief      PPE Fluctuating nut related tensor for the split turbulence treatment
+    /// @param[in]  NUmodes    The number of velocity modes.
+    /// @param[in]  NPrghmodes    The number of pressure modes.
+    /// @param[in]  Nnut  The number of eddy viscosity modes.
+
+    Eigen::Tensor<double, 3> turbulencePPETensor1(label NUmodes,label NPrghmodes, label Nnut);
+
+    //--------------------------------------------------------------------------
+    /// @brief      PPE nut related tensor for the split turbulence treatment
+    /// @param[in]  NUmodes    The number of velocity modes.
+    /// @param[in]  NPrghmodes    The number of pressure modes.
+    /// @param[in]  Nnut  The number of eddy viscosity modes.
+
+    Eigen::Tensor<double, 3> turbulencePPETensor2(label NUmodes, label NPrghmodes, label Nnut);
+
+    //--------------------------------------------------------------------------
+    /// @brief      PPE nut related tensor for the split turbulence treatment
+    /// @param[in]  NUmodes    The number of velocity modes.
+    /// @param[in]  NPrghmodes    The number of pressure modes.
+
+    Eigen::Tensor<double, 3> turbulencePPEAveTensor2(label NUmodes, label NPrghmodes);
 
     //--------------------------------------------------------------------------
     /// @brief      A method to compute the two matrices needed for the RBF interpolation by combining

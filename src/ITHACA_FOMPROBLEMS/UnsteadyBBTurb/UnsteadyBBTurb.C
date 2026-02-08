@@ -593,6 +593,7 @@ void UnsteadyBBTurb::projectPPE(fileName folder, label NU, label NPrgh, label NT
     NTmodes = NT;
     NPrghmodes = NPrgh;
     Nnutmodes = Nnut;
+    NSUPmodes = 0;
 
     L_U_SUPmodes.resize(0);
     if (liftfield.size() != 0)
@@ -625,29 +626,43 @@ void UnsteadyBBTurb::projectPPE(fileName folder, label NU, label NPrgh, label NT
             L_Tmodes.append(Tmodes[k].clone());
         }
     }
-
+  
+    // Momentum equation matrices
+    Info << "Assembling momentum equation matrices." << endl;
     M_matrix = mass_term(NU, NPrgh, 0);
     B_matrix = diffusive_term(NU, NPrgh, 0);
     K_matrix = pressure_gradient_term(NU, NPrgh, 0);
     H_matrix = buoyant_term(NU, NT, 0);
-    W_matrix = mass_term_temperature(NU, NT, 0);
-    Y_matrix = diffusive_term_temperature(NU, NT, 0);
-    P_matrix = divergence_term(NU, NPrgh, 0);
-    BT_matrix = BTturbulence(NU, 0);
     C_tensor = convective_term_tens(NU, NPrgh, 0);
-    Q_tensor = convective_tensor_temperature(NU, NT, 0);
-    D_matrix = laplacian_pressure(NPrghmodes);
-    G_tensor = divMomentum(NUmodes, NPrghmodes);
-    HP_matrix = buoyant_term_poisson(NPrghmodes, NTmodes);
-    BC1_matrix = pressure_BC1(NUmodes, NPrghmodes);
-    BC2_tensor = pressure_BC2(NUmodes, NPrghmodes);
-    BC3_matrix = pressure_BC3(NUmodes, NPrghmodes);
     CT1_tensor = turbulenceTensor1(NU, 0, Nnut);
     CT2_tensor = turbulenceTensor2(NU, 0, Nnut);
     CT1_ave_tensor = turbulenceAveTensor1(NU, 0);
     CT2_ave_tensor = turbulenceAveTensor2(NU, 0);
+    BT_matrix = BTturbulence(NU, 0);
+
+    // Temperature equation matrices
+    Info << "Assembling temperature equation matrices." << endl;
+    W_matrix = mass_term_temperature(NU, NT, 0);
+    Y_matrix = diffusive_term_temperature(NU, NT, 0);
+    Q_tensor = convective_tensor_temperature(NU, NT, 0);
     YT_tensor = temperatureTurbulenceTensor(NT, Nnut);
     YT_ave_tensor = turbulenceTemperatureAveTensor(NT);
+
+    // PPE matrices
+    Info << "Assembling PPE matrices." << endl;
+    D_matrix = laplacian_pressure(NPrgh);
+    G_tensor = divMomentum(NU, NPrgh);
+    HP_matrix = buoyant_term_poisson(NPrgh, NT);
+    nuBC_matrix = pressure_BC3(NU, NPrgh);
+    timedepBC_matrix = pressure_BC4(NU, NPrgh);
+    CT1_PPE_ave_tensor = turbulencePPEAveTensor1(NU, NPrgh);
+    CT1_PPE_tensor = turbulencePPETensor1(NU, NPrgh, Nnut);
+    CT2_PPE_ave_tensor = turbulencePPEAveTensor2(NU, NPrgh);
+    CT2_PPE_tensor = turbulencePPETensor2(NU, NPrgh, Nnut);
+    Info << "Shapes for the PPE matrices: D " << D_matrix.rows() << "x" << D_matrix.cols() << nl
+         << ", HP " << HP_matrix.rows() << "x" << HP_matrix.cols() << nl
+         << ", nuBC " << nuBC_matrix.rows() << "x" << nuBC_matrix.cols() << nl
+         << ", timedepBC " << timedepBC_matrix.rows() << "x" << timedepBC_matrix.cols() << nl;
 
     if (bcMethod == "penalty")
     {
@@ -664,6 +679,11 @@ void UnsteadyBBTurb::projectPPE(fileName folder, label NU, label NPrgh, label NT
     C_total_tensor = CT1_tensor + CT2_tensor;
     C_total_ave_tensor.resize(cSize, avgNutfield.size(), cSize);
     C_total_ave_tensor = CT1_ave_tensor + CT2_ave_tensor;
+    cTotalPPEFluctTensor.resize(NPrgh, Nnut, cSize);
+    cTotalPPEFluctTensor = CT1_PPE_tensor + CT2_PPE_tensor;
+    cTotalPPEAveTensor.resize(NPrgh, avgNutfield.size(), cSize);
+    cTotalPPEAveTensor = CT1_PPE_ave_tensor + CT2_PPE_ave_tensor;
+    offlineRBFInterpolation();
 }
 
 void UnsteadyBBTurb::projectVMB(fileName folder, label NU, label NT, label Nnut)
@@ -895,7 +915,6 @@ void UnsteadyBBTurb::splitEddyViscositySnapshots() // TODO: (Maybe) Use the aver
         for (label j = 1; j < nSnapshotPerSample; j++)
         {
             avgPtr() += Nutfield[globalIndex + j];
-
         }
 
         avgPtr() /= scalar(nSnapshotPerSample);
@@ -1314,6 +1333,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTemperatureAveTensor(label NT
 }
 
 // * * * * * * * * * * * * * * Energy Eq. Methods * * * * * * * * * * * * * //
+
 Eigen::Tensor<double, 3> UnsteadyBBTurb::convective_tensor_temperature(label NU,
     label NT, label NSUP)
 {
@@ -1559,6 +1579,150 @@ Eigen::MatrixXd UnsteadyBBTurb::pressure_BC3(label NUmodes, label NPrghmodes)
     return BC3_matrix;
 }
 
+Eigen::MatrixXd UnsteadyBBTurb::pressure_BC4(label NUmodes, label NPrghmodes)
+{
+    label prghSpaceSize = NPrghmodes;
+    label uSpaceSize = NUmodes + liftfield.size();
+    Eigen::MatrixXd BC4_matrix(prghSpaceSize, uSpaceSize);
+    const fvMesh& mesh = L_U_SUPmodes[0].mesh();
+    surfaceVectorField n(mesh.Sf() / mesh.magSf());
+
+    for (label i = 0; i < prghSpaceSize; i++)
+    {
+        for (label j = 0; j < uSpaceSize; j++)
+        {
+            surfaceScalarField prghTerm = fvc::interpolate(P_rghmodes[i]).ref();
+            surfaceScalarField uNormalTerm = (n & fvc::interpolate(L_U_SUPmodes[j])).ref();
+            surfaceScalarField product = ((prghTerm * uNormalTerm) * mesh.magSf()).ref();
+            double s = 0;
+            for (label k = 0; k < product.boundaryField().size(); k++)
+            {
+                if (product.boundaryField()[k].type() != "processor")
+                {
+                    s += gSum(product.boundaryField()[k]);
+                }
+            }
+            BC4_matrix(i, j) = s;
+        }
+    }
+
+    if (Pstream::master())
+    {
+        ITHACAstream::SaveDenseMatrix(BC4_matrix, "./ITHACAoutput/Matrices/",
+            "BC4_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NPrghmodes));
+        ITHACAstream::exportMatrix(BC4_matrix, "BC4_matrix", "python", "./ITHACAoutput/Matrices/python/");
+    }
+
+    return BC4_matrix;
+}
+// * * * * * * * * * * * * * * PPE Turbulent Methods * * * * * * * * * * * * * //
+
+Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPEAveTensor1(label NUmodes, label NPrghmodes)
+{
+    const label cSize = NUmodes + liftfield.size();
+    const label nAvg = avgNutfield.size();
+    Eigen::Tensor<double, 3> ct1PPEAveTensor(NPrghmodes, nAvg, cSize);
+
+    for (label i = 0; i < NPrghmodes; ++i)
+    {
+        for (label j = 0; j < nAvg; ++j)
+        {
+            for (label k = 0; k < cSize; ++k)
+            {
+                ct1PPEAveTensor(i, j, k) =
+                    fvc::domainIntegrate(
+                        fvc::grad(P_rghmodes[i]) & fvc::laplacian(avgNutfield[j], L_U_SUPmodes[k]))
+                        .value();
+            }
+        }
+    }
+
+    ITHACAstream::SaveDenseTensor(
+        ct1PPEAveTensor,
+        "./ITHACAoutput/Matrices/",
+        "ct1PPEAve_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NPrghmodes) + "_t");
+    return ct1PPEAveTensor;
+}
+
+Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPETensor1(label NUmodes, label NPrghmodes, label Nnut)
+{
+    const label cSize = NUmodes + liftfield.size();
+
+    Eigen::Tensor<double, 3> ct1PPEFluctTensor(NPrghmodes, Nnut, cSize);
+
+    for (label i = 0; i < NPrghmodes; ++i)
+    {
+        for (label j = 0; j < Nnut; ++j)
+        {
+            for (label k = 0; k < cSize; ++k)
+            {
+                ct1PPEFluctTensor(i, j, k) =
+                    fvc::domainIntegrate(
+                        fvc::grad(P_rghmodes[i]) & fvc::laplacian(nutmodes[j], L_U_SUPmodes[k]))
+                        .value();
+            }
+        }
+    }
+
+    ITHACAstream::SaveDenseTensor(
+        ct1PPEFluctTensor,
+        "./ITHACAoutput/Matrices/",
+        "ct1PPEFluct_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NPrghmodes) + "_t");
+    return ct1PPEFluctTensor;
+}
+
+Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPEAveTensor2(label NUmodes, label NPrghmodes)
+{
+    const label cSize = NUmodes + liftfield.size();
+    const label nAvg = avgNutfield.size();
+    Eigen::Tensor<double, 3> ct2PPEAveTensor(NPrghmodes, nAvg, cSize);
+
+    for (label i = 0; i < NPrghmodes; ++i)
+    {
+        for (label j = 0; j < nAvg; ++j)
+        {
+            for (label k = 0; k < cSize; ++k)
+            {
+                ct2PPEAveTensor(i, j, k) =
+                    fvc::domainIntegrate(
+                        fvc::grad(P_rghmodes[i]) & fvc::div(avgNutfield[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T())))
+                        .value();
+            }
+        }
+    }
+
+    ITHACAstream::SaveDenseTensor(
+        ct2PPEAveTensor,
+        "./ITHACAoutput/Matrices/",
+        "ct2PPEAve_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NPrghmodes) + "_t");
+    return ct2PPEAveTensor;
+}
+
+Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPETensor2(label NUmodes, label NPrghmodes, label Nnut)
+{
+    const label cSize = NUmodes + liftfield.size();
+    Eigen::Tensor<double, 3> ct2PPEFluctTensor(NPrghmodes, Nnut, cSize);
+
+    for (label i = 0; i < NPrghmodes; ++i)
+    {
+        for (label j = 0; j < Nnut; ++j)
+        {
+            for (label k = 0; k < cSize; ++k)
+            {
+                ct2PPEFluctTensor(i, j, k) =
+                    fvc::domainIntegrate(
+                        fvc::grad(P_rghmodes[i]) & fvc::div(nutmodes[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T())))
+                        .value();
+            }
+        }
+    }
+
+    ITHACAstream::SaveDenseTensor(
+        ct2PPEFluctTensor,
+        "./ITHACAoutput/Matrices/",
+        "ct2PPEFluct_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NPrghmodes) + "_t");
+    return ct2PPEFluctTensor;
+}
 
 // * * * * * * * * * * * * * * Penalty term methods * * * * * * * * * * * * * //
 

@@ -224,7 +224,6 @@ public:
                                   Nphi_nut(problem.Nnutmodes),
                                   nu_fluct(problem.Nnutmodes),
                                   nu_param(problem.mu.rows())
-
     { }
 
     int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
@@ -445,6 +444,20 @@ public:
     /// @param[in] startSnap        Snapshot to use as initial condition
 
     void estimatePenaltyFactorSupremizer(const Eigen::MatrixXd& velBC,
+        const Eigen::MatrixXd& temperatureBC, int NtimeStepPenalty,
+        int maxIter, double toleranceU, double toleranceT, int startSnap);
+
+
+    /// @brief   Estimate the penalty factor using the iterative approach developed by S. Star.
+    ///
+    /// @param[in] velBC            Velocity boundary conditions
+    /// @param[in] temperatureBC    Temperature boundary conditions
+    /// @param[in] timeStepPenalty  Number of time steps to use for the penalty
+    /// @param[in] maxIter          Maximum number of iterations
+    /// @param[in] tol              Tolerance for convergence
+    /// @param[in] startSnap        Snapshot to use as initial condition
+
+    void estimatePenaltyFactorPPE(const Eigen::MatrixXd& velBC,
         const Eigen::MatrixXd& temperatureBC, int NtimeStepPenalty,
         int maxIter, double toleranceU, double toleranceT, int startSnap);
 
