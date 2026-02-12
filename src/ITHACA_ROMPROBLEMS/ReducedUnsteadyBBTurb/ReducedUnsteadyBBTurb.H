@@ -45,6 +45,7 @@ SourceFiles
 #include <Eigen/Dense>
 #include <unsupported/Eigen/NonLinearOptimization>
 #include <unsupported/Eigen/NumericalDiff>
+#include <memory>
 
 /// Newton object for the resolution of the reduced problem using a supremizer approach
 struct newton_unsteadyBBTurb_sup : public newton_argument<double> {
@@ -59,14 +60,22 @@ public:
                                   N_BC_t(problem.inletIndexT.rows()),
                                   N_BC(problem.inletIndex.rows()),
                                   Nphi_prgh(problem.NPrghmodes),
-                                  Nphi_nut(problem.Nnutmodes),
-                                  nu_fluct(problem.Nnutmodes),
-                                  nu_param(problem.mu.rows())
+                                  Nphi_nut(problem.NNutModes),
+                                  nu_fluct(problem.NNutModes),
+                                  nu_param(problem.mu.rows()),
+                                  pCommonMatrices(problem.pCommonMatrices),
+                                  pSupremizerMatrices(problem.pSupremizerMatrices),
+                                  pPPEMatrices(problem.pPPEMatrices),
+                                  pPenaltyMatrices(problem.pPenaltyMatrices)
     { }
 
     int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
     int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
     UnsteadyBBTurb* problem;
+    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
+    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
     int Nphi_u;
     int Nphi_t;
     int N_BC_t;
@@ -100,13 +109,21 @@ public:
                                   N_BC_t(problem.inletIndexT.rows()),
                                   N_BC(problem.inletIndex.rows()),
                                   Nphi_prgh(problem.NPrghmodes),
-                                  Nphi_nut(problem.Nnutmodes),
-                                  nu_fluct(problem.Nnutmodes),
-                                  nu_param(problem.mu.rows())
+                                  Nphi_nut(problem.NNutModes),
+                                  nu_fluct(problem.NNutModes),
+                                  nu_param(problem.mu.rows()),
+                                  pCommonMatrices(problem.pCommonMatrices),
+                                  pSupremizerMatrices(problem.pSupremizerMatrices),
+                                  pPPEMatrices(problem.pPPEMatrices),
+                                  pPenaltyMatrices(problem.pPenaltyMatrices)
     { }
     int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
     int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
     UnsteadyBBTurb* problem;
+    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
+    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
     int Nphi_u;
     int Nphi_t;
     int N_BC_t;
@@ -140,13 +157,21 @@ public:
                                   N_BC_t(problem.inletIndexT.rows()),
                                   N_BC(problem.inletIndex.rows()),
                                   Nphi_prgh(problem.NPrghmodes),
-                                  Nphi_nut(problem.Nnutmodes),
-                                  nu_fluct(problem.Nnutmodes),
-                                  nu_param(problem.mu.rows())
+                                  Nphi_nut(problem.NNutModes),
+                                  nu_fluct(problem.NNutModes),
+                                  nu_param(problem.mu.rows()),
+                                  pCommonMatrices(problem.pCommonMatrices),
+                                  pSupremizerMatrices(problem.pSupremizerMatrices),
+                                  pPPEMatrices(problem.pPPEMatrices),
+                                  pPenaltyMatrices(problem.pPenaltyMatrices)
     { }
     int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
     int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
     UnsteadyBBTurb* problem;
+    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
+    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
     int Nphi_u;
     int Nphi_t;
     int N_BC_t;
@@ -180,14 +205,22 @@ public:
                                   Nphi_t(problem.NTmodes + problem.liftfieldT.size()),
                                   N_BC_t(problem.inletIndexT.rows()),
                                   N_BC(problem.inletIndex.rows()),
-                                  Nphi_nut(problem.Nnutmodes),
-                                  nu_fluct(problem.Nnutmodes),
-                                  nu_param(problem.mu.rows())
+                                  Nphi_nut(problem.NNutModes),
+                                  nu_fluct(problem.NNutModes),
+                                  nu_param(problem.mu.rows()),
+                                  pCommonMatrices(problem.pCommonMatrices),
+                                  pSupremizerMatrices(problem.pSupremizerMatrices),
+                                  pPPEMatrices(problem.pPPEMatrices),
+                                  pPenaltyMatrices(problem.pPenaltyMatrices)
     { }
 
     int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
     int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
     UnsteadyBBTurb* problem;
+    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
+    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
     int Nphi_u;
     int Nphi_t;
     int Nphi_prgh;
@@ -221,15 +254,23 @@ public:
                                   N_BC_t(problem.inletIndexT.rows()),
                                   N_BC(problem.inletIndex.rows()),
                                   Nphi_prgh(problem.NPrghmodes),
-                                  Nphi_nut(problem.Nnutmodes),
-                                  nu_fluct(problem.Nnutmodes),
-                                  nu_param(problem.mu.rows())
+                                  Nphi_nut(problem.NNutModes),
+                                  nu_fluct(problem.NNutModes),
+                                  nu_param(problem.mu.rows()),
+                                  pCommonMatrices(problem.pCommonMatrices),
+                                  pSupremizerMatrices(problem.pSupremizerMatrices),
+                                  pPPEMatrices(problem.pPPEMatrices),
+                                  pPenaltyMatrices(problem.pPenaltyMatrices)
     { }
 
     int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
     int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
 
     UnsteadyBBTurb* problem;
+    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
+    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
     int Nphi_u;
     int Nphi_t;
     int Nphi_prgh;
@@ -256,8 +297,7 @@ public:
 \*---------------------------------------------------------------------------*/
 
 /// Class where a reduced problem for the <b> unsteady, turbulent, buoyant Navier-stokes </b> problem is implemented.
-/** In this class are implemented the methods to solve a reduced version of the stationary Navier-stokes
-equations. This class must be used together with the steadyNS class */
+/** In this class are implemented the methods to solve a reduced version of the unsteady, turbulent, buoyant Navier-stokes equations. This class must be used together with the FOM class */
 class ReducedUnsteadyBBTurb : public reducedUnsteadyNS
 {
 private:
@@ -298,6 +338,11 @@ public:
 
     /// Function object to call the non linear solver VMB approach
     newton_unsteadyBBTurb_VMB newton_object_VMB;
+
+    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
+    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
+    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
 
     /// Reconstructed temperature field
     PtrList<volScalarField> TRecFields;

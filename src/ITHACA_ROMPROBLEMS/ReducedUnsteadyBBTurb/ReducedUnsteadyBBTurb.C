@@ -64,12 +64,17 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb()
 ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     problem(&FOMproblem)
 {
+    pCommonMatrices = FOMproblem.pCommonMatrices;
+    pSupremizerMatrices = FOMproblem.pSupremizerMatrices;
+    pPPEMatrices = FOMproblem.pPPEMatrices;
+    pPenaltyMatrices = FOMproblem.pPenaltyMatrices;
+
     N_BC = problem->inletIndex.rows();
     N_BC_t = problem->inletIndexT.rows();
-    Nphi_u = problem->B_matrix.rows();
-    Nphi_prgh = problem->K_matrix.cols();
-    Nphi_t = problem->Y_matrix.rows();
-    Nphi_nut = problem->C_total_tensor.dimension(1);
+    Nphi_u = pCommonMatrices->B.rows();
+    Nphi_prgh = pCommonMatrices->K.cols();
+    Nphi_t = pCommonMatrices->Y.rows();
+    Nphi_nut = pCommonMatrices->CTotal.dimension(1);
     dimA = problem->dimA;
     newton_object_sup = newton_unsteadyBBTurb_sup(Nphi_u + Nphi_prgh + Nphi_t,
         Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
@@ -137,15 +142,15 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
     // Averaged turbulence term;
     Eigen::MatrixXd caveraged(1, 1);
     // Total Diffusive Term - In the laminar version it's just B_matrix.
-    Eigen::VectorXd M11 = problem->B_total_matrix * a_tmp * nu;
+    Eigen::VectorXd M11 = pCommonMatrices->BTotal * a_tmp * nu;
     // Mass Term Velocity
-    Eigen::VectorXd M5 = problem->M_matrix * a_dot;
+    Eigen::VectorXd M5 = pCommonMatrices->M * a_dot;
     // Gradient of pressure
-    Eigen::VectorXd M2 = problem->K_matrix * b_tmp;
+    Eigen::VectorXd M2 = pCommonMatrices->K * b_tmp;
     // Continuity
-    Eigen::VectorXd M3 = problem->P_matrix * a_tmp;
+    Eigen::VectorXd M3 = pSupremizerMatrices->P * a_tmp;
     // Buoyancy Term
-    Eigen::VectorXd M10 = problem->H_matrix * c_tmp;
+    Eigen::VectorXd M10 = pCommonMatrices->H * c_tmp;
     // Convective term temperature
     Eigen::MatrixXd qq(1, 1);
     // // Convective term temperature (turbulence)
@@ -153,9 +158,9 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
     // // Convective term temperature averaged (turbulence)
     Eigen::MatrixXd qt_averaged(1, 1);
     // diffusive term temperature
-    Eigen::VectorXd M6 = problem->Y_matrix * c_tmp * (nu / Pr);
+    Eigen::VectorXd M6 = pCommonMatrices->Y * c_tmp * (nu / Pr);
     // Mass Term Temperature
-    Eigen::VectorXd M8 = problem->W_matrix * c_dot;
+    Eigen::VectorXd M8 = pCommonMatrices->W * c_dot;
     // Penalty term velocity
     Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(Nphi_u, N_BC);
     Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(Nphi_t, N_BC_t);
@@ -163,19 +168,19 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
     {
         for (int l = 0; l < N_BC; l++)
         {
-            penaltyU.col(l) = tauU(l, 0) * (BC(l) * problem->bcVelVec[l] - problem->bcVelMat[l] * a_tmp);
+            penaltyU.col(l) = tauU(l, 0) * (BC(l) * pPenaltyMatrices->bcVelVec[l] - pPenaltyMatrices->bcVelMat[l] * a_tmp);
         }
         for (int l = 0; l < N_BC_t; l++)
         {
-            penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * problem->bcTempVec[l] - problem->bcTempMat[l] * c_tmp);
+            penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * pPenaltyMatrices->bcTempVec[l] - pPenaltyMatrices->bcTempMat[l] * c_tmp);
         }
     }
 
     for (int i = 0; i < Nphi_u; i++)
     {
-        cc = a_tmp.transpose() * Eigen::SliceFromTensor(problem->C_tensor, 0, i) * a_tmp;
-        ct = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->C_total_tensor, 0, i) * a_tmp;
-        caveraged = nu_param.transpose() * Eigen::SliceFromTensor(problem->C_total_ave_tensor, 0, i) * a_tmp;
+        cc = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->C, 0, i) * a_tmp;
+        ct = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotal, 0, i) * a_tmp;
+        caveraged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotalAve, 0, i) * a_tmp;
         fvec(i) = -M5(i) + M11(i) - M2(i) - cc(0, 0) + ct(0, 0) + caveraged(0, 0) - M10(i);
         if (problem->bcMethod == "penalty")
         {
@@ -195,9 +200,9 @@ int newton_unsteadyBBTurb_sup::operator()(const Eigen::VectorXd& x,
     for (int j = 0; j < Nphi_t; j++)
     {
         int k = j + Nphi_u + Nphi_prgh;
-        qq = a_tmp.transpose() * Eigen::SliceFromTensor(problem->Q_tensor, 0, j) * c_tmp;
-        qt = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->YT_tensor, 0, j) * c_tmp;
-        qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(problem->YT_ave_tensor, 0, j) * c_tmp;
+        qq = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->Q, 0, j) * c_tmp;
+        qt = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->YTurb, 0, j) * c_tmp;
+        qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->AveYTurb, 0, j) * c_tmp;
         fvec(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t;
         if (g_printOperatorDebug)
         {
@@ -247,30 +252,30 @@ int newtonUnsteadyBBTurbSUPMomentum::operator()(const Eigen::VectorXd& x,
     // Averaged turbulence term;
     Eigen::MatrixXd caveraged(1, 1);
     // Total Diffusive Term - In the laminar version it's just B_matrix.
-    Eigen::VectorXd M11 = problem->B_total_matrix * a_tmp * nu;
+    Eigen::VectorXd M11 = pCommonMatrices->BTotal * a_tmp * nu;
     // Mass Term Velocity
-    Eigen::VectorXd M5 = problem->M_matrix * a_dot;
+    Eigen::VectorXd M5 = pCommonMatrices->M * a_dot;
     // Gradient of pressure
-    Eigen::VectorXd M2 = problem->K_matrix * b_tmp;
+    Eigen::VectorXd M2 = pCommonMatrices->K * b_tmp;
     // Continuity
-    Eigen::VectorXd M3 = problem->P_matrix * a_tmp;
+    Eigen::VectorXd M3 = pSupremizerMatrices->P * a_tmp;
     // Buoyancy Term
-    Eigen::VectorXd M10 = problem->H_matrix * c_tmp;
+    Eigen::VectorXd M10 = pCommonMatrices->H * c_tmp;
     // Penalty term velocity
     Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(Nphi_u, N_BC);
     if (problem->bcMethod == "penalty")
     {
         for (int l = 0; l < N_BC; l++)
         {
-            penaltyU.col(l) = tauU(l, 0) * (BC(l) * problem->bcVelVec[l] - problem->bcVelMat[l] * a_tmp);
+            penaltyU.col(l) = tauU(l, 0) * (BC(l) * pPenaltyMatrices->bcVelVec[l] - pPenaltyMatrices->bcVelMat[l] * a_tmp);
         }
     }
 
     for (int i = 0; i < Nphi_u; i++)
     {
-        cc = a_tmp.transpose() * Eigen::SliceFromTensor(problem->C_tensor, 0, i) * a_tmp;
-        ct = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->C_total_tensor, 0, i) * a_tmp;
-        caveraged = nu_param.transpose() * Eigen::SliceFromTensor(problem->C_total_ave_tensor, 0, i) * a_tmp;
+        cc = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->C, 0, i) * a_tmp;
+        ct = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotal, 0, i) * a_tmp;
+        caveraged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotalAve, 0, i) * a_tmp;
         fvec(i) = -M5(i) + M11(i) - M2(i) - cc(0, 0) + ct(0, 0) + caveraged(0, 0) - M10(i);
 
         if (problem->bcMethod == "penalty")
@@ -316,24 +321,24 @@ int newtonUnsteadyBBTurbSUPTemperature::operator()(const Eigen::VectorXd& x,
     // // Convective term temperature averaged (turbulence)
     Eigen::MatrixXd qt_averaged(1, 1);
     // diffusive term temperature
-    Eigen::VectorXd M6 = problem->Y_matrix * c_tmp * (nu / Pr);
+    Eigen::VectorXd M6 = pCommonMatrices->Y * c_tmp * (nu / Pr);
     // Mass Term Temperature
-    Eigen::VectorXd M8 = problem->W_matrix * c_dot;
+    Eigen::VectorXd M8 = pCommonMatrices->W * c_dot;
     // Penalty term velocity
     Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(Nphi_t, N_BC_t);
     if (problem->bcMethod == "penalty")
     {
         for (int l = 0; l < N_BC_t; l++)
         {
-            penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * problem->bcTempVec[l] - problem->bcTempMat[l] * c_tmp);
+            penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * pPenaltyMatrices->bcTempVec[l] - pPenaltyMatrices->bcTempMat[l] * c_tmp);
         }
     }
 
     for (int j = 0; j < Nphi_t; j++)
     {
-        qq = a_tmp.transpose() * Eigen::SliceFromTensor(problem->Q_tensor, 0, j) * c_tmp;
-        qt = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->YT_tensor, 0, j) * c_tmp;
-        qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(problem->YT_ave_tensor, 0, j) * c_tmp;
+        qq = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->Q, 0, j) * c_tmp;
+        qt = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->YTurb, 0, j) * c_tmp;
+        qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->AveYTurb, 0, j) * c_tmp;
         fvec(j) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t;
 
         if (problem->bcMethod == "penalty")
@@ -403,13 +408,13 @@ int newton_unsteadyBBTurb_VMB::operator()(const Eigen::VectorXd& x,
     // Averaged turbulence term;
     Eigen::MatrixXd caveraged(1, 1);
     // Total Diffusive Term - In the laminar version it's just B_matrix.
-    Eigen::VectorXd M11 = problem->B_total_matrix * a_tmp * nu;
+    Eigen::VectorXd M11 = pCommonMatrices->BTotal * a_tmp * nu;
     // Mass Term Velocity
-    Eigen::VectorXd M5 = problem->M_matrix * a_dot;
+    Eigen::VectorXd M5 = pCommonMatrices->M * a_dot;
     // Gradient of pressure
-    Eigen::VectorXd M2 = problem->K_matrix * a_tmp;
+    Eigen::VectorXd M2 = pCommonMatrices->K * a_tmp;
     // Buoyancy Term
-    Eigen::VectorXd M10 = problem->H_matrix * c_tmp;
+    Eigen::VectorXd M10 = pCommonMatrices->H * c_tmp;
     // Convective term temperature
     Eigen::MatrixXd qq(1, 1);
     // Convective term temperature (turbulence)
@@ -417,9 +422,9 @@ int newton_unsteadyBBTurb_VMB::operator()(const Eigen::VectorXd& x,
     // Convective term temperature averaged (turbulence)
     Eigen::MatrixXd qt_averaged(1, 1);
     // diffusive term temperature
-    Eigen::VectorXd M6 = problem->Y_matrix * c_tmp * (nu / Pr);
+    Eigen::VectorXd M6 = pCommonMatrices->Y * c_tmp * (nu / Pr);
     // Mass Term Temperature
-    Eigen::VectorXd M8 = problem->W_matrix * c_dot;
+    Eigen::VectorXd M8 = pCommonMatrices->W * c_dot;
     // Penalty term velocity
     Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(Nphi_u, N_BC);
     Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(Nphi_t, N_BC_t);
@@ -427,19 +432,19 @@ int newton_unsteadyBBTurb_VMB::operator()(const Eigen::VectorXd& x,
     {
         for (int l = 0; l < N_BC; l++)
         {
-            penaltyU.col(l) = tauU(l, 0) * (BC(l) * problem->bcVelVec[l] - problem->bcVelMat[l] * a_tmp);
+            penaltyU.col(l) = tauU(l, 0) * (BC(l) * pPenaltyMatrices->bcVelVec[l] - pPenaltyMatrices->bcVelMat[l] * a_tmp);
         }
         for (int l = 0; l < N_BC_t; l++)
         {
-            penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * problem->bcTempVec[l] - problem->bcTempMat[l] * c_tmp);
+            penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * pPenaltyMatrices->bcTempVec[l] - pPenaltyMatrices->bcTempMat[l] * c_tmp);
         }
     }
 
     for (int i = 0; i < Nphi_u; i++)
     {
-        cc = a_tmp.transpose() * Eigen::SliceFromTensor(problem->C_tensor, 0, i) * a_tmp;
-        ct = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->C_total_tensor, 0, i) * a_tmp;
-        caveraged = nu_param.transpose() * Eigen::SliceFromTensor(problem->C_total_ave_tensor, 0, i) * a_tmp;
+        cc = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->C, 0, i) * a_tmp;
+        ct = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotal, 0, i) * a_tmp;
+        caveraged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotalAve, 0, i) * a_tmp;
         fvec(i) = -M5(i) + M11(i) - M2(i) - cc(0, 0) - M10(i) + ct(0, 0) + caveraged(0, 0);
 
         if (problem->bcMethod == "penalty")
@@ -460,9 +465,9 @@ int newton_unsteadyBBTurb_VMB::operator()(const Eigen::VectorXd& x,
     for (int j = 0; j < Nphi_t; j++)
     {
         int k = j + Nphi_u + Nphi_prgh;
-        qq = a_tmp.transpose() * Eigen::SliceFromTensor(problem->Q_tensor, 0, j) * c_tmp;
-        qt = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->YT_tensor, 0, j) * c_tmp;
-        qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(problem->YT_ave_tensor, 0, j) * c_tmp;
+        qq = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->Q, 0, j) * c_tmp;
+        qt = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->YTurb, 0, j) * c_tmp;
+        qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->AveYTurb, 0, j) * c_tmp;
         fvec(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t;
 
         if (problem->bcMethod == "penalty")
@@ -530,25 +535,25 @@ int newton_unsteadyBBTurb_PPE::operator()(const Eigen::VectorXd& x,
     // Turbulence term - PPE
     Eigen::MatrixXd turbPPE(1, 1);
     // Momentum Term
-    Eigen::VectorXd M11 = problem->B_total_matrix * a_tmp * nu;
+    Eigen::VectorXd M11 = pCommonMatrices->BTotal * a_tmp * nu;
     // Gradient of pressure
-    Eigen::VectorXd M2 = problem->K_matrix * b_tmp;
+    Eigen::VectorXd M2 = pCommonMatrices->K * b_tmp;
     // Mass Term
-    Eigen::VectorXd M5 = problem->M_matrix * a_dot;
+    Eigen::VectorXd M5 = pCommonMatrices->M * a_dot;
     // Pressure Term - Laplacian
-    Eigen::VectorXd M3 = problem->D_matrix * b_tmp;
+    Eigen::VectorXd M3 = pPPEMatrices->D * b_tmp;
     // Buoyancy Term - Momentum equation
-    Eigen::VectorXd M10 = problem->H_matrix * c_tmp;
+    Eigen::VectorXd M10 = pCommonMatrices->H * c_tmp;
     // Buoyancy term - PPE Equation
-    Eigen::VectorXd M12 = problem->HP_matrix * c_tmp;
+    Eigen::VectorXd M12 = pPPEMatrices->HP * c_tmp;
     // BC Term - PPE Equation
-    Eigen::VectorXd M7 = problem->nuBC_matrix * a_tmp * nu;
+    Eigen::VectorXd M7 = pPPEMatrices->nuBC * a_tmp * nu;
     // Time dep BC term - PPE Equation
-    Eigen::VectorXd M13 = problem->timedepBC_matrix * a_dot;
+    Eigen::VectorXd M13 = pPPEMatrices->timedepBC * a_dot;
     // diffusive term temperature
-    Eigen::VectorXd M6 = problem->Y_matrix * c_tmp * (nu / Pr);
+    Eigen::VectorXd M6 = pCommonMatrices->Y * c_tmp * (nu / Pr);
     // Mass Term Temperature
-    Eigen::VectorXd M8 = problem->W_matrix * c_dot;
+    Eigen::VectorXd M8 = pCommonMatrices->W * c_dot;
     // Penalty term velocity
     Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(Nphi_u, N_BC);
     Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(Nphi_t, N_BC_t);
@@ -556,19 +561,19 @@ int newton_unsteadyBBTurb_PPE::operator()(const Eigen::VectorXd& x,
     {
         for (int l = 0; l < N_BC; l++)
         {
-            penaltyU.col(l) = tauU(l, 0) * (BC(l) * problem->bcVelVec[l] - problem->bcVelMat[l] * a_tmp);
+            penaltyU.col(l) = tauU(l, 0) * (BC(l) * pPenaltyMatrices->bcVelVec[l] - pPenaltyMatrices->bcVelMat[l] * a_tmp);
         }
         for (int l = 0; l < N_BC_t; l++)
         {
-            penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * problem->bcTempVec[l] - problem->bcTempMat[l] * c_tmp);
+            penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * pPenaltyMatrices->bcTempVec[l] - pPenaltyMatrices->bcTempMat[l] * c_tmp);
         }
     }
 
     for (int i = 0; i < Nphi_u; i++)
     {
-        cc = a_tmp.transpose() * Eigen::SliceFromTensor(problem->C_tensor, 0, i) * a_tmp;
-        ct = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->C_total_tensor, 0, i) * a_tmp;
-        caveraged = nu_param.transpose() * Eigen::SliceFromTensor(problem->C_total_ave_tensor, 0, i) * a_tmp;
+        cc = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->C, 0, i) * a_tmp;
+        ct = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotal, 0, i) * a_tmp;
+        caveraged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotalAve, 0, i) * a_tmp;
         fvec(i) = -M5(i) + M11(i) - cc(0, 0) - M10(i) - M2(i) + ct(0, 0) + caveraged(0, 0);
 
         if (problem->bcMethod == "penalty")
@@ -582,8 +587,8 @@ int newton_unsteadyBBTurb_PPE::operator()(const Eigen::VectorXd& x,
     for (int j = 0; j < Nphi_prgh; j++)
     {
         int k = j + Nphi_u;
-        gg = a_tmp.transpose() * Eigen::SliceFromTensor(problem->G_tensor, 0, j) * a_tmp;
-        turbPPE = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->cTotalPPEFluctTensor, 0, j) * a_tmp + nu_param.transpose() * Eigen::SliceFromTensor(problem->cTotalPPEAveTensor, 0, j) * a_tmp;
+        gg = a_tmp.transpose() * Eigen::SliceFromTensor(pPPEMatrices->G, 0, j) * a_tmp;
+        turbPPE = nu_fluct.transpose() * Eigen::SliceFromTensor(pPPEMatrices->CTotalPPEFluct, 0, j) * a_tmp + nu_param.transpose() * Eigen::SliceFromTensor(pPPEMatrices->CTotalPPEAve, 0, j) * a_tmp;
         fvec(k) = M3(j, 0) + gg(0, 0) + M12(j, 0) - M7(j, 0) - turbPPE(0, 0);
 
         if (problem->timedepbcMethod == "yes")
@@ -594,9 +599,9 @@ int newton_unsteadyBBTurb_PPE::operator()(const Eigen::VectorXd& x,
     for (int j = 0; j < Nphi_t; j++)
     {
         int k = j + Nphi_u + Nphi_prgh;
-        qq = a_tmp.transpose() * Eigen::SliceFromTensor(problem->Q_tensor, 0, j) * c_tmp;
-        qt = nu_fluct.transpose() * Eigen::SliceFromTensor(problem->YT_tensor, 0, j) * c_tmp;
-        qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(problem->YT_ave_tensor, 0, j) * c_tmp;
+        qq = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->Q, 0, j) * c_tmp;
+        qt = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->YTurb, 0, j) * c_tmp;
+        qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->AveYTurb, 0, j) * c_tmp;
         fvec(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t;
         if (problem->bcMethod == "penalty")
         {
@@ -1053,9 +1058,9 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
     volVectorField uRecPen("uRecPen", problem->L_U_SUPmodes[0]);
     volScalarField TRecPen("TRecPen", problem->L_Tmodes[0]);
 
-    Eigen::VectorXd tv;
+    Eigen::VectorXd RBFInput;
     Eigen::VectorXd aDer;
-    tv.resize(dimA);
+    RBFInput.resize(dimA);
 
     Eigen::VectorXd momentumCoeffs;
     Eigen::VectorXd temperatureCoeffs;
@@ -1114,14 +1119,22 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
                 temperatureCoeffs = y.tail(Nphi_t);
                 resTemperature.setZero();
                 hnls_temperature.solve(temperatureCoeffs);
-                aDer.setZero();
-                aDer = (y.head(Nphi_u) - newton_object_sup_momentum.y_old.head(Nphi_u)) / dt;
-                tv.setZero();
-                tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+                RBFInput.setZero();
+
+                if (problem->derivativeInRBF)
+                {
+                    aDer.setZero();
+                    aDer = (y.head(Nphi_u) - newton_object_sup_momentum.y_old.head(Nphi_u)) / dt;
+                    RBFInput << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+                } else
+                {
+                    RBFInput << y.segment(firstRBFInd, dimA);
+                }
+
                 for (int j = 0; j < Nphi_nut; j++)
                 {
-                    newton_object_sup_momentum.nu_fluct(j) = problem->rbfSplines[j]->predict(tv);
-                    newton_object_sup_temperature.nu_fluct(j) = problem->rbfSplines[j]->predict(tv);
+                    newton_object_sup_momentum.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
+                    newton_object_sup_temperature.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
                 }
                 Info << "Time = " << time << endl;
                 if (resTemperature.norm() < 1e-5)
@@ -1138,14 +1151,20 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
             {
                 res.setZero();
                 hnls.solve(y);
-                tv.setZero();
-                aDer.setZero();
-                aDer = (y.head(Nphi_u) - newton_object_sup.y_old.head(Nphi_u)) / dt;
-                tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+                RBFInput.setZero();
+                if (problem->derivativeInRBF)
+                {
+                    aDer.setZero();
+                    aDer = (y.head(Nphi_u) - newton_object_sup.y_old.head(Nphi_u)) / dt;
+                    RBFInput << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+                } else
+                {
+                    RBFInput << y.segment(firstRBFInd, dimA);
+                }
 
                 for (int j = 0; j < Nphi_nut; j++)
                 {
-                    newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->predict(tv); // * problem->stdG(j) + problem->meanG(j);
+                    newton_object_sup.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput); // * problem->stdG(j) + problem->meanG(j);
                 }
 
                 newton_object_sup.operator()(y, res);
@@ -1291,9 +1310,9 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
     volVectorField uRecPen("uRecPen", problem->L_U_SUPmodes[0]);
     volScalarField TRecPen("TRecPen", problem->L_Tmodes[0]);
 
-    Eigen::VectorXd tv;
+    Eigen::VectorXd RBFInput;
     Eigen::VectorXd aDer;
-    tv.resize(dimA);
+    RBFInput.resize(dimA);
 
     Eigen::VectorXd res(y);
 
@@ -1328,14 +1347,19 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
             {
                 res.setZero();
                 hnls.solve(y);
-                tv.setZero();
-                aDer.setZero();
-                aDer = (y.head(Nphi_u) - newton_object_PPE.y_old.head(Nphi_u)) / dt;
-                tv << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
-
+                RBFInput.setZero();
+                if (problem->derivativeInRBF)
+                {
+                    aDer.setZero();
+                    aDer = (y.head(Nphi_u) - newton_object_PPE.y_old.head(Nphi_u)) / dt;
+                    RBFInput << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+                } else
+                {
+                    RBFInput << y.segment(firstRBFInd, dimA);
+                }
                 for (int j = 0; j < Nphi_nut; j++)
                 {
-                    newton_object_PPE.nu_fluct(j) = problem->rbfSplines[j]->predict(tv); // * problem->stdG(j) + problem->meanG(j);
+                    newton_object_PPE.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput); // * problem->stdG(j) + problem->meanG(j);
                 }
 
                 newton_object_PPE.operator()(y, res);
@@ -1398,7 +1422,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
         Info << "Current tauT values: " << tauT << endl;
         Info << "Current velocity BC errors: " << currentTimeErrorsU << endl;
         Info << "Current temperature BC errors: " << currentTimeErrorsT << "\n"
-              << endl;
+             << endl;
     }
     Info << "Penalty factor estimation finished for timeStep " << currentTimeStep << " after " << currentIteration << " iterations." << endl;
     Info << "Final tauU values: " << tauU << endl;
@@ -1466,8 +1490,14 @@ void ReducedUnsteadyBBTurb::onlineTimeLoop(
         g_printOperatorDebug = false;
         hnls.solve(y);
 
-        aDer = (y.head(Nphi_u) - newtonObject.y_old.head(Nphi_u)) / dt;
-        RBFInput << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+        if (problem->derivativeInRBF == true)
+        {
+            aDer = (y.head(Nphi_u) - newtonObject.y_old.head(Nphi_u)) / dt;
+            RBFInput << y.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+        } else
+        {
+            RBFInput << y.segment(firstRBFInd, dimA);
+        }
         for (int j = 0; j < Nphi_nut; j++)
         {
             newtonObject.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
@@ -1561,14 +1591,19 @@ void ReducedUnsteadyBBTurb::onlineTimeLoopSegregated(
         hnlsMomentum.solve(momentumCoeffs);
         y.head(Nphi_u + Nphi_prgh) = momentumCoeffs;
 
-        aDer = (momentumCoeffs.head(Nphi_u) - newtonObjectMomentum.y_old.head(Nphi_u)) / dt;
-        RBFInput << momentumCoeffs.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+        if (problem->derivativeInRBF == true)
+        {
+            aDer = (momentumCoeffs.head(Nphi_u) - newtonObjectMomentum.y_old.head(Nphi_u)) / dt;
+            RBFInput << momentumCoeffs.segment(firstRBFInd, dimA / 2), aDer.segment(firstRBFInd, dimA / 2);
+        } else
+        {
+            RBFInput << momentumCoeffs.segment(firstRBFInd, dimA);
+        }
+
         for (int j = 0; j < Nphi_nut; j++)
         {
             newtonObjectMomentum.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
             newtonObjectTemperature.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
-            Info << "RBF Input[" << j << "] = " << RBFInput << endl;
-            Info << "Predicted nut fluct[" << j << "] = " << newtonObjectMomentum.nu_fluct(j) << endl;
         }
         newtonObjectTemperature.y_old = y;
 

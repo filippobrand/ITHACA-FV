@@ -45,7 +45,9 @@ SourceFiles
 #include "UnsteadyBB.H"
 #include "ithacaInterpolator.H"
 #include "Modes.H"
+#include <memory>
 #include <iostream>
+#include <functional>
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -59,6 +61,47 @@ and the for the generation of the reduced matrices for subsequent online solve, 
 of the reduction problem class */
 class UnsteadyBBTurb : public UnsteadyBB
 {
+private:
+    /// bool for debug mode
+    bool DEBUG_MODE = false;
+
+    /// Dictionary to hold details about computing the nut
+    dictionary viscDict;
+
+    /// Supremizer approach (either "snapshot" or "modes")
+    word supremizerApproach;
+
+    //--------------------------------------------------------------------------
+    /// @brief     Method to correctly prepare the modes (supremizer and lifting if necessary), be it PPE, Supremizer or VMB
+    ///
+    void prepareModes();
+
+    /// @brief     Helper to load from disk or compute a matrix
+    ///
+    /// @param matrix
+    /// @param folder
+    /// @param nameBase
+    /// @param suffix
+    /// @param generator
+    void loadOrCompute(Eigen::MatrixXd& matrix, const word& folder, const word& nameBase, const word& suffix, std::function<Eigen::MatrixXd()> generator);
+
+    /// @brief     Helper to load from disk or compute a tensor
+    ///
+    /// @param tensor
+    /// @param folder
+    /// @param nameBase
+    /// @param suffix
+    /// @param generator
+    void loadOrCompute(Eigen::Tensor<double, 3>& tensor, const word& folder, const word& nameBase, const word& suffix, std::function<Eigen::Tensor<double, 3>()> generator);
+
+    void assembleCommonMatrices();
+
+    void assembleSupremizerMatrices();
+
+    void assemblePPEMatrices();
+
+    void assemblePenaltyMatrices();
+
 public:
     // Constructors
     /// Null constructor
@@ -68,10 +111,13 @@ public:
     UnsteadyBBTurb(int argc, char* argv[]);
     ~UnsteadyBBTurb() { };
 
+    /// Wether the velocity coefficients derivative are used in the RBF interpolaltion for nut
+    bool derivativeInRBF = true;
+
     // Lifted BC matrix. [NsampleRun x NBoundaryPatches]. Holds the values of the lifted BCs for each sample and each boundary patch
     Eigen::MatrixXd liftBCMatrix;
 
-    // Shifted pressure modes - weird naming problems occur if we use Prghmodes, clashing with BBUnsteady, which has a PtrList<volScalarField>. Ideally 
+    // Shifted pressure modes - weird naming problems occur if we use Prghmodes, clashing with BBUnsteady, which has a PtrList<volScalarField>. Ideally
     // I would change to correct data type in UnsteadyBB (change to volScalarModes), but this requires more extensive changes.
     volScalarModes P_rghmodes;
 
@@ -99,98 +145,51 @@ public:
     /// List of averaged eddy viscosity fields. One for each parameter sample
     PtrList<volScalarField> avgNutfield;
 
-    /// Number of viscosity modes used for the projection
-    label Nnutmodes;
-
     // Dimension of the interpolation matrix A
     label dimA;
 
     /// Interpolators for nut coefficient interpolation
     std::vector<std::shared_ptr<ithacaInterpolator>> rbfSplines;
 
-    /// Dictionary to hold details about computing the nut
-    dictionary viscDict;
-
-    /// RBF shape parameters vector
-    Eigen::VectorXd shapeParameters;
-
     /// Create a Eigen vector with the time instant for each snapshot
     List<Eigen::VectorXd> timeSnapshots;
 
-    /** @name Reduced Matrices
-     *
-     */
-    ///@{
-    //
-    /// Turbulent viscosity term
-    Eigen::MatrixXd BT_matrix;
+    /// Common matrices to all methods (VMB/PPE/Supremizer)
+    struct CommonMatrices {
+        // Momentum equation
+        Eigen::MatrixXd M, B, BTurb, K, H;
+        Eigen::Tensor<double, 3> C, CTurb1, CTurb2, AveCTurb1, AveCTurb2;
+        // Temperature equation
+        Eigen::MatrixXd W, Y;
+        Eigen::Tensor<double, 3> Q, YTurb, AveYTurb;
+        // Aggregates
+        Eigen::MatrixXd BTotal;
+        Eigen::Tensor<double, 3> CTotal, CTotalAve;
+    };
+    struct PenaltyMatrices {
+        // Penalty method terms
+        List<Eigen::MatrixXd> bcVelVec, bcVelMat, bcTempVec, bcTempMat;
+    };
+    // Supremizer matrices
+    struct SupremizerMatrices {
+        // Supremizer matrices
+        Eigen::MatrixXd P;
+    };
+    // PPE matrices
+    struct PPEMatrices {
+        // PPE matrices
+        Eigen::MatrixXd D, HP, nuBC, timedepBC;
+        Eigen::Tensor<double, 3> G, PPEAveCT1, PPECT1, PPEAveCT2, PPECT2, CTotalPPEAve, CTotalPPEFluct;
+    };
 
-    /// G tensor for the PPE approach
-    Eigen::Tensor<double, 3> G_tensor;
-
-    ///  Buoyancy term for the PPE approach
-    Eigen::MatrixXd HP_matrix;
-    
-    /// BC term in the PPE approach related to the laminar viscosity
-    Eigen::MatrixXd nuBC_matrix;
-
-    /// BC term in the PPE approach related to the time-dependent BC
-    Eigen::MatrixXd timedepBC_matrix;
-
-    /// PPE Tensor 1 for the PPE approach (average contribution)
-    Eigen::Tensor<double, 3> CT1_PPE_ave_tensor;
-
-    /// PPE Tensor 1 for the PPE approach (fluctuating contribution)
-    Eigen::Tensor<double, 3> CT1_PPE_tensor;
-
-    /// PPE Tensor 2 for the PPE approach (average contribution)
-    Eigen::Tensor<double, 3> CT2_PPE_ave_tensor;
-
-    /// PPE Tensor 2 for the PPE approach (fluctuating contribution)
-    Eigen::Tensor<double, 3> CT2_PPE_tensor;
-
-    /// Total PPE tensor for the PPE approach (average contribution)
-    Eigen::Tensor<double, 3> cTotalPPEAveTensor;
-
-    /// Total PPE tensor for the PPE approach (fluctuating contribution)
-    Eigen::Tensor<double, 3> cTotalPPEFluctTensor;
-
-    /// Turbulent viscosity tensor CT1 for the momentum equation
-    Eigen::Tensor<double, 3> CT1_tensor;
-
-    /// Turbulent viscosity tensor CT2 for the momentum equation
-    Eigen::Tensor<double, 3> CT2_tensor;
-
-    /// Turbulent viscosity tensor CT1_ave for the momentum equation
-    Eigen::Tensor<double, 3> CT1_ave_tensor;
-
-    /// Turbulent viscosity tensor CT2_ave for the momentum equation
-    Eigen::Tensor<double, 3> CT2_ave_tensor;
-
-    /// Turbulent diffusivity tensor for the temperature equation YT
-    Eigen::Tensor<double, 3> YT_tensor;
-
-    /// Turbulent diffusivity tensor for the temperature equation YT average
-    Eigen::Tensor<double, 3> YT_ave_tensor;
-
-    /// Total CT tensor
-    Eigen::Tensor<double, 3> C_total_tensor;
-
-    /// Total CT average tensor
-    Eigen::Tensor<double, 3> C_total_ave_tensor;
-
-    /// Convective tensor Q
-    Eigen::Tensor<double, 3> Q_tensor;
-
-    /// Total B Matrix
-    Eigen::MatrixXd B_total_matrix;
-    ///@}
-
-    /// BC Matrix for the temperature -- Used for the penalty method
-    List<Eigen::MatrixXd> bcTempVec;
-
-    /// BC List of Matrices for the temperature -- Used for the penalty method
-    List<Eigen::MatrixXd> bcTempMat;
+    /// Shared pointer to the commin matrices. A shared pointer is used so its ownership can be shared, and thus the memory heavy UnsteadyBBTurb object can be destroyed. Still same treatment needed for the fields/modes
+    std::shared_ptr<CommonMatrices> pCommonMatrices;
+    /// Shared pointer to the penalty matrices
+    std::shared_ptr<PenaltyMatrices> pPenaltyMatrices;
+    /// Shared pointer to the supremizer matrices
+    std::shared_ptr<SupremizerMatrices> pSupremizerMatrices;
+    /// Shared pointer to the PPE matrices
+    std::shared_ptr<PPEMatrices> pPPEMatrices;
 
     /// Eddy viscosity field
     autoPtr<volScalarField> _nut;
@@ -216,14 +215,14 @@ public:
     /// Number of velocity coefficient to skip in the RBF interpolation during the offline phase
     label skipRBFIndex = 0;
 
-    /// bool for debug mode
-    bool DEBUG_MODE = false;
+    /// boolean flag for time-dependent BCs
+    bool timeDependentBC = false;
 
     /// @brief   Solves the CFD problem for parameters mu_now. Differently
     /// from UnsteadyBB, here the eddy viscosity field is also computed and saved.
     /// @param[in]  mu_now  The actual value of the parameter for this truthSolve. Used only
     /// @param[in]  nSample  The sample number for which the truth solve is performed.
-    void truthSolve(List<scalar> mu_now, label nSample);
+    void truthSolve(const List<scalar> mu_now, label nSample);
 
     /// @brief   Solves the CFD problem for parameters mu_now. Differently
     /// from UnsteadyBB, here the eddy viscosity field is also computed and saved.
@@ -238,44 +237,28 @@ public:
     //--------------------------------------------------------------------------
     /// Project using a supremizer approach
     ///
-    /// @param[in]  folder     The folder used to save the reduced matrices.
-    /// @param[in]  NU    The number of velocity modes.
-    /// @param[in]  NPrgh    The number of pressure modes.
-    /// @param[in]  NSUP  The number of supremizer modes.
-    ///
-    void projectSUP(fileName folder, label NU, label NPrgh, label NT, label NSUP, label Nnut);
+    void projectSUP();
 
     //--------------------------------------------------------------------------
     /// Project using a supremizer approach
     ///
-    /// @param[in]  folder     The folder used to save the reduced matrices.
-    /// @param[in]  NU    The number of velocity modes.
-    /// @param[in]  NPrgh    The number of pressure modes.
-    /// @param[in]  NSUP  The number of supremizer modes.
-    ///
-    void projectPPE(fileName folder, label NU, label NPrgh, label NT, label Nnut);
+    void projectPPE();
 
     //--------------------------------------------------------------------------
     /// Project using no stabilization approach, thus sharing the temporal coefficients between velocity and pressure
     ///
-    /// @param[in]  folder     The folder used to save the reduced matrices.
-    /// @param[in]  NU    The number of velocity modes.
-    /// @param[in]  NT    The number of temperature modes.
-    /// @param[in]  Nnut  The number of eddy viscosity modes.
-    /// @param[in]  RBFShapeParameter  The RBF shape parameter for the interpolation of the eddy viscosity coefficients.
-
-    void projectVMB(fileName folder, label NU, label NT, label Nnut);
+    void projectVMB();
 
     //--------------------------------------------------------------------------
     /// Gradient of pressure
     ///
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NPrghmodes    The number of pressure modes.
-    /// @param[in]  NSUPmodes  The number of supremizer modes.
+    /// @param[in]  NU       The number of velocity modes.
+    /// @param[in]  NPrgh    The number of pressure modes.
+    /// @param[in]  NSUP     The number of supremizer modes.
     ///
     /// @return     reduced matrix in Eigen::MatrixXd format for the Gradient of pressure term.
     ///
-    Eigen::MatrixXd pressure_gradient_term(label NUmodes, label NPrghmodes, label NSUPmodes);
+    Eigen::MatrixXd pressureGradientTerm(label NU, label NPrgh, label NSUP);
 
     //--------------------------------------------------------------------------
     /// Diffusive Term Energy Equation
@@ -286,40 +269,37 @@ public:
     ///
     /// @return     reduced matrix in Eigen::MatrixXd format for the diffusion term.
     ///
-    Eigen::MatrixXd diffusive_term_temperature(label NUmodes, label NTmodes, label NSUPmodes);
+    Eigen::MatrixXd diffusiveTermTemperature(label NUmodes, label NTmodes, label NSUPmodes);
     //--------------------------------------------------------------------------
 
     /// Divergence Term (supremizer approach)
     ///
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NPrghmodes    The number of pressure modes.
-    /// @param[in]  NSUPmodes  The number of supremizer modes.
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NPrgh    The number of pressure modes.
+    /// @param[in]  NSUP  The number of supremizer modes.
     ///
     /// @return     reduced matrix in Eigen::MatrixXd format for the divergence term.
     ///
-    Eigen::MatrixXd divergence_term(label NUmodes, label NPrghmodes, label NSUPmodes);
-
+    Eigen::MatrixXd divergenceTerm(label NU, label NPrgh, label NSUP);
     //--------------------------------------------------------------------------
     /// Mass Term Energy Equation
     ///
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NTmodes    The number of temperature modes.
-    /// @param[in]  NSUPmodes  The number of supremizer modes.
+    /// @param[in]  NT    The number of temperature modes.
     ///
     /// @return     reduced matrix in Eigen::MatrixXd format for the mass matrix.
     ///
-    Eigen::MatrixXd mass_term_temperature(label NUmodes, label NTmodes, label NSUPmodes);
+    Eigen::MatrixXd massTermTemperature(label NT);
 
     //--------------------------------------------------------------------------
     /// Buoyant Term Momentum Equation
     ///
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NTmodes    The number of temperature modes.
-    /// @param[in]  NSUPmodes  The number of supremizer modes.
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NT    The number of temperature modes.
+    /// @param[in]  NSUP  The number of supremizer modes.
     ///
     /// @return     reduced third order tensor in List <Eigen::MatrixXd> format for the convective term.
     ///
-    Eigen::MatrixXd buoyant_term(label NUmodes, label NTmodes, label NSUPmodes);
+    Eigen::MatrixXd buoyancyTerm(label NU, label NT, label NSUP);
 
     //--------------------------------------------------------------------------
     /// @brief      BT added matrix for the turbulence treatement
@@ -334,47 +314,47 @@ public:
     //--------------------------------------------------------------------------
     /// @brief      Laplacian term of the PPE approach
     ///
-    /// @param[in]  NPrghmodes    The number of pressure modes.
-    Eigen::MatrixXd laplacian_pressure(label NPrghmodes);
+    /// @param[in]  NPrgh    The number of pressure modes.
+    Eigen::MatrixXd laplacianPPE(label NPrgh);
 
     //--------------------------------------------------------------------------
     /// @brief       Buoyancy term for the PPE equation
     ///
-    /// @param[in]  NPrghmodes    The number of pressure modes.
-    /// @param[in]  NTmodes    The number of temperature modes.
-    Eigen::MatrixXd buoyant_term_poisson(label NPrghmodes, label NTmodes);
-    
+    /// @param[in]  NPrgh    The number of pressure modes.
+    /// @param[in]  NT    The number of temperature modes.
+    Eigen::MatrixXd buoyancyTermPPE(label NPrgh, label NT);
+
     //--------------------------------------------------------------------------
     /// @brief      Pressure BC1 matrix for the PPE approach
     ///
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NPrghmodes    The number of pressure modes.
-    Eigen::MatrixXd pressure_BC1(label NUmodes, label NPrghmodes);
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NPrgh    The number of pressure modes.
+    Eigen::MatrixXd BC1PPE(label NU, label NPrgh);
 
     //--------------------------------------------------------------------------
     /// @brief      Pressure BC2 matrix for the PPE approach
     ///
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NPrghmodes    The number of pressure modes.
-    Eigen::Tensor<double, 3> pressure_BC2(label NUmodes, label NPrghmodes);
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NPrgh    The number of pressure modes.
+    Eigen::Tensor<double, 3> BC2PPE(label NU, label NPrgh);
 
     //--------------------------------------------------------------------------
     /// @brief      Pressure BC3 matrix for the PPE approach
     ///
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NPrghmodes    The number of pressure modes.
-    Eigen::MatrixXd pressure_BC3(label NUmodes, label NPrghmodes);
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NPrgh    The number of pressure modes.
+    Eigen::MatrixXd BC3PPE(label NU, label NPrgh);
 
     //--------------------------------------------------------------------------
     /// @brief      PPE BC4 matrix, takes into account the time-dependent BC
     ///
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NPrghmodes    The number of pressure modes.
-    Eigen::MatrixXd pressure_BC4(label NUmodes, label NPrghmodes);
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NPrgh    The number of pressure modes.
+    Eigen::MatrixXd BC4PPE(label NU, label NPrgh);
 
     //--------------------------------------------------------------------------
     /// @brief      Divergence of the momentum equation for the PPE approach
-    Eigen::Tensor<double, 3> divMomentum(label NUmodes, label NPrghmodes);
+    Eigen::Tensor<double, 3> divMomentum(label NU, label NPrgh);
 
     //--------------------------------------------------------------------------
     /// @brief      S added tensor for the thermal turbulence treatement
@@ -417,7 +397,7 @@ public:
     ///
     /// @return     ct2 tensor for the turbulence treatement
     ///
-    Eigen::Tensor<double, 3> convective_tensor_temperature(label NU, label NT, label NSUP);
+    Eigen::Tensor<double, 3> convectiveTensorTemperature(label NU, label NT, label NSUP);
 
     //--------------------------------------------------------------------------
     /// @brief      ct1Ave added tensor for approximation of the averaged part of the eddy viscosity
@@ -453,34 +433,33 @@ public:
 
     //--------------------------------------------------------------------------
     /// @brief      PPE Average nut related tensor for the split turbulence treatment
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NSUPmodes  The number of supremizer modes.
-    /// @param[in]  NPrghmodes    The number of pressure modes.
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NPrgh    The number of pressure modes.
 
-    Eigen::Tensor<double, 3> turbulencePPEAveTensor1(label NUmodes, label NPrghmodes);
+    Eigen::Tensor<double, 3> turbulencePPEAveTensor1(label NU, label NPrgh);
 
     //--------------------------------------------------------------------------
     /// @brief      PPE Fluctuating nut related tensor for the split turbulence treatment
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NPrghmodes    The number of pressure modes.
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NPrgh   The number of pressure modes.
     /// @param[in]  Nnut  The number of eddy viscosity modes.
 
-    Eigen::Tensor<double, 3> turbulencePPETensor1(label NUmodes,label NPrghmodes, label Nnut);
+    Eigen::Tensor<double, 3> turbulencePPETensor1(label NU, label NPrgh, label Nnut);
 
     //--------------------------------------------------------------------------
     /// @brief      PPE nut related tensor for the split turbulence treatment
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NPrghmodes    The number of pressure modes.
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NPrgh    The number of pressure modes.
     /// @param[in]  Nnut  The number of eddy viscosity modes.
 
-    Eigen::Tensor<double, 3> turbulencePPETensor2(label NUmodes, label NPrghmodes, label Nnut);
+    Eigen::Tensor<double, 3> turbulencePPETensor2(label NU, label NPrgh, label Nnut);
 
     //--------------------------------------------------------------------------
     /// @brief      PPE nut related tensor for the split turbulence treatment
-    /// @param[in]  NUmodes    The number of velocity modes.
-    /// @param[in]  NPrghmodes    The number of pressure modes.
+    /// @param[in]  NU    The number of velocity modes.
+    /// @param[in]  NPrgh    The number of pressure modes.
 
-    Eigen::Tensor<double, 3> turbulencePPEAveTensor2(label NUmodes, label NPrghmodes);
+    Eigen::Tensor<double, 3> turbulencePPEAveTensor2(label NU, label NPrgh);
 
     //--------------------------------------------------------------------------
     /// @brief      A method to compute the two matrices needed for the RBF interpolation by combining
@@ -515,25 +494,14 @@ public:
     //--------------------------------------------------------------------------
     /// @brief      Prepares the BC matrices for the penalty method for the temperature equation
     ///
-    /// @param[in]  NTmodes    The number of temperature modes.
-    List<Eigen::MatrixXd> bcTemperatureVec(label NTmodes);
+    /// @param[in]  NT    The number of temperature modes.
+    List<Eigen::MatrixXd> bcTemperatureVec(const label NT);
 
     //--------------------------------------------------------------------------
     /// @brief      Prepares the BC matrices for the penalty method for the temperature equation
     ///
-    /// @param[in]  NTmodes    The number of temperature modes.
-    List<Eigen::MatrixXd> bcTemperatureMat(label NTmodes);
-
-    //--------------------------------------------------------------------------
-    /// @brief     Debugging tool to print the dimension of a given Eigen::MatrixXd
-    ///
-    /// @param[in]  matrix    The matrix to print the size of
-    /// @param[in]  nameMatrix  The name of the matrix to print
-    ///
-    void printMatrixSize(const Eigen::MatrixXd& matrix, const std::string& nameMatrix)
-    {
-        Info << "--- Matrix " << nameMatrix << " size: " << matrix.rows() << " x " << matrix.cols() << endl;
-    }
+    /// @param[in]  NT    The number of temperature modes.
+    List<Eigen::MatrixXd> bcTemperatureMat(const label NT);
 };
 
 #endif
