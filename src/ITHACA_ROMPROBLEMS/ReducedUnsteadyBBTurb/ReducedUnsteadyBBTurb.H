@@ -48,11 +48,11 @@ SourceFiles
 #include <memory>
 
 /// Newton object for the resolution of the reduced problem using a supremizer approach
-struct newton_unsteadyBBTurb_sup : public newton_argument<double> {
+struct NewtonUnsteadyBBTurbSup : public newton_argument<double> {
 public:
-    newton_unsteadyBBTurb_sup() { }
+    NewtonUnsteadyBBTurbSup() { }
 
-    newton_unsteadyBBTurb_sup(int Nx, int Ny,
+    NewtonUnsteadyBBTurbSup(int Nx, int Ny,
         UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
                                   problem(&problem),
                                   Nphi_u(problem.NUmodes + problem.liftfield.size() + problem.NSUPmodes),
@@ -97,11 +97,11 @@ public:
     std::vector<SPLINTER::RBFSpline*> SPLINES;
 };
 
-struct newtonUnsteadyBBTurbSUPMomentum : public newton_argument<double> {
+struct NewtonUnsteadyBBTurbSupMomentum : public newton_argument<double> {
 public:
-    newtonUnsteadyBBTurbSUPMomentum() { }
+    NewtonUnsteadyBBTurbSupMomentum() { }
 
-    newtonUnsteadyBBTurbSUPMomentum(int Nx, int Ny,
+    NewtonUnsteadyBBTurbSupMomentum(int Nx, int Ny,
         UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
                                   problem(&problem),
                                   Nphi_u(problem.NUmodes + problem.liftfield.size() + problem.NSUPmodes),
@@ -193,11 +193,11 @@ public:
     std::vector<SPLINTER::RBFSpline*> SPLINES;
 };
 
-struct newton_unsteadyBBTurb_VMB : public newton_argument<double> {
+struct NewtonUnsteadyBBTurbVMB : public newton_argument<double> {
 public:
-    newton_unsteadyBBTurb_VMB() { }
+    NewtonUnsteadyBBTurbVMB() { }
 
-    newton_unsteadyBBTurb_VMB(int Nx, int Ny,
+    NewtonUnsteadyBBTurbVMB(int Nx, int Ny,
         UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
                                   problem(&problem),
                                   Nphi_u(problem.NUmodes + problem.liftfield.size()),
@@ -242,11 +242,11 @@ public:
     std::vector<SPLINTER::RBFSpline*> SPLINES;
 };
 
-struct newton_unsteadyBBTurb_PPE : public newton_argument<double> {
+struct NewtonUnsteadyBBTurbPPE : public newton_argument<double> {
 public:
-    newton_unsteadyBBTurb_PPE() { }
+    NewtonUnsteadyBBTurbPPE() { }
 
-    newton_unsteadyBBTurb_PPE(int Nx, int Ny,
+    NewtonUnsteadyBBTurbPPE(int Nx, int Ny,
         UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
                                   problem(&problem),
                                   Nphi_u(problem.NUmodes + problem.liftfield.size()),
@@ -301,6 +301,52 @@ public:
 class ReducedUnsteadyBBTurb : public reducedUnsteadyNS
 {
 private:
+    // Index of the first RBF mode in the reduced solution vector, used for the online interpolation of the eddy viscosity field. Used to ignore the lifting modes in the interpolation
+    int firstRBFIndex = 0;
+
+    /// @brief   Carries out initial checks and assertions
+    ///
+    void validateSettings();
+
+    /// @brief    Inverse Distance Weighting function to interpolate the averaged eddy viscosity coefficients
+    ///           IDW in this case is a misnomer, as the implementation is specific for a vector of 0s except for the i-th component
+    /// @param[in]  mu_now   The vector of the online parameter
+    ///
+    Eigen::VectorXd interpolateIDW();
+
+    /// @brief      Carries out the time loop for the online solve. Templated to support different Newton object types.
+    ///
+    /// @param[in,out]  newtonObject      The Newton object to be used in the time loop
+    /// @param[in,out]  boundaryConditions  The BoundaryConditions object containing the BCs
+    /// @param[in]      firstRBFInd      The first RBF index to use
+    /// @param[in]      numberOfStores   The number of stores to be used in the time loop
+    template <typename NewtonType>
+    void onlineTimeLoop(NewtonType& newtonObject, BoundaryConditions& boundaryConditions, int firstRBFInd, int numberOfStores);
+
+    /// @brief      Carries out the time loop for the online solve, but uses a newton object for momentum and one for temperature. Templated to support different Newton object types.
+    ///
+    /// @param[in,out]  newtonObject      The Newton object to be used in the time loop
+    /// @param[in,out]  boundaryConditions  The BoundaryConditions object containing the BCs
+    /// @param[in]      firstRBFInd      The first RBF index to use
+    /// @param[in]      numberOfStores   The number of stores to be used in the time loop
+    template <typename NewtonTypeMomentum, typename NewtonTypeTemperature>
+    void onlineTimeLoopSegregated(NewtonTypeMomentum& newtonObjectMomentum, NewtonTypeTemperature& newtonObjectTemperature, BoundaryConditions& boundaryConditions, int firstRBFInd, int numberOfStores);
+
+    /// @brief      Set the boundary conditions in the (templated) Newton object
+    ///
+    /// @param[in,out]  newtonObject  The Newton object where to set the BCs
+    /// @param[in]      boundaryConditions  The BoundaryConditions object containing the BCs
+    template <typename NewtonType>
+    void setNewtonObjectBC(NewtonType& newtonObject, BoundaryConditions& boundaryConditions);
+
+    /// @brief      Method to configure a generic Newton object with the current settings. What it does is assign physical properties,
+    ///             time step, boundary conditions, stabilization coefficients, etc. Templated to support different Newton object types.
+    ///
+    /// @param[in,out]  newtonObject  The Newton object to be configured
+    /// @param[in]      currentY     The current reduced solution vector
+    template <typename NewtonType>
+    void configureNewtonObject(NewtonType& newtonObject, const Eigen::VectorXd& currentY, BoundaryConditions& boundaryConditions);
+
 public:
     // Constructors
     /// Construct Null
@@ -325,19 +371,19 @@ public:
     PtrList<volScalarModes> Prghmodes;
 
     /// Function object to call the non linear solver sup approach
-    newton_unsteadyBBTurb_sup newton_object_sup;
+    NewtonUnsteadyBBTurbSup newton_object_sup;
 
     ///
-    newtonUnsteadyBBTurbSUPMomentum newton_object_sup_momentum;
+    NewtonUnsteadyBBTurbSupMomentum newton_object_sup_momentum;
 
     ///
     newtonUnsteadyBBTurbSUPTemperature newton_object_sup_temperature;
 
     /// Function object to call the non linear solver PPE approach
-    newton_unsteadyBBTurb_PPE newton_object_PPE;
+    NewtonUnsteadyBBTurbPPE newton_object_PPE;
 
     /// Function object to call the non linear solver VMB approach
-    newton_unsteadyBBTurb_VMB newton_object_VMB;
+    NewtonUnsteadyBBTurbVMB newton_object_VMB;
 
     std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
     std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
@@ -407,7 +453,11 @@ public:
     /// Pointer to the FOM problem
     UnsteadyBBTurb* problem;
 
-    // Functions
+    // Methods
+
+    ///@brief       Computes the reduced version of the inf_sup constant
+    ///
+    void inf_sup_constant();
 
     /// Method to perform an online solve using a supremizer stabilisation method
     ///
@@ -454,19 +504,6 @@ public:
     void solveOnline_VMB(const Eigen::MatrixXd& temp_now_BC,
         const Eigen::MatrixXd& vel_now_BC, int NParaSet = 0, int startSnap = 0);
 
-    /// @brief    Method to reconstruct a solution from an online solve
-    ///
-    /// @param[in]  exportFields  Boolean to choose whether to export or not the reconstructed fields
-    /// @param[in]  folder        The folder where you want to store the results
-    ///
-    void reconstructSolution(bool exportFields = false, fileName folder = "./online_rec");
-
-    /// @brief    Inverse Distance Weighting function to interpolate the averaged eddy viscosity coefficients
-    ///           IDW in this case is a misnomer, as the implementation is specific for a vector of 0s except for the i-th component
-    /// @param[in]  mu_now   The vector of the online parameter
-    ///
-    Eigen::VectorXd interpolateIDW();
-
     /// @brief    Method to set the time setting for the online solution
     ///
     /// @param[in]  timeMatrix  The matrix containing the time settings, with the following columns:
@@ -506,47 +543,13 @@ public:
         const Eigen::MatrixXd& temperatureBC, int NtimeStepPenalty,
         int maxIter, double toleranceU, double toleranceT, int startSnap);
 
-    /// @brief   Carries out initial checks and assertions
+    /// @brief    Method to reconstruct a solution from an online solve
     ///
-    void validateSettings();
-
-    /// @brief      Set the boundary conditions in the (templated) Newton object
+    /// @param[in]  exportFields  Boolean to choose whether to export or not the reconstructed fields
+    /// @param[in]  folder        The folder where you want to store the results
     ///
-    /// @param[in,out]  newtonObject  The Newton object where to set the BCs
-    /// @param[in]      boundaryConditions  The BoundaryConditions object containing the BCs
-    template <typename NewtonType>
-    void setNewtonObjectBC(NewtonType& newtonObject, BoundaryConditions& boundaryConditions);
-
-    /// @brief      Method to configure a generic Newton object with the current settings. What it does is assign physical properties,
-    ///             time step, boundary conditions, stabilization coefficients, etc. Templated to support different Newton object types.
-    ///
-    /// @param[in,out]  newtonObject  The Newton object to be configured
-    /// @param[in]      currentY     The current reduced solution vector
-    template <typename NewtonType>
-    void configureNewtonObject(NewtonType& newtonObject, const Eigen::VectorXd& currentY, BoundaryConditions& boundaryConditions);
-
-    /// @brief      Carries out the time loop for the online solve. Templated to support different Newton object types.
-    ///
-    /// @param[in,out]  newtonObject      The Newton object to be used in the time loop
-    /// @param[in,out]  boundaryConditions  The BoundaryConditions object containing the BCs
-    /// @param[in]      firstRBFInd      The first RBF index to use
-    /// @param[in]      numberOfStores   The number of stores to be used in the time loop
-    template <typename NewtonType>
-    void onlineTimeLoop(NewtonType& newtonObject, BoundaryConditions& boundaryConditions, int firstRBFInd, int numberOfStores);
-
-    /// @brief      Carries out the time loop for the online solve, but uses a newton object for momentum and one for temperature. Templated to support different Newton object types.
-    ///
-    /// @param[in,out]  newtonObject      The Newton object to be used in the time loop
-    /// @param[in,out]  boundaryConditions  The BoundaryConditions object containing the BCs
-    /// @param[in]      firstRBFInd      The first RBF index to use
-    /// @param[in]      numberOfStores   The number of stores to be used in the time loop
-    template <typename NewtonTypeMomentum, typename NewtonTypeTemperature>
-    void onlineTimeLoopSegregated(NewtonTypeMomentum& newtonObjectMomentum, NewtonTypeTemperature& newtonObjectTemperature, BoundaryConditions& boundaryConditions, int firstRBFInd, int numberOfStores);
-
-    ///@brief       Computes the reduced version of the inf_sup constant
-    ///
-    void inf_sup_constant();
-  };
+    void reconstructSolution(bool exportFields = false, fileName folder = "./online_rec");
+};
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 

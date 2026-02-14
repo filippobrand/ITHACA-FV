@@ -168,7 +168,9 @@ public:
     };
     struct PenaltyMatrices {
         // Penalty method terms
-        List<Eigen::MatrixXd> bcVelVec, bcVelMat, bcTempVec, bcTempMat;
+        Eigen::MatrixXd bcTempVec;
+        List<Eigen::MatrixXd> bcVelVec, bcVelMat;
+        Eigen::Tensor<double, 3> bcTempMat;
     };
     // Supremizer matrices
     struct SupremizerMatrices {
@@ -495,13 +497,13 @@ public:
     /// @brief      Prepares the BC matrices for the penalty method for the temperature equation
     ///
     /// @param[in]  NT    The number of temperature modes.
-    List<Eigen::MatrixXd> bcTemperatureVec(const label NT);
+    Eigen::MatrixXd bcTemperatureVec(const label NT);
 
     //--------------------------------------------------------------------------
     /// @brief      Prepares the BC matrices for the penalty method for the temperature equation
     ///
     /// @param[in]  NT    The number of temperature modes.
-    List<Eigen::MatrixXd> bcTemperatureMat(const label NT);
+    Eigen::Tensor<double, 3> bcTemperatureMat(const label NT);
 };
 
 #endif
