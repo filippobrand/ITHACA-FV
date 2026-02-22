@@ -76,17 +76,16 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     Nphi_t = pCommonMatrices->Y.rows();
     Nphi_nut = pCommonMatrices->CTotal.dimension(1);
     dimA = problem->dimA;
-    newton_object_sup = NewtonUnsteadyBBTurbSup(Nphi_u + Nphi_prgh + Nphi_t,
-        Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
+    newton_object_sup = NewtonUnsteadyBBTurbSup(Nphi_u + Nphi_prgh + Nphi_t, Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
     newton_object_VMB = NewtonUnsteadyBBTurbVMB(Nphi_u + Nphi_prgh + Nphi_t, Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
-    newton_object_PPE = NewtonUnsteadyBBTurbPPE(Nphi_u + Nphi_prgh + Nphi_t,
-        Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
+    newton_object_PPE = NewtonUnsteadyBBTurbPPE(Nphi_u + Nphi_prgh + Nphi_t, Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
     newton_object_sup_momentum = NewtonUnsteadyBBTurbSupMomentum(Nphi_u + Nphi_prgh + Nphi_t,
         Nphi_u + Nphi_prgh, FOMproblem);
     newton_object_sup_temperature = newtonUnsteadyBBTurbSUPTemperature(Nphi_u + Nphi_t,
         Nphi_t, FOMproblem);
     separateMomentumTemperature = problem->ITHACAdict->lookupOrDefault<bool>("separateMomentumTemperature", false);
-    openLogFile("./log.residuals");
+
+    y = Eigen::VectorXd::Zero(Nphi_u + Nphi_prgh + Nphi_t); // Solution vector
 
     if (skipLift == true && problem->bcMethod == "lift")
     {
@@ -97,6 +96,8 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
         firstRBFIndex = 0;
         Info << "## COMM - Not skipping lifting modes in the RBF evaluation. This means that the first RBF index is set to " << firstRBFIndex << endl;
     }
+
+    openLogFile("./log.residuals");
 
     // Note: some other reduced class in ITHACA-FV in the constructor create a local copy of the
     // modes from the FOM problem. Maybe in the future the same could be done here
@@ -307,13 +308,9 @@ int NewtonUnsteadyBBTurbSupMomentum::operator()(const Eigen::VectorXd& x,
 int newtonUnsteadyBBTurbSUPTemperature::operator()(const Eigen::VectorXd& x,
     Eigen::VectorXd& fvec) const
 {
-    Eigen::VectorXd a_tmp(Nphi_u);
-    Eigen::VectorXd c_dot(Nphi_t);
-    Eigen::VectorXd c_tmp(Nphi_t);
-
-    a_tmp = y_old.head(Nphi_u);
-    c_tmp = x;
-    c_dot = (x - y_old.tail(Nphi_t)) / dt;
+    Eigen::VectorXd a_tmp = y_old.head(Nphi_u);
+    Eigen::VectorXd c_dot = (x - y_old.tail(Nphi_t)) / dt;;
+    Eigen::VectorXd c_tmp = x;
 
     // Convective term temperature
     Eigen::MatrixXd qq(1, 1);
@@ -394,14 +391,11 @@ int newtonUnsteadyBBTurbSUPTemperature::df(const Eigen::VectorXd& x,
 int NewtonUnsteadyBBTurbVMB::operator()(const Eigen::VectorXd& x,
     Eigen::VectorXd& fvec) const
 {
-    Eigen::VectorXd a_dot(Nphi_u);
-    Eigen::VectorXd a_tmp(Nphi_u);
-    Eigen::VectorXd c_dot(Nphi_t);
-    Eigen::VectorXd c_tmp(Nphi_t);
-    a_tmp = x.head(Nphi_u);
-    a_dot = (x.head(Nphi_u) - y_old.head(Nphi_u)) / dt;
-    c_tmp = x.tail(Nphi_t);
-    c_dot = (x.tail(Nphi_t) - y_old.tail(Nphi_t)) / dt;
+    Eigen::VectorXd a_dot = (x.head(Nphi_u) - y_old.head(Nphi_u)) / dt;
+    Eigen::VectorXd a_tmp = x.head(Nphi_u);
+    Eigen::VectorXd c_dot = (x.tail(Nphi_t) - y_old.tail(Nphi_t)) / dt;
+    Eigen::VectorXd c_tmp = x.tail(Nphi_t);
+
     // Convective term
     Eigen::MatrixXd cc(1, 1);
     // Turbulence term
@@ -641,9 +635,6 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC
     validateSettings();
     BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
 
-    y.resize(Nphi_u + Nphi_prgh + Nphi_t, 1);
-    y.setZero();
-
     boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
     Info << "### Initial coefficients: " << y << endl;
     if (problem->bcMethod == "lift")
@@ -699,9 +690,6 @@ void ReducedUnsteadyBBTurb::solveOnline_PPE(const Eigen::MatrixXd& temperatureBC
     validateSettings();
     BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
 
-    y.resize(Nphi_u + Nphi_prgh + Nphi_t, 1);
-    y.setZero();
-
     boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
     if (problem->bcMethod == "lift")
     {
@@ -749,9 +737,6 @@ void ReducedUnsteadyBBTurb::solveOnline_VMB(const Eigen::MatrixXd& temperatureBC
     BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
 
     Info << "################## Online solve N° " << NParaSet << " ##################" << endl;
-
-    y.resize(Nphi_u + Nphi_prgh + Nphi_t, 1); // Solution vector
-    y.setZero();
 
     boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
     // Correct the pressure coefficients by using the same value as the velocity ones.
@@ -964,8 +949,6 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
     Eigen::VectorXd toleranceVectorT = Eigen::VectorXd::Constant(N_BC_t, tolerancePenaltyT);
 
     BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
-    y.resize(Nphi_u + Nphi_prgh + Nphi_t, 1); // Solution vector
-    y.setZero();
 
     boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
     nut0 = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
@@ -1208,8 +1191,6 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
     Eigen::VectorXd toleranceVectorT = Eigen::VectorXd::Constant(N_BC_t, tolerancePenaltyT);
 
     BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
-    y.resize(Nphi_u + Nphi_prgh + Nphi_t, 1);
-    y.setZero();
 
     boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
     nut0 = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
