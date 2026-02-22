@@ -486,45 +486,24 @@ void UnsteadyBBTurb::assemblePenaltyMatrices()
 
 // * * * * * * * * * * * * * * Projection Methods * * * * * * * * * * * * * * //
 
-void UnsteadyBBTurb::projectSUP()
+void UnsteadyBBTurb::project()
 {
     prepareModes();
-
     assembleCommonMatrices();
-    assembleSupremizerMatrices();
+    if (method == "supremizer")
+    {
+        assembleSupremizerMatrices();
+    }
+    else if (method == "PPE")
+    {
+      M_Assert(NSUPmodes == 0, "The PPE method is not compatible with supremizer modes. Please set the number of supremizer modes to 0 in ITHACAdict.");  
+      assemblePPEMatrices();
+    }
 
     if (bcMethod == "penalty")
     {
         assemblePenaltyMatrices();
     }
-
-    offlineRBFInterpolation();
-}
-
-void UnsteadyBBTurb::projectPPE()
-{
-    M_Assert(NSUPmodes == 0, "The PPE method is not compatible with supremizer modes. Please set the number of supremizer modes to 0 in ITHACAdict.");
-    prepareModes();
-
-    assembleCommonMatrices();
-    assemblePPEMatrices();
-    if (bcMethod == "penalty")
-    {
-        assemblePenaltyMatrices();
-    }
-    offlineRBFInterpolation();
-}
-
-void UnsteadyBBTurb::projectVMB()
-{
-    prepareModes();
-
-    assembleCommonMatrices();
-    if (bcMethod == "penalty")
-    {
-        assemblePenaltyMatrices();
-    }
-
     offlineRBFInterpolation();
 }
 
@@ -808,7 +787,8 @@ Eigen::MatrixXd UnsteadyBBTurb::buoyancyTerm(label NU, label NT,
     dimensionedVector g = _g();
     surfaceScalarField& ghf = _ghf();
 
-    // Project everything
+    // Project everything. In the original formulation here it is fvc::snGrad(1.0 - ...). However
+    // it is more numerically stable to compute fvc::snGrad(-beta * (T - TRef)) since fvc::snGrad(1.0) is zero
     for (label i = 0; i < H1size; i++)
     {
         for (label j = 0; j < H2size; j++)
@@ -1591,13 +1571,13 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::bcTemperatureMat(const label NT)
 
     if (Pstream::parRun())
     {
-      reduce(bcTempMat, sumOp<Eigen::Tensor<double, 3>>());
+        reduce(bcTempMat, sumOp<Eigen::Tensor<double, 3>>());
     }
 
     if (Pstream::master())
     {
-       ITHACAstream::SaveDenseTensor(bcTempMat, "./ITHACAoutput/Matrices/", "bcTempMat_" + name(NT));
-       ITHACAstream::exportTensor(bcTempMat, "bcTempMat", "python", "./ITHACAoutput/Matrices/python/");
+        ITHACAstream::SaveDenseTensor(bcTempMat, "./ITHACAoutput/Matrices/", "bcTempMat_" + name(NT));
+        ITHACAstream::exportTensor(bcTempMat, "bcTempMat", "python", "./ITHACAoutput/Matrices/python/");
     }
 
     return bcTempMat;
@@ -1714,4 +1694,12 @@ void UnsteadyBBTurb::restart()
     }
     mesh.setFluxRequired(_p_rgh().name());
     Info << "Restart complete." << endl;
+}
+
+void UnsteadyBBTurb::resizeModes()
+{
+    Umodes.resize(NUmodes);
+    Tmodes.resize(NTmodes);
+    nutmodes.resize(NNutModes);
+    P_rghmodes.resize(NPrghmodes);
 }

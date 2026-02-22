@@ -237,21 +237,6 @@ public:
     void solvesupremizer(word type = "snapshot");
 
     //--------------------------------------------------------------------------
-    /// Project using a supremizer approach
-    ///
-    void projectSUP();
-
-    //--------------------------------------------------------------------------
-    /// Project using a supremizer approach
-    ///
-    void projectPPE();
-
-    //--------------------------------------------------------------------------
-    /// Project using no stabilization approach, thus sharing the temporal coefficients between velocity and pressure
-    ///
-    void projectVMB();
-
-    //--------------------------------------------------------------------------
     /// Gradient of pressure
     ///
     /// @param[in]  NU       The number of velocity modes.
@@ -504,6 +489,17 @@ public:
     ///
     /// @param[in]  NT    The number of temperature modes.
     Eigen::Tensor<double, 3> bcTemperatureMat(const label NT);
-};
+
+    //--------------------------------------------------------------------------
+    /// @brief      Resizes the modes before the Online phase, according to the number of modes chosen
+    ///
+    void resizeModes();
+
+    //--------------------------------------------------------------------------
+    /// @brief      General projection method call. It then calls the specific method according to the choice of stabilization method.
+    ///             Probably there is a cleaner way to implement this, but for now it is implemented with if statements.
+    ///
+    void project();
+  };
 
 #endif
