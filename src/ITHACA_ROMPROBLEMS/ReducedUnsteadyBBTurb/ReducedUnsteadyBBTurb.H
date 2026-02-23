@@ -301,8 +301,29 @@ public:
 class ReducedUnsteadyBBTurb : public reducedUnsteadyNS
 {
 private:
+    /// Word to indicate the stabilization method. It gets read from the ITHACAdict, and can be either "supremizer", "PPE" or "VMB"
+    word method;
+
+    /// Boolean flag to indicate wheter the penalty factor will be optimized using the Star method
+    bool optimizePenaltyFactor = false;
+
+    /// Number of timesteps over which the penalty method is optimized (if any)
+    int nTimestepsPenaltyAdapt = 0;
+
+    /// Maximum number of inner iteration for the adaptive penalty method (if any)
+    int penaltyMaxIter = 0;
+
+    /// Tolerance for the adaptive penalty method (if any)
+    float penaltyTolU = 1e-3;
+
+    /// Tolerance for the adaptive penalty method (if any)
+    float penaltyTolT = 1e-2;
+
     // Index of the first RBF mode in the reduced solution vector, used for the online interpolation of the eddy viscosity field. Used to ignore the lifting modes in the interpolation
     int firstRBFIndex = 0;
+
+    // Index of the current online solution being solved
+    int onlineSolutionIndex = 0;
 
     /// @brief   Carries out initial checks and assertions
     ///
@@ -347,6 +368,39 @@ private:
     template <typename NewtonType>
     void configureNewtonObject(NewtonType& newtonObject, const Eigen::VectorXd& currentY, BoundaryConditions& boundaryConditions);
 
+    /// @brief Method to perform an online solve using a supremizer stabilisation method
+    /// @param[in]  boundaryConditions The boundary conditions object to be used in the online solve
+    /// @param[in]  startSnap Index of the snapshot used to compute the initial coefficients
+    ///
+    void solveOnline_sup(BoundaryConditions& boundaryConditions, int startSnap = 0);
+
+    /// @brief Method to perform an online solve using a PPE stabilisation method
+    /// @param[in]  boundaryConditions The boundary conditions object to be used in the online solve
+    /// @param[in]  startSnap Index of the snapshot used to compute the initial coefficients
+    ///
+    void solveOnline_PPE(BoundaryConditions& boundaryConditions, int startSnap = 0);
+
+    /// @brief Method to perform an online solve using a VMB  method
+    ///
+    /// @param[in]  boundaryConditions The boundary conditions object to be used in the online solve
+    /// @param[in]  startSnap Index of the snapshot used to compute the initial coefficients
+    ///
+    void solveOnline_VMB(BoundaryConditions& boundaryConditions, int startSnap = 0);
+
+    /// @brief   Estimate the penalty factor using the iterative approach developed by S. Star.
+    ///
+    /// @param[in] boundaryConditions  BoundaryConditions object containing the BCs to be used in the online solve
+    /// @param[in] startSnap        Snapshot to use as initial condition
+    ///
+    void estimatePenaltyFactorSupremizer(BoundaryConditions& boundaryConditions, int startSnap);
+
+    /// @brief   Estimate the penalty factor using the iterative approach developed by S. Star.
+    ///
+    /// @param[in] boundaryConditions  BoundaryConditions object containing the BCs to be used in the online solve
+    /// @param[in] startSnap        Snapshot to use as initial condition
+    ///
+    void estimatePenaltyFactorPPE(BoundaryConditions& boundaryConditions, int startSnap);
+
 public:
     // Constructors
     /// Construct Null
@@ -373,10 +427,10 @@ public:
     /// Function object to call the non linear solver sup approach
     NewtonUnsteadyBBTurbSup newton_object_sup;
 
-    ///
+    /// Newton object to call the non linear solver for momentum when solving momentum and temperature equations separately
     NewtonUnsteadyBBTurbSupMomentum newton_object_sup_momentum;
 
-    ///
+    /// Newton object to call the non linear solver for temperature when solving momentum and temperature equations separately
     newtonUnsteadyBBTurbSUPTemperature newton_object_sup_temperature;
 
     /// Function object to call the non linear solver PPE approach
@@ -385,9 +439,16 @@ public:
     /// Function object to call the non linear solver VMB approach
     NewtonUnsteadyBBTurbVMB newton_object_VMB;
 
+    /// Shared pointer to common matrices object for the reduced problem
     std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
+
+    /// Shared pointer to supremizer matrices object for the reduced problem
     std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
+
+    /// Shared pointer to PPE matrices object for the reduced problem
     std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
+
+    /// Shared pointer to penalty matrices object for the reduced problem
     std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
 
     /// Reconstructed temperature field
@@ -447,9 +508,6 @@ public:
     /// Boolean flag to chose whether to solve the momentum and temperature equations separately using two different Newton solvers
     bool separateMomentumTemperature = false;
 
-    /// Word to indicate the stabilization method. It is used in the post-processing
-    word pressureMethod;
-
     /// Pointer to the FOM problem
     UnsteadyBBTurb* problem;
 
@@ -459,51 +517,6 @@ public:
     ///
     void inf_sup_constant();
 
-    /// Method to perform an online solve using a supremizer stabilisation method
-    ///
-    /// @param[in]  temp_now_BC   The scalar of online temperature. It is defined in
-    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
-    /// then each nth column corresponds to the value of the n-th BC at that time.
-    /// @param[in] vel_now_BC   The scalar of online velocity. It is defined in
-    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
-    /// then each nth column corresponds to the value of the n-th BC at that time.
-    /// @param[in]  NParaSet The parameter sets number for which the online solution is solved.
-    /// @param[in]  startSnap The first snapshot taken from the offline snapshots
-    /// and used to get the reduced initial condition default = 0.
-    ///
-    void solveOnline_sup(const Eigen::MatrixXd& temp_now_BC,
-        const Eigen::MatrixXd& vel_now_BC, int NParaSet = 0, int startSnap = 0);
-
-    /// Method to perform an online solve using a PPE stabilisation method
-    ///
-    /// @param[in]  temp_now_BC   The scalar of online temperature. It is defined in
-    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
-    /// then each nth column corresponds to the value of the n-th BC at that time.
-    /// @param[in] vel_now_BC   The scalar of online velocity. It is defined in
-    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
-    /// then each nth column corresponds to the value of the n-th BC at that time.
-    /// @param[in]  NParaSet The parameter sets number for which the online solution is solved.
-    /// @param[in]  startSnap The first snapshot taken from the offline snapshots
-    /// and used to get the reduced initial condition default = 0.
-    ///
-    void solveOnline_PPE(const Eigen::MatrixXd& temp_now_BC,
-        const Eigen::MatrixXd& vel_now_BC, int NParaSet = 0, int startSnap = 0);
-
-    /// Method to perform an online solve using a VMB  method
-    ///
-    /// @param[in]  temp_now_BC   The scalar of online temperature. It is defined in
-    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
-    /// then each nth column corresponds to the value of the n-th BC at that time.
-    /// @param[in] vel_now_BC   The scalar of online velocity. It is defined in
-    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
-    /// then each nth column corresponds to the value of the n-th BC at that time.
-    /// @param[in]  NParaSet The parameter sets number for which the online solution is solved.
-    /// @param[in]  startSnap The first snapshot taken from the offline snapshots
-    /// and used to get the reduced initial condition default = 0.
-    ///
-    void solveOnline_VMB(const Eigen::MatrixXd& temp_now_BC,
-        const Eigen::MatrixXd& vel_now_BC, int NParaSet = 0, int startSnap = 0);
-
     /// @brief    Method to set the time setting for the online solution
     ///
     /// @param[in]  timeMatrix  The matrix containing the time settings, with the following columns:
@@ -512,36 +525,8 @@ public:
     ///                         Column 3: time step
     ///                         Column 4: exportEvery
     ///                         Column 5: storeEvery
-    /// @param[in]  solutionCounter  The counter of the current online solution, used to index the time settings
     ///
-    void setTimeSettings(const Eigen::MatrixXd& timeMatrix, label solutionCounter);
-
-    /// @brief   Estimate the penalty factor using the iterative approach developed by S. Star.
-    ///
-    /// @param[in] velBC            Velocity boundary conditions
-    /// @param[in] temperatureBC    Temperature boundary conditions
-    /// @param[in] timeStepPenalty  Number of time steps to use for the penalty
-    /// @param[in] maxIter          Maximum number of iterations
-    /// @param[in] tol              Tolerance for convergence
-    /// @param[in] startSnap        Snapshot to use as initial condition
-
-    void estimatePenaltyFactorSupremizer(const Eigen::MatrixXd& velBC,
-        const Eigen::MatrixXd& temperatureBC, int NtimeStepPenalty,
-        int maxIter, double toleranceU, double toleranceT, int startSnap);
-
-
-    /// @brief   Estimate the penalty factor using the iterative approach developed by S. Star.
-    ///
-    /// @param[in] velBC            Velocity boundary conditions
-    /// @param[in] temperatureBC    Temperature boundary conditions
-    /// @param[in] timeStepPenalty  Number of time steps to use for the penalty
-    /// @param[in] maxIter          Maximum number of iterations
-    /// @param[in] tol              Tolerance for convergence
-    /// @param[in] startSnap        Snapshot to use as initial condition
-
-    void estimatePenaltyFactorPPE(const Eigen::MatrixXd& velBC,
-        const Eigen::MatrixXd& temperatureBC, int NtimeStepPenalty,
-        int maxIter, double toleranceU, double toleranceT, int startSnap);
+    void setTimeSettings(const Eigen::MatrixXd& timeMatrix);
 
     /// @brief    Method to reconstruct a solution from an online solve
     ///
@@ -549,6 +534,19 @@ public:
     /// @param[in]  folder        The folder where you want to store the results
     ///
     void reconstructSolution(bool exportFields = false, fileName folder = "./online_rec");
+
+    /// @brief    High level method to perform an online solve. It calls the specific method for the chosen stabilization method
+    ///
+    /// @param[in]  temp_now_BC   The scalar of online temperature. It is defined in
+    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
+    /// then each nth column corresponds to the value of the
+    /// n-th BC at that time.
+    /// @param[in] vel_now_BC   The scalar of online velocity. It is defined in
+    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
+    /// then each nth column corresponds to the value of the n-th BC at that time.
+    /// @param[in]  startSnap The first snapshot taken from the offline snapshots and used to get the reduced initial condition default = 0.
+    ///
+    void solveOnline(const Eigen::MatrixXd& vel_now_BC, const Eigen::MatrixXd& temp_now_BC, int startSnap = 0);
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

@@ -36,6 +36,7 @@ License
 #include "ReducedUnsteadyBBTurb.H"
 #include <atomic>
 #include <fstream>
+#include <chrono>
 
 static std::ofstream g_logFile;
 static std::atomic_bool g_printOperatorDebug(false);
@@ -83,7 +84,9 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
         Nphi_u + Nphi_prgh, FOMproblem);
     newton_object_sup_temperature = newtonUnsteadyBBTurbSUPTemperature(Nphi_u + Nphi_t,
         Nphi_t, FOMproblem);
+
     separateMomentumTemperature = problem->ITHACAdict->lookupOrDefault<bool>("separateMomentumTemperature", false);
+    method = problem->ITHACAdict->lookupOrDefault<word>("method", "supremizer");
 
     y = Eigen::VectorXd::Zero(Nphi_u + Nphi_prgh + Nphi_t); // Solution vector
 
@@ -96,6 +99,15 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
         firstRBFIndex = 0;
         Info << "## COMM - Not skipping lifting modes in the RBF evaluation. This means that the first RBF index is set to " << firstRBFIndex << endl;
     }
+
+    // Penalty factor optimization settings
+    optimizePenaltyFactor = problem->ITHACAdict->lookupOrDefault<bool>("optimizeTau", false);
+    nTimestepsPenaltyAdapt = problem->ITHACAdict->lookupOrDefault<int>("nTimestepsPenaltyAdapt", 100);
+    penaltyMaxIter = problem->ITHACAdict->lookupOrDefault<int>("penaltyMaxIter", 50);
+    penaltyTolU = problem->ITHACAdict->lookupOrDefault<float>("penaltyTolU", 1e-3);
+    penaltyTolT = problem->ITHACAdict->lookupOrDefault<float>("penaltyTolT", 1e-2);
+
+    M_Assert(penaltyTolU > 0 && penaltyTolT > 0, "Penalty factor optimization tolerances must be positive.");
 
     openLogFile("./log.residuals");
 
@@ -129,7 +141,6 @@ void ReducedUnsteadyBBTurb::configureNewtonObject(NewtonType& newtonObject, cons
 
     setNewtonObjectBC<NewtonType>(newtonObject, boundaryConditions);
 }
-
 
 // * * * * * * * * * * * * * * * Operators supremizer  * * * * * * * * * * * * * //
 // Operator to evaluate the residual for the supremizer approach
@@ -309,7 +320,8 @@ int newtonUnsteadyBBTurbSUPTemperature::operator()(const Eigen::VectorXd& x,
     Eigen::VectorXd& fvec) const
 {
     Eigen::VectorXd a_tmp = y_old.head(Nphi_u);
-    Eigen::VectorXd c_dot = (x - y_old.tail(Nphi_t)) / dt;;
+    Eigen::VectorXd c_dot = (x - y_old.tail(Nphi_t)) / dt;
+    ;
     Eigen::VectorXd c_tmp = x;
 
     // Convective term temperature
@@ -362,7 +374,6 @@ int newtonUnsteadyBBTurbSUPTemperature::operator()(const Eigen::VectorXd& x,
     return 0;
 }
 
-// Operator to evaluate the Jacobian for the supremizer approach
 int NewtonUnsteadyBBTurbSup::df(const Eigen::VectorXd& x,
     Eigen::MatrixXd& fjac) const
 {
@@ -628,23 +639,8 @@ int NewtonUnsteadyBBTurbPPE::df(const Eigen::VectorXd& x,
 }
 
 // * * * * * * * * * * * * * * * Solve Functions  * * * * * * * * * * * * * //
-void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC,
-    const Eigen::MatrixXd& velocityBC, int NParaSet, int startSnap)
+void ReducedUnsteadyBBTurb::solveOnline_sup(BoundaryConditions& boundaryConditions, int startSnap)
 {
-    Info << "################## Online solve N° " << NParaSet << " ##################" << endl;
-    validateSettings();
-    BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
-
-    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
-    Info << "### Initial coefficients: " << y << endl;
-    if (problem->bcMethod == "lift")
-    {
-        boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
-    }
-
-    nut0 = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
-    nut_param_0 = interpolateIDW();
-
     if (separateMomentumTemperature == true)
     {
         configureNewtonObject(newton_object_sup_momentum, y, boundaryConditions);
@@ -670,34 +666,12 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(const Eigen::MatrixXd& temperatureBC
         onlineTimeLoopSegregated(newton_object_sup_momentum, newton_object_sup_temperature,
             boundaryConditions, firstRBFIndex, numberOfStores);
     }
-
-    if (Pstream::master())
-    {
-        ITHACAstream::exportMatrix(online_solution, "red_coeff", "python",
-            "./ITHACAoutput/red_coeff_" + name(NParaSet) + "/");
-        ITHACAstream::exportMatrix(rbfCoeffMat, "rbf_coeff", "python",
-            "./ITHACAoutput/rbf_coeff_" + name(NParaSet) + "/");
-    }
-    count_online_solve += 1;
     if (g_logFile.is_open())
         g_logFile.close();
 }
 
-void ReducedUnsteadyBBTurb::solveOnline_PPE(const Eigen::MatrixXd& temperatureBC,
-    const Eigen::MatrixXd& velocityBC, int NParaSet, int startSnap)
+void ReducedUnsteadyBBTurb::solveOnline_PPE(BoundaryConditions& boundaryConditions, int startSnap)
 {
-    Info << "################## Online solve N° " << NParaSet << " ##################" << endl;
-    validateSettings();
-    BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
-
-    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
-    if (problem->bcMethod == "lift")
-    {
-        boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
-    }
-    nut0 = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
-    nut_param_0 = interpolateIDW();
-
     if (separateMomentumTemperature == true)
     {
         Info << "### ERROR: The segregate approach for PPE is not implemented yet" << endl;
@@ -718,40 +692,13 @@ void ReducedUnsteadyBBTurb::solveOnline_PPE(const Eigen::MatrixXd& temperatureBC
     time = tstart;
 
     onlineTimeLoop(newton_object_PPE, boundaryConditions, firstRBFIndex, numberOfStores);
-
-    if (Pstream::master())
-    {
-        ITHACAstream::exportMatrix(online_solution, "red_coeff", "python",
-            "./ITHACAoutput/red_coeff_" + name(NParaSet) + "/");
-        ITHACAstream::exportMatrix(rbfCoeffMat, "rbf_coeff", "python",
-            "./ITHACAoutput/rbf_coeff_" + name(NParaSet) + "/");
-    }
-    count_online_solve += 1;
 }
 
-void ReducedUnsteadyBBTurb::solveOnline_VMB(const Eigen::MatrixXd& temperatureBC,
-    const Eigen::MatrixXd& velocityBC, int NParaSet, int startSnap)
+void ReducedUnsteadyBBTurb::solveOnline_VMB(BoundaryConditions& boundaryConditions, int startSnap)
 {
-    pressureMethod = "VMB"; // Set the flag to use VMB method in the post-processing
-    validateSettings();
-    BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
-
-    Info << "################## Online solve N° " << NParaSet << " ##################" << endl;
-
-    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
+    configureNewtonObject(newton_object_VMB, y, boundaryConditions);
     // Correct the pressure coefficients by using the same value as the velocity ones.
     y.segment(Nphi_u, Nphi_prgh) = y.head(Nphi_u);
-
-    // Change initial condition for the lifting function
-    if (problem->bcMethod == "lift")
-    {
-        boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
-    }
-
-    nut0 = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
-    nut_param_0 = interpolateIDW();
-
-    configureNewtonObject(newton_object_VMB, y, boundaryConditions);
     Info << "### Newton object configured." << endl;
     // Set number of online solutions - Time related
     int numberOfStores = round((storeEvery) / dt); // Number of time steps between two stored solutions
@@ -762,15 +709,6 @@ void ReducedUnsteadyBBTurb::solveOnline_VMB(const Eigen::MatrixXd& temperatureBC
     time = tstart;
     Info << "Starting the VMB time loop" << endl;
     onlineTimeLoop(newton_object_VMB, boundaryConditions, firstRBFIndex, numberOfStores);
-
-    if (Pstream::master())
-    {
-        ITHACAstream::exportMatrix(online_solution, "red_coeff", "python",
-            "./ITHACAoutput/red_coeff_" + name(NParaSet) + "/");
-        ITHACAstream::exportMatrix(rbfCoeffMat, "rbf_coeff", "python",
-            "./ITHACAoutput/rbf_coeff_" + name(NParaSet) + "/");
-    }
-    count_online_solve += 1;
 }
 
 // * * * * * * * * * * * * * * * Solve Functions  * * * * * * * * * * * * * //
@@ -807,7 +745,7 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
             Eigen::MatrixXd currentNutCoeff;
 
             currentUCoeff = online_solution[i].block(1, 0, Nphi_u, 1);
-            if (pressureMethod != "VMB")
+            if (method != "VMB")
             {
                 currentPrghCoeff = online_solution[i].block(Nphi_u + 1, 0, Nphi_prgh, 1);
             } else
@@ -922,22 +860,18 @@ Eigen::VectorXd ReducedUnsteadyBBTurb::interpolateIDW()
 }
 
 // * * * * * * * * *  Inverse Distance Weighting Functions  * * * * * * * * //
-void ReducedUnsteadyBBTurb::setTimeSettings(const Eigen::MatrixXd& timeMatrix, label solutionCounter)
+void ReducedUnsteadyBBTurb::setTimeSettings(const Eigen::MatrixXd& timeMatrix)
 {
-    tstart = timeMatrix(solutionCounter, 0);
-    finalTime = timeMatrix(solutionCounter, 1);
-    dt = timeMatrix(solutionCounter, 2);
-    storeEvery = timeMatrix(solutionCounter, 3);
-    exportEvery = timeMatrix(solutionCounter, 4);
+    tstart = timeMatrix(count_online_solve - 1, 0);
+    finalTime = timeMatrix(count_online_solve - 1, 1);
+    dt = timeMatrix(count_online_solve - 1, 2);
+    storeEvery = timeMatrix(count_online_solve - 1, 3);
+    exportEvery = timeMatrix(count_online_solve - 1, 4);
 }
 
 // * * * * * * * * *  Penalty Factor Estimation Functions  * * * * * * * * //
-void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixXd& velocityBC,
-    const Eigen::MatrixXd& temperatureBC, int NtimeStepPenalty,
-    int maxIter, double tolerancePenaltyU, double tolerancePenaltyT, int startSnap)
+void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(BoundaryConditions& boundaryConditions, int startSnap)
 {
-    M_Assert(tolerancePenaltyU > 0, "The tolerance for the penalty factor estimation must be positive.");
-    M_Assert(tolerancePenaltyT > 0, "The tolerance for the penalty factor estimation must be positive.");
     M_Assert(tauU.size() == N_BC, "The size of the tauU vector must be equal to the number of velocity BCs.");
     M_Assert(tauT.size() == N_BC_t, "The size of the tauT vector must be equal to the number of temperature BCs.");
 
@@ -945,19 +879,8 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
     Eigen::VectorXd currentTimeErrorsT = Eigen::VectorXd::Constant(N_BC_t, 1e6);
     Eigen::VectorXd currentTimeU = Eigen::VectorXd::Zero(N_BC);
     Eigen::VectorXd currentTimeT = Eigen::VectorXd::Zero(N_BC_t);
-    Eigen::VectorXd toleranceVectorU = Eigen::VectorXd::Constant(N_BC, tolerancePenaltyU);
-    Eigen::VectorXd toleranceVectorT = Eigen::VectorXd::Constant(N_BC_t, tolerancePenaltyT);
-
-    BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
-
-    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
-    nut0 = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
-    nut_param_0 = interpolateIDW();
-
-    if (problem->bcMethod == "lift")
-    {
-        boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
-    }
+    Eigen::VectorXd toleranceVectorU = Eigen::VectorXd::Constant(N_BC, penaltyTolU);
+    Eigen::VectorXd toleranceVectorT = Eigen::VectorXd::Constant(N_BC_t, penaltyTolT);
 
     if (separateMomentumTemperature == true)
     {
@@ -999,7 +922,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
 
     int currentTimeStep = 0;
     int currentIteration = 0;
-    while (currentTimeStep < NtimeStepPenalty)
+    while (currentTimeStep < nTimestepsPenaltyAdapt)
     {
         currentTimeErrorsU.setConstant(1e6);
         currentTimeErrorsT.setConstant(1e6);
@@ -1023,7 +946,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
             }
         }
 
-        while ((currentTimeErrorsU.maxCoeff() > tolerancePenaltyU || currentTimeErrorsT.maxCoeff() > tolerancePenaltyT) && currentIteration < maxIter)
+        while ((currentTimeErrorsU.maxCoeff() > penaltyTolU || currentTimeErrorsT.maxCoeff() > penaltyTolT) && currentIteration < penaltyMaxIter)
         {
             currentIteration++;
 
@@ -1120,12 +1043,12 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
                 currentTimeErrorsU = (currentTimeU - boundaryConditions.currentVelocityBC).cwiseAbs();
                 for (int k = 0; k < N_BC; k++)
                 {
-                    tauU(k, 0) = tauU(k, 0) * (currentTimeErrorsU(k) / tolerancePenaltyU);
+                    tauU(k, 0) = tauU(k, 0) * (currentTimeErrorsU(k) / penaltyTolU);
                     tauU(k, 0) = max(tauU(k, 0), 1e-8); // Avoid tauU to be zero
                 }
                 newton_object_sup.tauU = tauU;
                 newton_object_sup_momentum.tauU = tauU;
-                if (currentTimeErrorsU.maxCoeff() <= tolerancePenaltyU)
+                if (currentTimeErrorsU.maxCoeff() <= penaltyTolU)
                 {
                     convergedU = true;
                 }
@@ -1141,12 +1064,12 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
                 currentTimeErrorsT = (currentTimeT - boundaryConditions.currentTemperatureBC).cwiseAbs();
                 for (int k = 0; k < N_BC_t; k++)
                 {
-                    tauT(k, 0) = tauT(k, 0) * (currentTimeErrorsT(k) / tolerancePenaltyT);
+                    tauT(k, 0) = tauT(k, 0) * (currentTimeErrorsT(k) / penaltyTolT);
                     tauT(k, 0) = max(tauT(k, 0), 1e-8); // Avoid tauT to be zero
                 }
                 newton_object_sup.tauT = tauT;
                 newton_object_sup_temperature.tauT = tauT;
-                if (currentTimeErrorsT.maxCoeff() <= tolerancePenaltyT)
+                if (currentTimeErrorsT.maxCoeff() <= penaltyTolT)
                 {
                     convergedT = true;
                 }
@@ -1174,12 +1097,8 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorSupremizer(const Eigen::MatrixX
     Info << "Final temperature BC errors: " << currentTimeErrorsT << endl;
 }
 
-void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velocityBC,
-    const Eigen::MatrixXd& temperatureBC, int NtimeStepPenalty,
-    int maxIter, double tolerancePenaltyU, double tolerancePenaltyT, int startSnap)
+void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(BoundaryConditions& boundaryConditions, int startSnap)
 {
-    M_Assert(tolerancePenaltyU > 0, "The tolerance for the penalty factor estimation must be positive.");
-    M_Assert(tolerancePenaltyT > 0, "The tolerance for the penalty factor estimation must be positive.");
     M_Assert(tauU.size() == N_BC, "The size of the tauU vector must be equal to the number of velocity BCs.");
     M_Assert(tauT.size() == N_BC_t, "The size of the tauT vector must be equal to the number of temperature BCs.");
 
@@ -1187,19 +1106,9 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
     Eigen::VectorXd currentTimeErrorsT = Eigen::VectorXd::Constant(N_BC_t, 1e6);
     Eigen::VectorXd currentTimeU = Eigen::VectorXd::Zero(N_BC);
     Eigen::VectorXd currentTimeT = Eigen::VectorXd::Zero(N_BC_t);
-    Eigen::VectorXd toleranceVectorU = Eigen::VectorXd::Constant(N_BC, tolerancePenaltyU);
-    Eigen::VectorXd toleranceVectorT = Eigen::VectorXd::Constant(N_BC_t, tolerancePenaltyT);
+    Eigen::VectorXd toleranceVectorU = Eigen::VectorXd::Constant(N_BC, penaltyTolU);
+    Eigen::VectorXd toleranceVectorT = Eigen::VectorXd::Constant(N_BC_t, penaltyTolT);
 
-    BoundaryConditions boundaryConditions(velocityBC, temperatureBC, "linear");
-
-    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
-    nut0 = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
-    nut_param_0 = interpolateIDW();
-
-    if (problem->bcMethod == "lift")
-    {
-        boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
-    }
 
     if (separateMomentumTemperature == true)
     {
@@ -1236,7 +1145,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
 
     int currentTimeStep = 0;
     int currentIteration = 0;
-    while (currentTimeStep < NtimeStepPenalty)
+    while (currentTimeStep < nTimestepsPenaltyAdapt)
     {
         currentTimeErrorsU.setConstant(1e6);
         currentTimeErrorsT.setConstant(1e6);
@@ -1253,7 +1162,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
             setNewtonObjectBC(newton_object_PPE, boundaryConditions);
         }
 
-        while ((currentTimeErrorsU.maxCoeff() > tolerancePenaltyU || currentTimeErrorsT.maxCoeff() > tolerancePenaltyT) && currentIteration < maxIter)
+        while ((currentTimeErrorsU.maxCoeff() > penaltyTolU || currentTimeErrorsT.maxCoeff() > penaltyTolT) && currentIteration < penaltyMaxIter)
         {
             currentIteration++;
 
@@ -1277,7 +1186,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
                 }
                 for (int j = 0; j < Nphi_nut; j++)
                 {
-                    newton_object_PPE.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput); // * problem->stdG(j) + problem->meanG(j);
+                    newton_object_PPE.nu_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
                 }
 
                 newton_object_PPE.operator()(y, res);
@@ -1285,12 +1194,10 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
                 Info << "Time = " << time << endl;
                 if (res.norm() < 1e-5)
                 {
-                    std::cout << green << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                              << std::endl;
+                    std::cout << green << "|F(x)| = " << res.norm() << " - Minimum reached in " << hnls.iter << " iterations " << def << '\n\n';
                 } else
                 {
-                    std::cout << red << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                              << std::endl;
+                    std::cout << red << "|F(x)| = " << res.norm() << " - Minimum reached in " << hnls.iter << " iterations " << def << '\n\n';
                 }
             }
 
@@ -1304,11 +1211,11 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
                 currentTimeErrorsU = (currentTimeU - boundaryConditions.currentVelocityBC).cwiseAbs();
                 for (int k = 0; k < N_BC; k++)
                 {
-                    tauU(k, 0) = tauU(k, 0) * (currentTimeErrorsU(k) / tolerancePenaltyU);
+                    tauU(k, 0) = tauU(k, 0) * (currentTimeErrorsU(k) / penaltyTolU);
                     tauU(k, 0) = max(tauU(k, 0), 1e-8); // Avoid tauU to be zero
                 }
                 newton_object_PPE.tauU = tauU;
-                if (currentTimeErrorsU.maxCoeff() <= tolerancePenaltyU)
+                if (currentTimeErrorsU.maxCoeff() <= penaltyTolU)
                 {
                     convergedU = true;
                 }
@@ -1324,11 +1231,11 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
                 currentTimeErrorsT = (currentTimeT - boundaryConditions.currentTemperatureBC).cwiseAbs();
                 for (int k = 0; k < N_BC_t; k++)
                 {
-                    tauT(k, 0) = tauT(k, 0) * (currentTimeErrorsT(k) / tolerancePenaltyT);
+                    tauT(k, 0) = tauT(k, 0) * (currentTimeErrorsT(k) / penaltyTolT);
                     tauT(k, 0) = max(tauT(k, 0), 1e-8); // Avoid tauT to be zero
                 }
                 newton_object_PPE.tauT = tauT;
-                if (currentTimeErrorsT.maxCoeff() <= tolerancePenaltyT)
+                if (currentTimeErrorsT.maxCoeff() <= penaltyTolT)
                 {
                     convergedT = true;
                 }
@@ -1348,6 +1255,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(const Eigen::MatrixXd& velo
     Info << "Final velocity BC errors: " << currentTimeErrorsU << endl;
     Info << "Final temperature BC errors: " << currentTimeErrorsT << endl;
 }
+
 // * * * * * * * * *  Validation and setup helpers  * * * * * * * * //
 void ReducedUnsteadyBBTurb::validateSettings()
 {
@@ -1432,16 +1340,11 @@ void ReducedUnsteadyBBTurb::onlineTimeLoop(
         Info << "Time = " << time << endl;
         if (res.norm() < 1e-5)
         {
-            std::cout << green << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                      << std::endl;
+            std::cout << green << "|F(x)| = " << res.norm() << " - Minimum reached in " << hnls.iter << " iterations " << def << '\n\n';
         } else
         {
-            std::cout << red << "|F(x)| = " << res.norm() << " - Minimun reached in " << hnls.iter << " iterations " << def << std::endl
-                      << std::endl;
+            std::cout << red << "|F(x)| = " << res.norm() << " - Minimum reached in " << hnls.iter << " iterations " << def << '\n\n';
         }
-
-        count_online_solve++;
-
         tmp_sol(0) = time;
         tmp_sol.col(0).tail(y.rows()) = y;
 
@@ -1563,9 +1466,6 @@ void ReducedUnsteadyBBTurb::onlineTimeLoopSegregated(
             std::cout << red << "|F(x)| = " << resTemperature.norm() << " - Minimun reached in " << hnlsTemperature.iter << " iterations " << def << std::endl
                       << std::endl;
         }
-
-        count_online_solve++;
-
         tmp_sol(0) = time;
         tmp_sol.col(0).tail(y.rows()) = y;
 
@@ -1605,6 +1505,63 @@ void ReducedUnsteadyBBTurb::inf_sup_constant()
     }
     a = inf.minCoeff();
     Info << "### STABILITY: The inf-sup constant is: " << a << endl;
+}
+
+void ReducedUnsteadyBBTurb::solveOnline(const Eigen::MatrixXd& vel_now_BC, const Eigen::MatrixXd& temp_now_BC, int startSnap)
+{
+    Info << "################## Online solve N° " << count_online_solve << " ##################" << endl;
+    validateSettings();
+    BoundaryConditions boundaryConditions(vel_now_BC, temp_now_BC, "linear");
+    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
+
+    if (problem->bcMethod == "lift")
+    {
+        boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
+    }
+
+    nut0 = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
+    nut_param_0 = interpolateIDW();
+
+    if (method == "supremizer")
+    {
+        if (problem->bcMethod == "penalty" && optimizePenaltyFactor == true)
+        {
+            estimatePenaltyFactorSupremizer(boundaryConditions, startSnap);
+        }
+        boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t); // Re-initialize the coefficients after penalty factor estimation, as they are modified during the estimation process
+        auto clockStart = std::chrono::steady_clock::now();
+        solveOnline_sup(boundaryConditions, startSnap);
+        auto duration = std::chrono::steady_clock::now() - clockStart;
+        Info << "The online solution took, in milliseconds: " << std::chrono::duration_cast<std::chrono::milliseconds>(duration).count() << " ms" << endl;
+    } else if (method == "PPE")
+    {
+        if (problem->bcMethod == "penalty" && optimizePenaltyFactor == true)
+        {
+            estimatePenaltyFactorPPE(boundaryConditions, startSnap);
+        }
+        boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
+        auto clockStart = std::chrono::steady_clock::now();
+        solveOnline_PPE(boundaryConditions, startSnap);
+        auto duration = std::chrono::steady_clock::now() - clockStart;
+        Info << "The online solution took, in milliseconds: " << std::chrono::duration_cast<std::chrono::milliseconds>(duration).count() << " ms" << endl;
+    } else if (method == "VMB")
+    {
+        auto clockStart = std::chrono::steady_clock::now();
+        solveOnline_VMB(boundaryConditions, startSnap);
+        auto duration = std::chrono::steady_clock::now() - clockStart;
+        Info << "The online solution took, in milliseconds: " << std::chrono::duration_cast<std::chrono::milliseconds>(duration).count() << " ms" << endl;
+    } else
+    {
+        Info << "### ERROR: The selected method is not implemented." << endl;
+    }
+    if (Pstream::master())
+    {
+        ITHACAstream::exportMatrix(online_solution, "red_coeff", "python",
+            "./ITHACAoutput/red_coeff_" + name(count_online_solve - 1) + "/");
+        ITHACAstream::exportMatrix(rbfCoeffMat, "rbf_coeff", "python",
+            "./ITHACAoutput/rbf_coeff_" + name(count_online_solve - 1) + "/");
+    }
+    count_online_solve++;
 }
 
 // ************************************************************************ //
