@@ -82,6 +82,10 @@ private:
     /// Boolean to know if velocity BCs are time-dependent
     bool velocityTimeDep_ = false;
 
+    /// @brief    Method to linearly interpolate a value between two values
+    ///
+    double linearInterpolate(const double t0, const double t1, const double v0, const double v1, const scalar currentTime);
+
 public:
     // Constructors
     BoundaryConditions(const Eigen::MatrixXd& velocityBC, const Eigen::MatrixXd& temperatureBC, word timeDepMethod);
@@ -101,10 +105,6 @@ public:
     /// @param[in]  currentTime  Scalar of the current time
     ///
     void updateTimeDependentBC(const scalar currentTime);
-
-    /// @brief    Method to linearly interpolate a value between two values
-    ///
-    double linearInterpolate(const double t0, const double t1, const double v0, const double v1, const scalar currentTime);
 
     /// @brief    Method to initialize the reduced coefficient given an initial snapshot index.
     ///           This overload is used for problems with temperature equation.

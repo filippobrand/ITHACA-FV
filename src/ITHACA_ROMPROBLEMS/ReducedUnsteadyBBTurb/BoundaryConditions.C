@@ -154,34 +154,11 @@ void BoundaryConditions::initializeReducedCoeffs(int startSnap, Eigen::VectorXd&
         y.segment(Nphi_u, Nphi_p) = ITHACAutilities::getCoeffs(
             problem->Prghfield[startSnap], problem->P_rghmodes);
     }
-    // volScalarField T_IC("T_IC", problem->Tfield[startSnap]);
-    // for (int j = 0; j < T_IC.boundaryField().size(); j++)
-    // {
-    //     for (int i = 0; i < N_BC_t; i++)
-    //     {
-    //         if (j == problem->inletIndexT(i, 0))
-    //         {
-    //             T_IC.boundaryFieldRef()[problem->inletIndexT(i, 0)][j] = currentTemperatureBC(i);
-    //         } else
-    //         {
-    //         }
-    //     }
-    // }
     y.tail(Nphi_t) = ITHACAutilities::getCoeffs(problem->Tfield[startSnap], problem->L_Tmodes);
 }
 
 void BoundaryConditions::correctLiftingCoeffs(Eigen::VectorXd& y, const int N_BC, const int N_BC_t, const int Nphi_u, const int Nphi_prgh)
 {
-    // for (int i = 0; i < N_BC; i++)
-    // {
-    //     y(i) = currentVelocityBC(i);
-    // }
-    // for (int i = 0; i < N_BC_t; i++)
-    // {
-    //     int k = i + Nphi_prgh + Nphi_u;
-    //     y(k) = currentTemperatureBC(i);
-    // }
-    // This should be equivalent and more efficient
     y.head(N_BC) = currentVelocityBC.head(N_BC);
     y.segment(Nphi_u + Nphi_prgh, N_BC_t) = currentTemperatureBC.head(N_BC_t);
 }
