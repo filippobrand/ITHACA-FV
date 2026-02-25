@@ -71,6 +71,12 @@ private:
     /// Supremizer approach (either "snapshot" or "modes")
     word supremizerApproach;
 
+    /// Test functions for the BC imposition - Velocity
+    volVectorModes testFunctionsU;
+
+    /// Test functions for the BC imposition - Temperature
+    volScalarModes testFunctionsT;
+
     //--------------------------------------------------------------------------
     /// @brief     Method to correctly prepare the modes (supremizer and lifting if necessary), be it PPE, Supremizer or VMB
     ///
@@ -101,6 +107,11 @@ private:
     void assemblePPEMatrices();
 
     void assemblePenaltyMatrices();
+
+    Eigen::MatrixXd mass_term(label NUmodes, label NPmodes, label NSUPmodes);
+
+    Eigen::MatrixXd diffusive_term(label NUmodes, label NPmodes,
+        label NSUPmodes);
 
 public:
     // Constructors
@@ -184,12 +195,15 @@ public:
         Eigen::Tensor<double, 3> G, PPEAveCT1, PPECT1, PPEAveCT2, PPECT2, CTotalPPEAve, CTotalPPEFluct;
     };
 
-    /// Shared pointer to the commin matrices. A shared pointer is used so its ownership can be shared, and thus the memory heavy UnsteadyBBTurb object can be destroyed. Still same treatment needed for the fields/modes
+    /// Shared pointer to the common matrices. A shared pointer is used so its ownership can be shared, and thus the memory heavy UnsteadyBBTurb object can be destroyed. Still same treatment needed for the fields/modes
     std::shared_ptr<CommonMatrices> pCommonMatrices;
+
     /// Shared pointer to the penalty matrices
     std::shared_ptr<PenaltyMatrices> pPenaltyMatrices;
+
     /// Shared pointer to the supremizer matrices
     std::shared_ptr<SupremizerMatrices> pSupremizerMatrices;
+
     /// Shared pointer to the PPE matrices
     std::shared_ptr<PPEMatrices> pPPEMatrices;
 
@@ -217,6 +231,12 @@ public:
     /// Number of velocity coefficient to skip in the RBF interpolation during the offline phase
     label skipRBFIndex = 0;
 
+    /// Gunzburger POD matrix on the boundaries
+    Eigen::MatrixXd GunzburgerBCMatrixVelocity;
+
+    /// Gunzburger POD matrix on the boundaries for the temperature
+    Eigen::MatrixXd GunzburgerBCMatrixTemperature;
+
     /// boolean flag for time-dependent BCs
     bool timeDependentBC = false;
 
@@ -235,6 +255,13 @@ public:
     ///
     /// @param[in]  type       The type of supremizer approach ('snapshot' or 'modes')
     void solvesupremizer(word type = "snapshot");
+
+    //--------------------------------------------------------------------------
+    /// @brief      Method to solve the supremizer either using the snapshot method or the pressure modes
+    ///
+    /// @param[in]  type       The type of supremizer approach ('snapshot' or 'modes')
+    Eigen::Tensor<double, 3> convective_term_tens(label NUmodes,
+        label NPmodes, label NSUPmodes);
 
     //--------------------------------------------------------------------------
     /// Gradient of pressure
@@ -500,6 +527,12 @@ public:
     ///             Probably there is a cleaner way to implement this, but for now it is implemented with if statements.
     ///
     void project();
-  };
+
+    //--------------------------------------------------------------------------
+    /// @brief      Entry point to compute the test functions for the BC imposition following the method in
+    ///             "Reduced-order modeling of time-dependent PDEs with multiple parameters in the boundary data"
+    ///
+    void computeTestFunctionsBC();
+};
 
 #endif

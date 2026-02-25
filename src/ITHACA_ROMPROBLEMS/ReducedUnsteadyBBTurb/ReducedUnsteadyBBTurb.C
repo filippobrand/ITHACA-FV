@@ -8,7 +8,7 @@ v/*---------------------------------------------------------------------------*\
      ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝      ╚═╝       ╚═══╝
 
  * In real Time Highly Advanced Computational Applications for Finite Volumes
- * Copyright (C) 2017 by the ITHACA-FV authors
+ * Copyright (C) 2026 by the ITHACA-FV authors
 -------------------------------------------------------------------------------
 
 License
@@ -76,6 +76,13 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     Nphi_prgh = pCommonMatrices->K.cols();
     Nphi_t = pCommonMatrices->Y.rows();
     Nphi_nut = pCommonMatrices->CTotal.dimension(1);
+
+    Info << "Reading the matrices, the following number of modes will be used: " << endl;
+    Info << "Nphi_u: " << Nphi_u << endl;
+    Info << "Nphi_prgh: " << Nphi_prgh << endl;
+    Info << "Nphi_t: " << Nphi_t << endl;
+    Info << "Nphi_nut: " << Nphi_nut << endl;
+
     dimA = problem->dimA;
     newton_object_sup = NewtonUnsteadyBBTurbSup(Nphi_u + Nphi_prgh + Nphi_t, Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
     newton_object_VMB = NewtonUnsteadyBBTurbVMB(Nphi_u + Nphi_prgh + Nphi_t, Nphi_u + Nphi_prgh + Nphi_t, FOMproblem);
@@ -87,8 +94,18 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
 
     separateMomentumTemperature = problem->ITHACAdict->lookupOrDefault<bool>("separateMomentumTemperature", false);
     method = problem->ITHACAdict->lookupOrDefault<word>("method", "supremizer");
-
+    
     y = Eigen::VectorXd::Zero(Nphi_u + Nphi_prgh + Nphi_t); // Solution vector
+    if (problem->bcMethod == "Gunzburger")
+    {
+        // When using the gunzburger method, the first Nphi_u modes are the Nmodes-Nbc 
+        // coefficients that follow the galerkin proj. The remaining Nbc modes obey an equation to impose the BC.
+        // This resizing allows us to use the same formalism
+        int gSize = Nphi_u + N_BC + Nphi_prgh + Nphi_t + N_BC_t;
+        y.resize(gSize);
+        newton_object_PPE = NewtonUnsteadyBBTurbPPE(gSize, gSize, FOMproblem);
+        Info << "Resizing the solution vector to account for the Gunzburger BC method. The new size is " << y.size() << endl;
+    }
 
     if (skipLift == true && problem->bcMethod == "lift")
     {
@@ -108,9 +125,7 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     penaltyTolT = problem->ITHACAdict->lookupOrDefault<float>("penaltyTolT", 1e-2);
 
     M_Assert(penaltyTolU > 0 && penaltyTolT > 0, "Penalty factor optimization tolerances must be positive.");
-
     openLogFile("./log.residuals");
-
     // Note: some other reduced class in ITHACA-FV in the constructor create a local copy of the
     // modes from the FOM problem. Maybe in the future the same could be done here
 }
@@ -517,8 +532,10 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
     Eigen::VectorXd a_dot = (x.head(Nphi_u) - y_old.head(Nphi_u)) / dt;
     Eigen::VectorXd a_tmp = x.head(Nphi_u);
     Eigen::VectorXd b_tmp = x.segment(Nphi_u, Nphi_prgh);
+
     Eigen::VectorXd c_dot = (x.tail(Nphi_t) - y_old.tail(Nphi_t)) / dt;
     Eigen::VectorXd c_tmp = x.tail(Nphi_t);
+
     // Convective term momentum equation
     Eigen::MatrixXd cc(1, 1);
     // Non linear term turbulence in momentum equation - average nut
@@ -570,7 +587,14 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
         }
     }
 
-    for (int i = 0; i < Nphi_u; i++)
+    int nTestFunctionsU = Nphi_u;
+    int nTestFunctionsT = Nphi_t;
+    if (problem->bcMethod == "Gunzburger")
+    {
+        nTestFunctionsU = Nphi_u - N_BC;
+        nTestFunctionsT = Nphi_t - N_BC_t;
+    }
+    for (int i = 0; i < nTestFunctionsU; i++)
     {
         cc = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->C, 0, i) * a_tmp;
         ct = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotal, 0, i) * a_tmp;
@@ -597,7 +621,7 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
             fvec(k) += M13(j, 0);
         }
     }
-    for (int j = 0; j < Nphi_t; j++)
+    for (int j = 0; j < nTestFunctionsT; j++)
     {
         int k = j + Nphi_u + Nphi_prgh;
         qq = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->Q, 0, j) * c_tmp;
@@ -613,7 +637,25 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
         }
     }
 
-    if (problem->bcMethod == "lift")
+    if (problem->bcMethod == "Gunzburger")
+    {
+        // When using the gunzburger method, the first Nphi_u modes are the Nmodes-Nbc 
+        // coefficients that follow the galerkin proj. The remaining Nbc modes obey an equation to impose the BC.
+        Eigen::MatrixXd gunzBergerBCProduct = a_tmp.transpose() * problem->GunzburgerBCMatrixVelocity;
+        Eigen::MatrixXd gunzBergerBCProductTemp = c_tmp.transpose() * problem->GunzburgerBCMatrixTemperature;
+        for (int j = 0; j < N_BC; j++)
+        {
+            int idx = j + Nphi_u - N_BC;
+            fvec(idx) = gunzBergerBCProduct(0, j) - BC(j);
+        }
+        for (int j = 0; j < N_BC_t; j++)
+        {
+            int k = j + Nphi_u + Nphi_prgh + Nphi_t - N_BC_t;
+            fvec(k) = gunzBergerBCProductTemp(0, j) - BC_t(j);
+        }
+    }
+
+    else if (problem->bcMethod == "lift")
     {
         for (int j = 0; j < N_BC; j++)
         {
@@ -735,6 +777,15 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
     CoeffT.resize(0);
     CoeffNut.resize(0);
 
+    int reconstructionSizeU = Nphi_u;
+    int reconstructionSizeT = Nphi_t;
+
+    if (problem->bcMethod == "Gunzburger")
+    {
+      reconstructionSizeU = Nphi_u + N_BC;
+      reconstructionSizeT = Nphi_t + N_BC_t;
+    }
+
     for (int i = 0; i < online_solution.size(); i++)
     {
         if (timeStepCounter == nextWrite)
@@ -744,15 +795,15 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
             Eigen::MatrixXd currentTCoeff;
             Eigen::MatrixXd currentNutCoeff;
 
-            currentUCoeff = online_solution[i].block(1, 0, Nphi_u, 1);
+            currentUCoeff = online_solution[i].block(1, 0, reconstructionSizeU, 1);
             if (method != "VMB")
             {
-                currentPrghCoeff = online_solution[i].block(Nphi_u + 1, 0, Nphi_prgh, 1);
+                currentPrghCoeff = online_solution[i].block(reconstructionSizeU + 1, 0, Nphi_prgh, 1);
             } else
             {
-                currentPrghCoeff = online_solution[i].block(1, 0, Nphi_u, 1);
+                currentPrghCoeff = online_solution[i].block(1, 0, reconstructionSizeU, 1);
             }
-            currentTCoeff = online_solution[i].bottomRows(Nphi_t);
+            currentTCoeff = online_solution[i].bottomRows(reconstructionSizeT);
             currentNutCoeff = rbfCoeffMat.block(1, i, Nphi_nut, 1);
 
             CoeffPrgh.append(currentPrghCoeff);
@@ -1255,7 +1306,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(BoundaryConditions& boundar
     Info << "Final velocity BC errors: " << currentTimeErrorsU << endl;
     Info << "Final temperature BC errors: " << currentTimeErrorsT << endl;
 }
-
+  
 // * * * * * * * * *  Validation and setup helpers  * * * * * * * * //
 void ReducedUnsteadyBBTurb::validateSettings()
 {
@@ -1512,7 +1563,7 @@ void ReducedUnsteadyBBTurb::solveOnline(const Eigen::MatrixXd& vel_now_BC, const
     Info << "################## Online solve N° " << count_online_solve << " ##################" << endl;
     validateSettings();
     BoundaryConditions boundaryConditions(vel_now_BC, temp_now_BC, "linear");
-    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
+    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC, N_BC_t);
 
     if (problem->bcMethod == "lift")
     {
@@ -1528,7 +1579,7 @@ void ReducedUnsteadyBBTurb::solveOnline(const Eigen::MatrixXd& vel_now_BC, const
         {
             estimatePenaltyFactorSupremizer(boundaryConditions, startSnap);
         }
-        boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t); // Re-initialize the coefficients after penalty factor estimation, as they are modified during the estimation process
+        boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC, N_BC_t); // Re-initialize the coefficients after penalty factor estimation, as they are modified during the estimation process
         auto clockStart = std::chrono::steady_clock::now();
         solveOnline_sup(boundaryConditions, startSnap);
         auto duration = std::chrono::steady_clock::now() - clockStart;
@@ -1539,7 +1590,7 @@ void ReducedUnsteadyBBTurb::solveOnline(const Eigen::MatrixXd& vel_now_BC, const
         {
             estimatePenaltyFactorPPE(boundaryConditions, startSnap);
         }
-        boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC_t);
+        boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC, N_BC_t);
         auto clockStart = std::chrono::steady_clock::now();
         solveOnline_PPE(boundaryConditions, startSnap);
         auto duration = std::chrono::steady_clock::now() - clockStart;

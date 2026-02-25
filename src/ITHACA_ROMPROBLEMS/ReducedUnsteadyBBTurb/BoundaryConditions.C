@@ -146,15 +146,29 @@ double BoundaryConditions::linearInterpolate(const double t0, const double t1, c
 
 void BoundaryConditions::initializeReducedCoeffs(int startSnap, Eigen::VectorXd& y,
     UnsteadyBBTurb* problem, const int Nphi_u, const int Nphi_p,
-    const int Nphi_t, int N_BC_t)
+    const int Nphi_t, int N_BC, int N_BC_t) // TODO: add N_BC
 {
-    y.head(Nphi_u) = ITHACAutilities::getCoeffs(problem->Ufield[startSnap], problem->L_U_SUPmodes);
-    if (Nphi_p != 0)
+    if (problem->bcMethod == "Gunzburger")
     {
-        y.segment(Nphi_u, Nphi_p) = ITHACAutilities::getCoeffs(
-            problem->Prghfield[startSnap], problem->P_rghmodes);
+        y.head(Nphi_u+N_BC) = ITHACAutilities::getCoeffs(problem->Ufield[startSnap], problem->L_U_SUPmodes, Nphi_u+N_BC);
+        // y.segment(Nphi_u, N_BC) = currentVelocityBC.head(N_BC);
+         if (Nphi_p != 0)
+        {
+            y.segment(Nphi_u + N_BC, Nphi_p) = ITHACAutilities::getCoeffs(
+                problem->Prghfield[startSnap], problem->P_rghmodes, Nphi_p);
+        }
+        y.segment(Nphi_u+Nphi_p+N_BC, Nphi_t+N_BC_t) = ITHACAutilities::getCoeffs(problem->Tfield[startSnap], problem->L_Tmodes, Nphi_t+N_BC_t);
+        // y.tail(N_BC_t) = currentTemperatureBC.head(N_BC_t);
+    } else
+    {
+        y.head(Nphi_u) = ITHACAutilities::getCoeffs(problem->Ufield[startSnap], problem->L_U_SUPmodes);
+        if (Nphi_p != 0)
+        {
+            y.segment(Nphi_u, Nphi_p) = ITHACAutilities::getCoeffs(
+                problem->Prghfield[startSnap], problem->P_rghmodes);
+        }
+        y.tail(Nphi_t) = ITHACAutilities::getCoeffs(problem->Tfield[startSnap], problem->L_Tmodes);
     }
-    y.tail(Nphi_t) = ITHACAutilities::getCoeffs(problem->Tfield[startSnap], problem->L_Tmodes);
 }
 
 void BoundaryConditions::correctLiftingCoeffs(Eigen::VectorXd& y, const int N_BC, const int N_BC_t, const int Nphi_u, const int Nphi_prgh)

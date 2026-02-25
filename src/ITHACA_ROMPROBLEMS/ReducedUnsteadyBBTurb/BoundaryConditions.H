@@ -117,7 +117,7 @@ public:
     /// @param[in]  Nphi_t Number of temperature modes
     ///
     void initializeReducedCoeffs(int startSnap, Eigen::VectorXd& y,
-        UnsteadyBBTurb* problem, const int Nphi_u, const int Nphi_p, const int Nphi_t, int N_BC_t);
+        UnsteadyBBTurb* problem, const int Nphi_u, const int Nphi_p, const int Nphi_t, int N_BC, int N_BC_t);
 
     /// @brief    Corrects the first N_BC and N_BC_t coefficients of the reduced solution vector, so that
     ///           they match the current boundary conditions when using the lifting function approach.
