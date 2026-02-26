@@ -32,29 +32,12 @@ License
 /// \file
 /// Source file of the ReducedUnsteadyBBTurb class
 
-
 #include "ReducedUnsteadyBBTurb.H"
 #include <atomic>
 #include <fstream>
 #include <chrono>
 
-static std::ofstream g_logFile;
-static std::atomic_bool g_printOperatorDebug(false);
 
-static void openLogFile(const std::string& path)
-{
-    g_logFile.open(path, std::ios::out | std::ios::app);
-    if (!g_logFile.is_open())
-        Info << "Failed to open log file: " << path << endl;
-}
-
-#define LOG(x)                   \
-    do                           \
-    {                            \
-        Info << x;               \
-        if (g_logFile.is_open()) \
-            g_logFile << x;      \
-    } while (0)
 // * * * * * * * * * * * * * * * Constructors * * * * * * * * * * * * * * * * //
 
 // Constructor
@@ -125,7 +108,6 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     penaltyTolT = problem->ITHACAdict->lookupOrDefault<float>("penaltyTolT", 1e-2);
 
     M_Assert(penaltyTolU > 0 && penaltyTolT > 0, "Penalty factor optimization tolerances must be positive.");
-    openLogFile("./log.residuals");
     // Note: some other reduced class in ITHACA-FV in the constructor create a local copy of the
     // modes from the FOM problem. Maybe in the future the same could be done here
 }
@@ -236,10 +218,6 @@ int NewtonUnsteadyBBTurbSup::operator()(const Eigen::VectorXd& x,
         qt = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->YTurb, 0, j) * c_tmp;
         qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->AveYTurb, 0, j) * c_tmp;
         fvec(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t;
-        if (g_printOperatorDebug)
-        {
-            LOG(j << "," << M8(j) << "," << M6(j) << "," << qq(0, 0) << "," << (qt(0, 0) / Pr_t) << "," << (qt_averaged(0, 0) / Pr_t) << "\n");
-        }
         if (problem->bcMethod == "penalty")
         {
             for (int l = 0; l < N_BC_t; l++)
@@ -372,10 +350,6 @@ int newtonUnsteadyBBTurbSUPTemperature::operator()(const Eigen::VectorXd& x,
             {
                 fvec(j) += penaltyT(j, l);
             }
-        }
-        if (g_printOperatorDebug)
-        {
-            LOG(j << "," << M8(j) << "," << M6(j) << "," << qq(0, 0) << "," << (qt(0, 0) / Pr_t) << "," << (qt_averaged(0, 0) / Pr_t) << "\n");
         }
     }
 
@@ -708,8 +682,6 @@ void ReducedUnsteadyBBTurb::solveOnline_sup(BoundaryConditions& boundaryConditio
         onlineTimeLoopSegregated(newton_object_sup_momentum, newton_object_sup_temperature,
             boundaryConditions, firstRBFIndex, numberOfStores);
     }
-    if (g_logFile.is_open())
-        g_logFile.close();
 }
 
 void ReducedUnsteadyBBTurb::solveOnline_PPE(BoundaryConditions& boundaryConditions, int startSnap)
@@ -1364,7 +1336,6 @@ void ReducedUnsteadyBBTurb::onlineTimeLoop(
             setNewtonObjectBC(newtonObject, boundaryConditions);
         }
         res.setZero();
-        g_printOperatorDebug = false;
         hnls.solve(y);
 
         if (problem->derivativeInRBF == true)
@@ -1384,7 +1355,6 @@ void ReducedUnsteadyBBTurb::onlineTimeLoop(
         {
             boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
         }
-        g_printOperatorDebug = true;
         newtonObject.operator()(y, res);
         newtonObject.y_old = y;
 
@@ -1491,9 +1461,7 @@ void ReducedUnsteadyBBTurb::onlineTimeLoopSegregated(
         }
 
         newtonObjectMomentum.operator()(momentumCoeffs, resMomentum);
-        g_printOperatorDebug = true;
         newtonObjectTemperature.operator()(temperatureCoeffs, resTemperature);
-        g_printOperatorDebug = false;
         newtonObjectMomentum.y_old = y;
         newtonObjectTemperature.y_old = y;
 
