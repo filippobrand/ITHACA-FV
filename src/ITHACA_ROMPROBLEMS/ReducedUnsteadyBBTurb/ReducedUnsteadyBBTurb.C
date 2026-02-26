@@ -77,11 +77,11 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
 
     separateMomentumTemperature = problem->ITHACAdict->lookupOrDefault<bool>("separateMomentumTemperature", false);
     method = problem->ITHACAdict->lookupOrDefault<word>("method", "supremizer");
-    
+
     y = Eigen::VectorXd::Zero(Nphi_u + Nphi_prgh + Nphi_t); // Solution vector
     if (problem->bcMethod == "Gunzburger")
     {
-        // When using the gunzburger method, the first Nphi_u modes are the Nmodes-Nbc 
+        // When using the gunzburger method, the first Nphi_u modes are the Nmodes-Nbc
         // coefficients that follow the galerkin proj. The remaining Nbc modes obey an equation to impose the BC.
         // This resizing allows us to use the same formalism
         int gSize = Nphi_u + N_BC + Nphi_prgh + Nphi_t + N_BC_t;
@@ -178,6 +178,10 @@ int NewtonUnsteadyBBTurbSup::operator()(const Eigen::VectorXd& x,
     // Penalty term velocity
     Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(Nphi_u, N_BC);
     Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(Nphi_t, N_BC_t);
+
+    int nTestFunctionsU = Nphi_u;
+    int nTestFunctionsT = Nphi_t;
+
     if (problem->bcMethod == "penalty")
     {
         for (int l = 0; l < N_BC; l++)
@@ -188,9 +192,13 @@ int NewtonUnsteadyBBTurbSup::operator()(const Eigen::VectorXd& x,
         {
             penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * pPenaltyMatrices->bcTempVec.col(l) - Eigen::SliceFromTensor(pPenaltyMatrices->bcTempMat, 0, l) * c_tmp);
         }
+    } else if (problem->bcMethod == "Gunzburger")
+    {
+        nTestFunctionsU = Nphi_u - N_BC;
+        nTestFunctionsT = Nphi_t - N_BC_t;
     }
 
-    for (int i = 0; i < Nphi_u; i++)
+    for (int i = 0; i < nTestFunctionsU; i++)
     {
         cc = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->C, 0, i) * a_tmp;
         ct = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotal, 0, i) * a_tmp;
@@ -211,7 +219,7 @@ int NewtonUnsteadyBBTurbSup::operator()(const Eigen::VectorXd& x,
         fvec(k) = M3(j);
     }
 
-    for (int j = 0; j < Nphi_t; j++)
+    for (int j = 0; j < nTestFunctionsT; j++)
     {
         int k = j + Nphi_u + Nphi_prgh;
         qq = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->Q, 0, j) * c_tmp;
@@ -227,7 +235,23 @@ int NewtonUnsteadyBBTurbSup::operator()(const Eigen::VectorXd& x,
         }
     }
 
-    if (problem->bcMethod == "lift")
+    if (problem->bcMethod == "Gunzburger")
+    {
+        Eigen::MatrixXd gunzburgerBCProduct = a_tmp.transpose() * problem->GunzburgerBCMatrixVelocity;
+        Eigen::MatrixXd gunzburgerBCProductTemp = c_tmp.transpose() * problem->GunzburgerBCMatrixTemperature;
+        for (int j = 0; j < N_BC; j++)
+        {
+            int idx = j + Nphi_u - N_BC;
+            fvec(idx) = gunzburgerBCProduct(0, j) - BC(j);
+        }
+        for (int j = 0; j < N_BC_t; j++)
+        {
+            int k = j + Nphi_u + Nphi_prgh + Nphi_t - N_BC_t;
+            fvec(k) = gunzburgerBCProductTemp(0, j) - BC_t(j);
+        }
+    }
+
+    else if (problem->bcMethod == "lift")
     {
         for (int j = 0; j < N_BC; j++)
         {
@@ -240,6 +264,7 @@ int NewtonUnsteadyBBTurbSup::operator()(const Eigen::VectorXd& x,
             fvec(k) = x(k) - BC_t(j);
         }
     }
+
     return 0;
 }
 
@@ -549,6 +574,10 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
     // Penalty term velocity
     Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(Nphi_u, N_BC);
     Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(Nphi_t, N_BC_t);
+
+    int nTestFunctionsU = Nphi_u;
+    int nTestFunctionsT = Nphi_t;
+
     if (problem->bcMethod == "penalty")
     {
         for (int l = 0; l < N_BC; l++)
@@ -559,11 +588,7 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
         {
             penaltyT.col(l) = tauT(l, 0) * (BC_t(l) * pPenaltyMatrices->bcTempVec.col(l) - Eigen::SliceFromTensor(pPenaltyMatrices->bcTempMat, 0, l) * c_tmp);
         }
-    }
-
-    int nTestFunctionsU = Nphi_u;
-    int nTestFunctionsT = Nphi_t;
-    if (problem->bcMethod == "Gunzburger")
+    } else if (problem->bcMethod == "Gunzburger")
     {
         nTestFunctionsU = Nphi_u - N_BC;
         nTestFunctionsT = Nphi_t - N_BC_t;
@@ -613,19 +638,17 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
 
     if (problem->bcMethod == "Gunzburger")
     {
-        // When using the gunzburger method, the first Nphi_u modes are the Nmodes-Nbc 
-        // coefficients that follow the galerkin proj. The remaining Nbc modes obey an equation to impose the BC.
-        Eigen::MatrixXd gunzBergerBCProduct = a_tmp.transpose() * problem->GunzburgerBCMatrixVelocity;
-        Eigen::MatrixXd gunzBergerBCProductTemp = c_tmp.transpose() * problem->GunzburgerBCMatrixTemperature;
+        Eigen::MatrixXd gunzburgerBCProduct = a_tmp.transpose() * problem->GunzburgerBCMatrixVelocity;
+        Eigen::MatrixXd gunzburgerBCProductTemp = c_tmp.transpose() * problem->GunzburgerBCMatrixTemperature;
         for (int j = 0; j < N_BC; j++)
         {
             int idx = j + Nphi_u - N_BC;
-            fvec(idx) = gunzBergerBCProduct(0, j) - BC(j);
+            fvec(idx) = gunzburgerBCProduct(0, j) - BC(j);
         }
         for (int j = 0; j < N_BC_t; j++)
         {
             int k = j + Nphi_u + Nphi_prgh + Nphi_t - N_BC_t;
-            fvec(k) = gunzBergerBCProductTemp(0, j) - BC_t(j);
+            fvec(k) = gunzburgerBCProductTemp(0, j) - BC_t(j);
         }
     }
 
@@ -754,8 +777,8 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
 
     if (problem->bcMethod == "Gunzburger")
     {
-      reconstructionSizeU = Nphi_u + N_BC;
-      reconstructionSizeT = Nphi_t + N_BC_t;
+        reconstructionSizeU = Nphi_u + N_BC;
+        reconstructionSizeT = Nphi_t + N_BC_t;
     }
 
     for (int i = 0; i < online_solution.size(); i++)
@@ -1278,7 +1301,7 @@ void ReducedUnsteadyBBTurb::estimatePenaltyFactorPPE(BoundaryConditions& boundar
     Info << "Final velocity BC errors: " << currentTimeErrorsU << endl;
     Info << "Final temperature BC errors: " << currentTimeErrorsT << endl;
 }
-  
+
 // * * * * * * * * *  Validation and setup helpers  * * * * * * * * //
 void ReducedUnsteadyBBTurb::validateSettings()
 {
