@@ -521,8 +521,7 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
     } else if (bcMethod == "penalty")
     {
         coeffL2vel = ITHACAutilities::getCoeffs(Ufield, Umodes, NUmodes); // Returns a [modes x snapshots]
-    }
-    else if (bcMethod == "Gunzburger")
+    } else if (bcMethod == "Gunzburger")
     {
         label testFunctionSize = testFunctionsU.size();
         coeffL2vel = ITHACAutilities::getCoeffs(Ufield, Umodes, testFunctionSize); // Returns a [modes x snapshots]
@@ -1828,9 +1827,9 @@ void UnsteadyBBTurb::resizeModes()
     P_rghmodes.resize(NPrghmodes);
 }
 
+
 void UnsteadyBBTurb::computeTestFunctionsBC()
 {
-    Info << "Computing test functions for the boundary conditions..." << endl;
     // The test functions are computed using QR factorization of the modes
     // The B matrix is a (Nmodes x NBC) matrix, where each mode is evaluated on a point of the boundary
     GunzburgerBCMatrixVelocity.resize(NUmodes, inletIndex.rows());
@@ -1844,8 +1843,6 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
             GunzburgerBCMatrixVelocity(i, j) = gSum(Umodes[i].boundaryField()[BCind].component(BCcomp) * Umodes[i].mesh().magSf().boundaryField()[BCind]) / area;
         }
     }
-    Info << "B matrix computed, performing QR factorization..." << endl;
-
     // Now, we want to determine the linear combination psi_l of the POD basis that vanish on the boundary
     // l goes from 1 to NUmodes-NBC, where NBC is the number of boundary conditions (number of points on the boundary)
     // We can do this by performing a QR factorization of the B matrix, and taking the last NUmodes-NBC columns of the Q matrix as the coefficients of the linear combination
@@ -1872,14 +1869,9 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
         {
             label BCind = inletIndex(j, 0);
             vector bcValue(0, 0, 0);
-            Info << "Size of the bcValue =" << bcValue.size() << endl;
             ITHACAutilities::assignBC(testFunctionsU[i], BCind, bcValue);
         }
     }
-    Info << "Test functions constructed, exporting to disk..." << endl;
-    // We now save to disk the test functions, just like the modes
-    ITHACAstream::exportFields(testFunctionsU, "./ITHACAoutput/testFunctions/", testFunctionsU[0].name());
-
     // Repeat for temperature
     GunzburgerBCMatrixTemperature.resize(NTmodes, inletIndexT.rows());
     for (label i = 0; i < NTmodes; i++)
@@ -1917,6 +1909,7 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
         }
     }
 
+    ITHACAstream::exportFields(testFunctionsU, "./ITHACAoutput/testFunctions/", testFunctionsU[0].name());
     ITHACAstream::exportFields(testFunctionsT, "./ITHACAoutput/testFunctions/", testFunctionsT[0].name());
 
     // Check that the test functions are zero on the boundary

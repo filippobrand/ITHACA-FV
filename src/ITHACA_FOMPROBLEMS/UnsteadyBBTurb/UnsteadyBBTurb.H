@@ -82,36 +82,41 @@ private:
     ///
     void prepareModes();
 
+    //--------------------------------------------------------------------------
     /// @brief     Helper to load from disk or compute a matrix
     ///
-    /// @param matrix
-    /// @param folder
-    /// @param nameBase
-    /// @param suffix
-    /// @param generator
+    /// @param matrix    Matrix to be loaded or computed
+    /// @param folder    Folder where the matrix is stored or will be stored
+    /// @param nameBase  Base of the name of the file where the matrix is stored or will be stored. The final name will be nameBase_suffix
+    /// @param suffix    Suffix of the name of the file where the matrix is stored or will be stored. The final name will be nameBase_suffix
+    /// @param generator Function used to actually compute the matrix if it is not found on disk. The function should return the matrix to be stored in the matrix argument
     void loadOrCompute(Eigen::MatrixXd& matrix, const word& folder, const word& nameBase, const word& suffix, std::function<Eigen::MatrixXd()> generator);
 
+    //--------------------------------------------------------------------------
     /// @brief     Helper to load from disk or compute a tensor
     ///
-    /// @param tensor
-    /// @param folder
-    /// @param nameBase
-    /// @param suffix
-    /// @param generator
+    /// @param tensor    Tensor to be loaded or computed
+    /// @param folder    Folder where the tensor is stored or will be stored
+    /// @param nameBase  Base of the name of the file where the tensor is stored or will be stored. The final name will be nameBase_suffix
+    /// @param suffix    Suffix of the name of the file where the tensor is stored or will be stored. The final name will be nameBase_suffix
+    /// @param generator Function used to actually compute the tensor if it is not found on disk. The function should return the tensor to be stored in the tensor argument
     void loadOrCompute(Eigen::Tensor<double, 3>& tensor, const word& folder, const word& nameBase, const word& suffix, std::function<Eigen::Tensor<double, 3>()> generator);
 
+    //--------------------------------------------------------------------------
+    /// @brief      Computes the matrices and tensors common to all the approaches (VMB, PPE, Supremizer). This includes the linear and non linear terms of the momentum equation, the diffusive term of the temperature equation, and the buoyancy term.
     void assembleCommonMatrices();
 
+    //--------------------------------------------------------------------------
+    /// @brief      Computes the matrices needed for the supremizer stabilization approach, if this approach is chosen
     void assembleSupremizerMatrices();
 
+    //--------------------------------------------------------------------------
+    /// @brief      Computes the matrices needed for the PPE stabilization approach, if this approach is chosen
     void assemblePPEMatrices();
 
+    //--------------------------------------------------------------------------
+    /// @brief      Computes the matrices needed for the imposition of the boundary conditions with the penalty method, if this approach is chosen
     void assemblePenaltyMatrices();
-
-    Eigen::MatrixXd mass_term(label NUmodes, label NPmodes, label NSUPmodes);
-
-    Eigen::MatrixXd diffusive_term(label NUmodes, label NPmodes,
-        label NSUPmodes);
 
 public:
     // Constructors
@@ -240,12 +245,14 @@ public:
     /// boolean flag for time-dependent BCs
     bool timeDependentBC = false;
 
+    //--------------------------------------------------------------------------
     /// @brief   Solves the CFD problem for parameters mu_now. Differently
     /// from UnsteadyBB, here the eddy viscosity field is also computed and saved.
     /// @param[in]  mu_now  The actual value of the parameter for this truthSolve. Used only
     /// @param[in]  nSample  The sample number for which the truth solve is performed.
     void truthSolve(const List<scalar> mu_now, label nSample);
 
+    //--------------------------------------------------------------------------
     /// @brief   Solves the CFD problem for parameters mu_now. Differently
     /// from UnsteadyBB, here the eddy viscosity field is also computed and saved.
     void truthSolve(fileName folder = "./ITHACAOutput/Offline");
@@ -257,11 +264,23 @@ public:
     void solvesupremizer(word type = "snapshot");
 
     //--------------------------------------------------------------------------
-    /// @brief      Method to solve the supremizer either using the snapshot method or the pressure modes
+    /// @brief      Computes the mass matrix for the momentum equation
     ///
-    /// @param[in]  type       The type of supremizer approach ('snapshot' or 'modes')
-    Eigen::Tensor<double, 3> convective_term_tens(label NUmodes,
-        label NPmodes, label NSUPmodes);
+    /// @param[in]  NUmodes    The number of velocity modes.
+    /// @param[in]  NPmodes    The number of pressure modes.
+    /// @param[in]  NSUPmodes  The number of supremizer modes.
+    ///
+    Eigen::MatrixXd mass_term(label NUmodes, label NPmodes, label NSUPmodes);
+
+    //--------------------------------------------------------------------------
+    /// @brief      Computes the diffusive term for the momentum equation
+    ///
+    /// @param[in]  NUmodes    The number of velocity modes.
+    /// @param[in]  NPmodes    The number of pressure modes.
+    /// @param[in]  NSUPmodes  The number of supremizer modes.
+    ///
+    /// @return     reduced matrix in Eigen::MatrixXd format for the diffusive term.
+    Eigen::MatrixXd diffusive_term(label NUmodes, label NPmodes, label NSUPmodes);
 
     //--------------------------------------------------------------------------
     /// Gradient of pressure
@@ -369,6 +388,16 @@ public:
     //--------------------------------------------------------------------------
     /// @brief      Divergence of the momentum equation for the PPE approach
     Eigen::Tensor<double, 3> divMomentum(label NU, label NPrgh);
+
+    //--------------------------------------------------------------------------
+    /// @brief      Computes the convective tensor in the momentum eqaution
+    ///
+    /// @param[in]  NUmodes    The number of velocity modes.
+    /// @param[in]  NPmodes    The number of pressure modes.
+    /// @param[in]  NSUPmodes  The number of supremizer modes.
+    ///
+    Eigen::Tensor<double, 3> convective_term_tens(label NUmodes,
+        label NPmodes, label NSUPmodes);
 
     //--------------------------------------------------------------------------
     /// @brief      S added tensor for the thermal turbulence treatement
