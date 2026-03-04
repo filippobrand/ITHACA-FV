@@ -87,6 +87,7 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
         int gSize = Nphi_u + N_BC + Nphi_prgh + Nphi_t + N_BC_t;
         y.resize(gSize);
         newton_object_PPE = NewtonUnsteadyBBTurbPPE(gSize, gSize, FOMproblem);
+        newton_object_sup = NewtonUnsteadyBBTurbSup(gSize, gSize, FOMproblem);
         Info << "Resizing the solution vector to account for the Gunzburger BC method. The new size is " << y.size() << endl;
     }
 
@@ -880,6 +881,15 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
     }
 }
 
+void ReducedUnsteadyBBTurb::saveCoefficients(word folder)
+{
+    if (Pstream::master())
+    {
+        mkDir("./ITHACAoutput/ReducedCoefficients/");
+        ITHACAstream::exportMatrix(online_solution, "reducedCoefficients", "python", "./ITHACAoutput/ReducedCoefficients/" + folder + "/");
+        ITHACAstream::exportMatrix(rbfCoeffMat, "RBFCoefficients", "python", "./ITHACAoutput/ReducedCoefficients/" + folder + "/");
+    }
+}
 // * * * * * * * * *  Inverse Distance Weighting Functions  * * * * * * * * //
 Eigen::VectorXd ReducedUnsteadyBBTurb::interpolateIDW()
 {
@@ -906,13 +916,13 @@ Eigen::VectorXd ReducedUnsteadyBBTurb::interpolateIDW()
 }
 
 // * * * * * * * * *  Inverse Distance Weighting Functions  * * * * * * * * //
-void ReducedUnsteadyBBTurb::setTimeSettings(const Eigen::MatrixXd& timeMatrix)
+void ReducedUnsteadyBBTurb::setTimeSettings(const Eigen::MatrixXd& timeMatrix, int index)
 {
-    tstart = timeMatrix(count_online_solve - 1, 0);
-    finalTime = timeMatrix(count_online_solve - 1, 1);
-    dt = timeMatrix(count_online_solve - 1, 2);
-    storeEvery = timeMatrix(count_online_solve - 1, 3);
-    exportEvery = timeMatrix(count_online_solve - 1, 4);
+    tstart = timeMatrix(index, 0);
+    finalTime = timeMatrix(index, 1);
+    dt = timeMatrix(index, 2);
+    storeEvery = timeMatrix(index, 3);
+    exportEvery = timeMatrix(index, 4);
 }
 
 // * * * * * * * * *  Penalty Factor Estimation Functions  * * * * * * * * //
@@ -1596,14 +1606,18 @@ void ReducedUnsteadyBBTurb::solveOnline(const Eigen::MatrixXd& vel_now_BC, const
     {
         Info << "### ERROR: The selected method is not implemented." << endl;
     }
-    if (Pstream::master())
-    {
-        ITHACAstream::exportMatrix(online_solution, "red_coeff", "python",
-            "./ITHACAoutput/red_coeff_" + name(count_online_solve - 1) + "/");
-        ITHACAstream::exportMatrix(rbfCoeffMat, "rbf_coeff", "python",
-            "./ITHACAoutput/rbf_coeff_" + name(count_online_solve - 1) + "/");
-    }
+
     count_online_solve++;
 }
 
+void ReducedUnsteadyBBTurb::reset()
+{
+    online_solution.clear();
+    rbfCoeffMat.setZero();
+    
+    uRecFields.clear();
+    TRecFields.clear();
+    nutFluctRecFields.clear();
+    nutRecFields.clear();
+}
 // ************************************************************************ //

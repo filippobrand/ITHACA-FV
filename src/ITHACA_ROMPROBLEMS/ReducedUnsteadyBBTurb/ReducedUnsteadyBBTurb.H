@@ -526,7 +526,7 @@ public:
     ///                         Column 4: exportEvery
     ///                         Column 5: storeEvery
     ///
-    void setTimeSettings(const Eigen::MatrixXd& timeMatrix);
+    void setTimeSettings(const Eigen::MatrixXd& timeMatrix, int index);
 
     /// @brief    Method to reconstruct a solution from an online solve
     ///
@@ -547,6 +547,14 @@ public:
     /// @param[in]  startSnap The first snapshot taken from the offline snapshots and used to get the reduced initial condition default = 0.
     ///
     void solveOnline(const Eigen::MatrixXd& vel_now_BC, const Eigen::MatrixXd& temp_now_BC, int startSnap = 0);
+
+    /// @brief   Saves the reduced coefficients and the RBF ones to a specified folder
+    ///
+    /// @param[in]  folder  The folder where to save the results
+    void saveCoefficients(word folder = "./reducedCoeffs");
+
+    /// @brief   Resets the online solution and the reconstructed fields, to be ready for a new online solve
+    void reset();
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

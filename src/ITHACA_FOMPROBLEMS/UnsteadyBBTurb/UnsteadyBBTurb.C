@@ -96,13 +96,13 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
         NPrghmodes = ITHACAdict->lookupOrDefault<label>("NmodesPrghproj", 5);
     }
     NNutModes = ITHACAdict->lookupOrDefault<label>("NmodesNutproj", 5);
-    if (method == "supremizer")
-    {
-        NSUPmodes = ITHACAdict->lookupOrDefault<label>("NmodesSUPproj", 5);
-    } else
-    {
-        NSUPmodes = 0;
-    }
+    // if (method == "supremizer")
+    // {
+    NSUPmodes = ITHACAdict->lookupOrDefault<label>("NmodesSUPproj", 5);
+    // } else
+    // {
+    //     NSUPmodes = 0;
+    // }
     Info << "### INFO ### " << nl << "Method: " << method << nl
          << "BC method: " << bcMethod << nl
          << "Time dependent BCs: " << timeDependentBC << nl
@@ -1827,7 +1827,6 @@ void UnsteadyBBTurb::resizeModes()
     P_rghmodes.resize(NPrghmodes);
 }
 
-
 void UnsteadyBBTurb::computeTestFunctionsBC()
 {
     // The test functions are computed using QR factorization of the modes
@@ -1909,8 +1908,8 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
         }
     }
 
-    ITHACAstream::exportFields(testFunctionsU, "./ITHACAoutput/testFunctions/", testFunctionsU[0].name());
-    ITHACAstream::exportFields(testFunctionsT, "./ITHACAoutput/testFunctions/", testFunctionsT[0].name());
+    // ITHACAstream::exportFields(testFunctionsU, "./ITHACAoutput/testFunctions/", testFunctionsU[0].name()); // For Debugging
+    // ITHACAstream::exportFields(testFunctionsT, "./ITHACAoutput/testFunctions/", testFunctionsT[0].name());
 
     // Check that the test functions are zero on the boundary
     for (label i = 0; i < testFunctionsU.size(); i++)
