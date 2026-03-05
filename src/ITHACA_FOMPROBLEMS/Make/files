@@ -8,6 +8,7 @@ unsteadyNS/unsteadyNS.C
 UnsteadyBB/UnsteadyBB.C
 UnsteadyBBTurb/UnsteadyBBTurb.C
 UnsteadyNSTurb/UnsteadyNSTurb.C
+UnsteadyNSTurb/TurbDiffusionHyperreduction.C
 UnsteadyNSTurbIntrusive/UnsteadyNSTurbIntrusive.C
 unsteadyNST/unsteadyNST.C
 UnsteadyNSTTurb/UnsteadyNSTTurb.C

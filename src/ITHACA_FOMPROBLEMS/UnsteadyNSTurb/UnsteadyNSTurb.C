@@ -94,6 +94,12 @@ UnsteadyNSTurb::UnsteadyNSTurb(int argc, char* argv[])
     NNutModes     = para->ITHACAdict->lookupOrDefault<label>("NmodesNutProj", 0);
 }
 
+// Small construct to access member functions linked to Smagorinsky diffusion   
+UnsteadyNSTurb::UnsteadyNSTurb(const Parameters* myParameters):
+  m_parameters(static_cast<const StoredParameters*>(myParameters))
+{
+}
+
 // * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * //
 
 void UnsteadyNSTurb::truthSolve(List<scalar> mu_now, std::string& offlinepath)
@@ -710,7 +716,7 @@ void UnsteadyNSTurb::projectSUP(fileName folder,
                                 label Nnut,
                                 bool rbfInterp)
 {
-    std::cout << "[DEBUG] Entered projectSUP()" << std::endl;
+    Info << "[DEBUG] Entered projectSUP()" << endl;
     NUmodes   = NU;
     NPmodes   = NP;
     NSUPmodes = NSUP;
@@ -1084,24 +1090,24 @@ void UnsteadyNSTurb::projectSUP(fileName folder,
         }
     }
 
-    std::cout << "[DEBUG] SUP sizes: cSize=" << cSize
+    Info << "[DEBUG] SUP sizes: cSize=" << cSize
               << ", NP=" << NPmodes << ", nNut=" << nNutModes << '\n';
-    std::cout << "[DEBUG] Shapes: M(" << M_matrix.rows() << "x" << M_matrix.cols()
+    Info << "[DEBUG] Shapes: M(" << M_matrix.rows() << "x" << M_matrix.cols()
               << ") B(" << B_matrix.rows() << "x" << B_matrix.cols()
               << ") bt(" << btMatrix.rows() << "x" << btMatrix.cols()
               << ") K(" << K_matrix.rows() << "x" << K_matrix.cols()
               << ") P(" << P_matrix.rows() << "x" << P_matrix.cols() << ")\n";
-    std::cout << "[DEBUG] projectSUP() done. SUP matrices/tensors exported.\n";
+    Info << "[DEBUG] projectSUP() done. SUP matrices/tensors exported.\n";
 
     if (rbfInterp && (!Pstream::parRun()))
     {
-        std::cout
+        Info
                 << "\n==== [RBF DEBUG SUP] ENTERING OFFLINE RBF CONSTRUCTION (AVG linear-μ + FLUCT RBF) ====\n";
         const word coeffDir = "./ITHACAoutput/Coefficients/";
         const word muPath   = "./ITHACAoutput/Offline/mu_samples_mat.txt";
         Eigen::MatrixXd muMat = ITHACAstream::readMatrix(muPath);
-        std::cout << "[RBF DEBUG SUP] muMat shape: " << muMat.rows() << " x " <<
-                  muMat.cols() << std::endl;
+        Info << "[RBF DEBUG SUP] muMat shape: " << muMat.rows() << " x " <<
+                  muMat.cols() << endl;
         const int nPar             = 12;
         const int nSnapshotsPerPar = 200;
         Eigen::VectorXd timeVec = muMat.col(0);
@@ -1110,10 +1116,10 @@ void UnsteadyNSTurb::projectSUP(fileName folder,
                                             coeffDir + "Nut_avg_coeffs_mat.txt");
         Eigen::MatrixXd coeffNutFluct = ITHACAstream::readMatrix(
                                             coeffDir + "Nut_fluct_coeffs_mat.txt");
-        std::cout << "[RBF DEBUG SUP] Loaded coeffNutAvg shape: " << coeffNutAvg.rows()
-                  << " x " << coeffNutAvg.cols() << std::endl;
-        std::cout << "[RBF DEBUG SUP] Loaded coeffNutFluct shape: " <<
-                  coeffNutFluct.rows() << " x " << coeffNutFluct.cols() << std::endl;
+        Info << "[RBF DEBUG SUP] Loaded coeffNutAvg shape: " << coeffNutAvg.rows()
+                  << " x " << coeffNutAvg.cols() << endl;
+        Info << "[RBF DEBUG SUP] Loaded coeffNutFluct shape: " <<
+                  coeffNutFluct.rows() << " x " << coeffNutFluct.cols() << endl;
         const int nNutAvgModes   = coeffNutAvg.rows();
         const int nNutFluctModes = coeffNutFluct.rows();
         const int nUniqueMu      = nPar;
@@ -1127,8 +1133,8 @@ void UnsteadyNSTurb::projectSUP(fileName folder,
             const int start = i * nSnapshotsPerPar;
             initSnapInd(i)  = start;
             timeSnap(i)     = timeVec(start + 1) - timeVec(start);
-            std::cout << "[RBF DEBUG SUP] i=" << i << ", start=" << start << ", dt=" <<
-                      timeSnap(i) << std::endl;
+            Info << "[RBF DEBUG SUP] i=" << i << ", start=" << start << ", dt=" <<
+                      timeSnap(i) << endl;
         }
 
         Eigen::VectorXd muVecUnique(nUniqueMu);
@@ -1138,20 +1144,20 @@ void UnsteadyNSTurb::projectSUP(fileName folder,
             muVecUnique(i) = muVec(static_cast<int>(initSnapInd(i)));
         }
 
-        std::cout << "[RBF DEBUG SUP] muVecUnique: [" << muVecUnique(0) << " ... "
+        Info << "[RBF DEBUG SUP] muVecUnique: [" << muVecUnique(0) << " ... "
                   << muVecUnique(muVecUnique.size() - 1) << "] (M=" << muVecUnique.size() <<
                                                   ")\n";
-        std::cout <<
+        Info <<
         "[RBF DEBUG SUP] Calling velDerivativeCoeff() for fluctuation part...\n";
         Eigen::MatrixXd Gfluct = coeffNutFluct.transpose();
         List<Eigen::MatrixXd> interpDataFluct = velDerivativeCoeff(a, Gfluct,
                                                 initSnapInd, timeSnap);
         Eigen::MatrixXd velRBF_fluct = interpDataFluct[0];
         Eigen::MatrixXd coeffs_fluct = interpDataFluct[1];
-        std::cout << "[RBF DEBUG SUP] velRBF_fluct shape: " << velRBF_fluct.rows() <<
-                     " x " << velRBF_fluct.cols() << std::endl;
-        std::cout << "[RBF DEBUG SUP] coeffs_fluct shape: " << coeffs_fluct.rows() <<
-                     " x " << coeffs_fluct.cols() << std::endl;
+        Info << "[RBF DEBUG SUP] velRBF_fluct shape: " << velRBF_fluct.rows() <<
+                     " x " << velRBF_fluct.cols() << endl;
+        Info << "[RBF DEBUG SUP] coeffs_fluct shape: " << coeffs_fluct.rows() <<
+                     " x " << coeffs_fluct.cols() << endl;
         const int nSnapshots = velRBF_fluct.rows();
         const int nModes     = velRBF_fluct.cols() / 2;
         Eigen::MatrixXd adot_only(nSnapshots, nModes);
@@ -1201,7 +1207,7 @@ void UnsteadyNSTurb::projectSUP(fileName folder,
         List<SPLINTER::RBFSpline*> rbfSplinesNutFluct;
         samplesNutFluct.resize(nNutFluctModes);
         rbfSplinesNutFluct.resize(nNutFluctModes);
-        std::cout << ">>> [SUP] Building nut_fluct RBF splines...\n";
+        Info << ">>> [SUP] Building nut_fluct RBF splines...\n";
 
         for (label i = 0; i < nNutFluctModes; ++i)
         {
@@ -1227,7 +1233,7 @@ void UnsteadyNSTurb::projectSUP(fileName folder,
                     weights,
                     radiiFluct(i)
                 );
-                std::cout << "   [SUP] nut_fluct RBF " << i + 1 << "/" << nNutFluctModes
+                Info << "   [SUP] nut_fluct RBF " << i + 1 << "/" << nNutFluctModes
                           << " loaded from ./ITHACAoutput/weightsSUP/" << weightName << "\n";
             }
             else
@@ -1246,7 +1252,7 @@ void UnsteadyNSTurb::projectSUP(fileName folder,
                     "./ITHACAoutput/weightsSUP/",
                     weightName
                 );
-                std::cout << "   [SUP] nut_fluct RBF " << i + 1 << "/" << nNutFluctModes
+                Info << "   [SUP] nut_fluct RBF " << i + 1 << "/" << nNutFluctModes
                           << " fitted & saved to ./ITHACAoutput/weightsSUP/" << weightName << "\n";
             }
         }
@@ -1255,7 +1261,7 @@ void UnsteadyNSTurb::projectSUP(fileName folder,
         this->rbfSplinesNutFluct = rbfSplinesNutFluct;
         this->samplesNutAvg      = samplesNutAvg;
         this->samplesNutFluct    = samplesNutFluct;
-        std::cout <<
+        Info <<
         ">>> [SUP] Finished AVG linear-μ table export + FLUCT RBF build.\n";
     }
 }
@@ -1883,13 +1889,13 @@ void UnsteadyNSTurb::projectPPE(fileName folder,
 
     if (rbfInterp && (!Pstream::parRun()))
     {
-        std::cout
+        Info
                 << "\n==== [RBF DEBUG] ENTERING OFFLINE RBF CONSTRUCTION (AVG linear-μ + FLUCT RBF) ====\n";
         const word coeffDir = "./ITHACAoutput/Coefficients/";
         const word muPath   = "./ITHACAoutput/Offline/mu_samples_mat.txt";
         Eigen::MatrixXd muMat = ITHACAstream::readMatrix(muPath);
-        std::cout << "[RBF DEBUG] muMat shape: " << muMat.rows() << " x " <<
-                  muMat.cols() << std::endl;
+        Info << "[RBF DEBUG] muMat shape: " << muMat.rows() << " x " <<
+                  muMat.cols() << endl;
         const int nPar             = 12;
         const int nSnapshotsPerPar = 200;
         Eigen::VectorXd timeVec = muMat.col(0);
@@ -1898,10 +1904,10 @@ void UnsteadyNSTurb::projectPPE(fileName folder,
                                             coeffDir + "Nut_avg_coeffs_mat.txt");
         Eigen::MatrixXd coeffNutFluct = ITHACAstream::readMatrix(
                                             coeffDir + "Nut_fluct_coeffs_mat.txt");
-        std::cout << "[RBF DEBUG] Loaded coeffNutAvg shape: " << coeffNutAvg.rows() <<
-                     " x " << coeffNutAvg.cols() << std::endl;
-        std::cout << "[RBF DEBUG] Loaded coeffNutFluct shape: " << coeffNutFluct.rows()
-                  << " x " << coeffNutFluct.cols() << std::endl;
+        Info << "[RBF DEBUG] Loaded coeffNutAvg shape: " << coeffNutAvg.rows() <<
+                     " x " << coeffNutAvg.cols() << endl;
+        Info << "[RBF DEBUG] Loaded coeffNutFluct shape: " << coeffNutFluct.rows()
+                  << " x " << coeffNutFluct.cols() << endl;
         const int nNutAvgModes   = coeffNutAvg.rows();
         const int nNutFluctModes = coeffNutFluct.rows();
         const int nUniqueMu      = nPar;
@@ -1915,8 +1921,8 @@ void UnsteadyNSTurb::projectPPE(fileName folder,
             const int start = i * nSnapshotsPerPar;
             initSnapInd(i)  = start;
             timeSnap(i)     = timeVec(start + 1) - timeVec(start);
-            std::cout << "[RBF DEBUG] i=" << i << ", start=" << start << ", dt=" <<
-                      timeSnap(i) << std::endl;
+            Info << "[RBF DEBUG] i=" << i << ", start=" << start << ", dt=" <<
+                      timeSnap(i) << endl;
         }
 
         Eigen::VectorXd muVecUnique(nUniqueMu);
@@ -1926,20 +1932,20 @@ void UnsteadyNSTurb::projectPPE(fileName folder,
             muVecUnique(i) = muVec(static_cast<int>(initSnapInd(i)));
         }
 
-        std::cout << "[RBF DEBUG] muVecUnique: [" << muVecUnique(0) << " ... "
+        Info << "[RBF DEBUG] muVecUnique: [" << muVecUnique(0) << " ... "
                   << muVecUnique(muVecUnique.size() - 1) << "] (M=" << muVecUnique.size() <<
                                                   ")\n";
-        std::cout <<
+        Info <<
         "[RBF DEBUG] Calling velDerivativeCoeff() for fluctuation part...\n";
         Eigen::MatrixXd Gfluct = coeffNutFluct.transpose();
         List<Eigen::MatrixXd> interpDataFluct = velDerivativeCoeff(a, Gfluct,
                                                 initSnapInd, timeSnap);
         Eigen::MatrixXd velRBF_fluct = interpDataFluct[0];
         Eigen::MatrixXd coeffs_fluct = interpDataFluct[1];
-        std::cout << "[RBF DEBUG] velRBF_fluct shape: " << velRBF_fluct.rows() << " x "
-                  << velRBF_fluct.cols() << std::endl;
-        std::cout << "[RBF DEBUG] coeffs_fluct shape: " << coeffs_fluct.rows() << " x "
-                  << coeffs_fluct.cols() << std::endl;
+        Info << "[RBF DEBUG] velRBF_fluct shape: " << velRBF_fluct.rows() << " x "
+                  << velRBF_fluct.cols() << endl;
+        Info << "[RBF DEBUG] coeffs_fluct shape: " << coeffs_fluct.rows() << " x "
+                  << coeffs_fluct.cols() << endl;
         const int nSnapshots = velRBF_fluct.rows();
         const int nModes     = velRBF_fluct.cols() / 2;
         Eigen::MatrixXd adot_only(nSnapshots, nModes);
@@ -1952,30 +1958,30 @@ void UnsteadyNSTurb::projectPPE(fileName folder,
         ITHACAstream::exportMatrix(adot_only,    "adot_coeffs",   "python", coeffDir);
         ITHACAstream::exportMatrix(velRBF_fluct, "a_adot_concat", "python", coeffDir);
         ITHACAstream::exportMatrix(velRBF_fluct, "a_adot_concat", "eigen",  coeffDir);
-        std::cout << "\n[RBF DEBUG] First row of a (velocity coeffs): ";
+        Info << "\n[RBF DEBUG] First row of a (velocity coeffs): ";
 
         for (int k = 0; k < a.cols(); ++k)
         {
-            std::cout << a(0, k) << " ";
+            Info << a(0, k) << " ";
         }
 
-        std::cout << std::endl;
-        std::cout << "[RBF DEBUG] First row of velRBF_fluct ([a, aDot]): ";
+        Info << endl;
+        Info << "[RBF DEBUG] First row of velRBF_fluct ([a, aDot]): ";
 
         for (int k = 0; k < velRBF_fluct.cols(); ++k)
         {
-            std::cout << velRBF_fluct(0, k) << " ";
+            Info << velRBF_fluct(0, k) << " ";
         }
 
-        std::cout << std::endl;
-        std::cout << "[RBF DEBUG] First row of adot_only (aDot): ";
+        Info << endl;
+        Info << "[RBF DEBUG] First row of adot_only (aDot): ";
 
         for (int k = 0; k < adot_only.cols(); ++k)
         {
-            std::cout << adot_only(0, k) << " ";
+            Info << adot_only(0, k) << " ";
         }
 
-        std::cout << std::endl;
+        Info << endl;
         const double eAvg   = 3;
         const double eFluct = 0.05;
         Eigen::MatrixXd radiiAvg;
@@ -1984,30 +1990,30 @@ void UnsteadyNSTurb::projectPPE(fileName folder,
         if (ITHACAutilities::check_file("./radii_avg.txt"))
         {
             radiiAvg = ITHACAstream::readMatrix("./radii_avg.txt");
-            std::cout << "[RBF DEBUG] Loaded radii_avg.txt, shape: " << radiiAvg.rows() <<
-                         " x " << radiiAvg.cols() << std::endl;
+            Info << "[RBF DEBUG] Loaded radii_avg.txt, shape: " << radiiAvg.rows() <<
+                         " x " << radiiAvg.cols() << endl;
             M_Assert(radiiAvg.size() == nNutAvgModes, "radiiAvg size mismatch");
         }
         else
         {
             radiiAvg = Eigen::MatrixXd::Ones(nNutAvgModes, 1) * eAvg;
-            std::cout <<
+            Info <<
             "[RBF DEBUG] Set default radii for nutAvg (unused with linear μ), e=" << eAvg
-                      << std::endl;
+                      << endl;
         }
 
         if (ITHACAutilities::check_file("./radii_fluct.txt"))
         {
             radiiFluct = ITHACAstream::readMatrix("./radii_fluct.txt");
-            std::cout << "[RBF DEBUG] Loaded radii_fluct.txt, shape: " << radiiFluct.rows()
-                      << " x " << radiiFluct.cols() << std::endl;
+            Info << "[RBF DEBUG] Loaded radii_fluct.txt, shape: " << radiiFluct.rows()
+                      << " x " << radiiFluct.cols() << endl;
             M_Assert(radiiFluct.size() == nNutFluctModes, "radiiFluct size mismatch");
         }
         else
         {
             radiiFluct = Eigen::MatrixXd::Ones(nNutFluctModes, 1) * eFluct;
-            std::cout << "[RBF DEBUG] Set default radii for nutFluct, e=" << eFluct <<
-                      std::endl;
+            Info << "[RBF DEBUG] Set default radii for nutFluct, e=" << eFluct <<
+                      endl;
         }
 
         List<SPLINTER::DataTable*> samplesNutAvg;
@@ -2018,14 +2024,14 @@ void UnsteadyNSTurb::projectPPE(fileName folder,
                                    coeffDir);
         ITHACAstream::exportMatrix(coeffNutAvg, "NutAvg_coeffs_by_mu", "eigen",
                                    coeffDir);
-        std::cout << ">>> Persisted νt_avg tables for linear μ-interpolation: "
+        Info << ">>> Persisted νt_avg tables for linear μ-interpolation: "
                   << "mu size=" << muVecUnique.size()
                   << ", coeff table=" << coeffNutAvg.rows() << "x" << coeffNutAvg.cols() << "\n";
         List<SPLINTER::DataTable*> samplesNutFluct;
         List<SPLINTER::RBFSpline*> rbfSplinesNutFluct;
         samplesNutFluct.resize(nNutFluctModes);
         rbfSplinesNutFluct.resize(nNutFluctModes);
-        std::cout << ">>> Building nut_fluct RBF splines...\n";
+        Info << ">>> Building nut_fluct RBF splines...\n";
 
         for (label i = 0; i < nNutFluctModes; ++i)
         {
@@ -2051,7 +2057,7 @@ void UnsteadyNSTurb::projectPPE(fileName folder,
                     weights,
                     radiiFluct(i)
                 );
-                std::cout << "   nut_fluct RBF " << i + 1 << "/" << nNutFluctModes
+                Info << "   nut_fluct RBF " << i + 1 << "/" << nNutFluctModes
                           << " loaded from weights.\n";
             }
             else
@@ -2070,24 +2076,24 @@ void UnsteadyNSTurb::projectPPE(fileName folder,
                     "./ITHACAoutput/weightsPPE/",
                     weightName
                 );
-                std::cout << "   nut_fluct RBF " << i + 1 << "/" << nNutFluctModes
+                Info << "   nut_fluct RBF " << i + 1 << "/" << nNutFluctModes
                           << " fitted & saved.\n";
             }
         }
 
-        std::cout << "[OFFLINE] Built nutAvgSplines:  "  << rbfSplinesNutAvg.size()
+        Info << "[OFFLINE] Built nutAvgSplines:  "  << rbfSplinesNutAvg.size()
                   << " (expected 0 for linear μ)\n";
-        std::cout << "[OFFLINE] Built nutFluctSplines:"  << rbfSplinesNutFluct.size() <<
-                  std::endl;
-        std::cout << ">>> Finished AVG linear-μ table export + FLUCT RBF build.\n";
+        Info << "[OFFLINE] Built nutFluctSplines:"  << rbfSplinesNutFluct.size() <<
+                  endl;
+        Info << ">>> Finished AVG linear-μ table export + FLUCT RBF build.\n";
         this->rbfSplinesNutAvg   = rbfSplinesNutAvg;
         this->rbfSplinesNutFluct = rbfSplinesNutFluct;
         this->samplesNutAvg      = samplesNutAvg;
         this->samplesNutFluct    = samplesNutFluct;
-        std::cout << "[OFFLINE] Built nutAvgSplines: "   << rbfSplinesNutAvg.size() <<
-                  std::endl;
-        std::cout << "[OFFLINE] Built nutFluctSplines: " << rbfSplinesNutFluct.size() <<
-                  std::endl;
+        Info << "[OFFLINE] Built nutAvgSplines: "   << rbfSplinesNutAvg.size() <<
+                  endl;
+        Info << "[OFFLINE] Built nutFluctSplines: " << rbfSplinesNutFluct.size() <<
+                  endl;
     }
 }
 
@@ -2146,19 +2152,19 @@ List<Eigen::MatrixXd> UnsteadyNSTurb::velParDerivativeCoeff(Eigen::MatrixXd A,
         Eigen::VectorXd initSnapInd,
         Eigen::VectorXd timeSnap)
 {
-    std::cout << "[velParDerivativeCoeff] ENTER" << std::endl;
+    Info << "[velParDerivativeCoeff] ENTER" << endl;
     List<Eigen::MatrixXd> newCoeffs;
     newCoeffs.setSize(2);
     const label velCoeffsNum           = A.cols();
     const label snapshotsNum           = A.rows();
     const label parsSamplesNum         = initSnapInd.size();
     const label timeSnapshotsPerSample = snapshotsNum / parsSamplesNum;
-    std::cout << "[velParDerivativeCoeff] A shape: " << snapshotsNum << " x " <<
-              velCoeffsNum << std::endl;
-    std::cout << "[velParDerivativeCoeff] G shape: " << G.rows() << " x " <<
-              G.cols() << std::endl;
-    std::cout << "[velParDerivativeCoeff] nPars: " << parsSamplesNum
-              << ", timeSnapshotsPerSample: " << timeSnapshotsPerSample << std::endl;
+    Info << "[velParDerivativeCoeff] A shape: " << snapshotsNum << " x " <<
+              velCoeffsNum << endl;
+    Info << "[velParDerivativeCoeff] G shape: " << G.rows() << " x " <<
+              G.cols() << endl;
+    Info << "[velParDerivativeCoeff] nPars: " << parsSamplesNum
+              << ", timeSnapshotsPerSample: " << timeSnapshotsPerSample << endl;
     Eigen::MatrixXd pars(snapshotsNum, 1);
 
     for (label j = 0; j < parsSamplesNum; ++j)
@@ -2169,10 +2175,10 @@ List<Eigen::MatrixXd> UnsteadyNSTurb::velParDerivativeCoeff(Eigen::MatrixXd A,
 
     const label newColsNum = 2 * velCoeffsNum;
     const label newRowsNum = snapshotsNum - parsSamplesNum;
-    std::cout << "[velParDerivativeCoeff] newCoeffs[0] size: " << newRowsNum <<
-                 " x " << (newColsNum + pars.cols()) << std::endl;
-    std::cout << "[velParDerivativeCoeff] newCoeffs[1] size: " << newRowsNum <<
-                 " x " << G.cols() << std::endl;
+    Info << "[velParDerivativeCoeff] newCoeffs[0] size: " << newRowsNum <<
+                 " x " << (newColsNum + pars.cols()) << endl;
+    Info << "[velParDerivativeCoeff] newCoeffs[1] size: " << newRowsNum <<
+                 " x " << G.cols() << endl;
     newCoeffs[0].resize(newRowsNum, newColsNum + pars.cols());
     newCoeffs[1].resize(newRowsNum, G.cols());
     int totalRowsWritten = 0;
@@ -2181,42 +2187,42 @@ List<Eigen::MatrixXd> UnsteadyNSTurb::velParDerivativeCoeff(Eigen::MatrixXd A,
     {
         const int start     = j * timeSnapshotsPerSample;
         const int rowOffset = j * (timeSnapshotsPerSample - 1);
-        std::cout << "[velParDerivativeCoeff] Group " << j
-                  << ": start=" << start << ", rowOffset=" << rowOffset << std::endl;
-        std::cout << "[velParDerivativeCoeff] b0: rows " << start << " to "
-                  << (start + timeSnapshotsPerSample - 2) << std::endl;
+        Info << "[velParDerivativeCoeff] Group " << j
+                  << ": start=" << start << ", rowOffset=" << rowOffset << endl;
+        Info << "[velParDerivativeCoeff] b0: rows " << start << " to "
+                  << (start + timeSnapshotsPerSample - 2) << endl;
 
         if (start + timeSnapshotsPerSample - 1 > snapshotsNum)
         {
             std::cerr << "[velParDerivativeCoeff][ERROR] b0 access out of bounds! (start="
                       << start << ", timeSnapshotsPerSample-1=" << (timeSnapshotsPerSample - 1)
-                      << ", snapshotsNum=" << snapshotsNum << ")" << std::endl;
+                      << ", snapshotsNum=" << snapshotsNum << ")" << endl;
             abort();
         }
 
         const Eigen::MatrixXd b0 = A.middleRows(start, timeSnapshotsPerSample - 1);
-        std::cout << "[velParDerivativeCoeff] b1: rows " << (start + 1) << " to "
-                  << (start + timeSnapshotsPerSample - 1) << std::endl;
+        Info << "[velParDerivativeCoeff] b1: rows " << (start + 1) << " to "
+                  << (start + timeSnapshotsPerSample - 1) << endl;
 
         if (start + 1 + timeSnapshotsPerSample - 2 >= snapshotsNum)
         {
             std::cerr << "[velParDerivativeCoeff][ERROR] b1 access out of bounds! (start+1="
                       << (start + 1) << ", timeSnapshotsPerSample-1=" << (timeSnapshotsPerSample - 1)
-                      << ", snapshotsNum=" << snapshotsNum << ")" << std::endl;
+                      << ", snapshotsNum=" << snapshotsNum << ")" << endl;
             abort();
         }
 
         const Eigen::MatrixXd b1 = A.middleRows(start + 1, timeSnapshotsPerSample - 1);
         Eigen::MatrixXd bNew(b0.rows(), b0.cols() + b1.cols());
         bNew << b1, (b1 - b0) / timeSnap(j);
-        std::cout << "[velParDerivativeCoeff] pars block for input: rows " <<
+        Info << "[velParDerivativeCoeff] pars block for input: rows " <<
                   (start + 1) << " to "
-                  << (start + timeSnapshotsPerSample - 1) << std::endl;
+                  << (start + timeSnapshotsPerSample - 1) << endl;
 
         if (start + 1 + timeSnapshotsPerSample - 2 >= snapshotsNum)
         {
             std::cerr << "[velParDerivativeCoeff][ERROR] pars access out of bounds!" <<
-                      std::endl;
+                      endl;
             abort();
         }
 
@@ -2224,26 +2230,26 @@ List<Eigen::MatrixXd> UnsteadyNSTurb::velParDerivativeCoeff(Eigen::MatrixXd A,
             pars.middleRows(start + 1, timeSnapshotsPerSample - 1);
         newCoeffs[0].block(rowOffset, pars.cols(), timeSnapshotsPerSample - 1,
                            newColsNum) = bNew;
-        std::cout << "[velParDerivativeCoeff] G block for output: rows " <<
+        Info << "[velParDerivativeCoeff] G block for output: rows " <<
                   (start + 1) << " to "
-                  << (start + timeSnapshotsPerSample - 1) << std::endl;
+                  << (start + timeSnapshotsPerSample - 1) << endl;
 
         if (start + 1 + timeSnapshotsPerSample - 2 >= G.rows())
         {
             std::cerr << "[velParDerivativeCoeff][ERROR] G access out of bounds!" <<
-                      std::endl;
+                      endl;
             abort();
         }
 
         newCoeffs[1].middleRows(rowOffset, timeSnapshotsPerSample - 1) =
             G.middleRows(start + 1, timeSnapshotsPerSample - 1);
         totalRowsWritten += timeSnapshotsPerSample - 1;
-        std::cout << "[velParDerivativeCoeff] Finished group " << j
-                  << ", totalRowsWritten so far: " << totalRowsWritten << std::endl;
+        Info << "[velParDerivativeCoeff] Finished group " << j
+                  << ", totalRowsWritten so far: " << totalRowsWritten << endl;
     }
 
-    std::cout << "[velParDerivativeCoeff] FINISHED. Total rows written: "
-              << totalRowsWritten << "/" << newRowsNum << std::endl;
+    Info << "[velParDerivativeCoeff] FINISHED. Total rows written: "
+              << totalRowsWritten << "/" << newRowsNum << endl;
     interChoice = 4;
     return newCoeffs;
 }
@@ -2268,3 +2274,335 @@ Eigen::MatrixXd UnsteadyNSTurb::velParDerivativeCoeff(Eigen::MatrixXd A,
     newCoeffs.rightCols(newColsNum - parsSamplesNum) = bNew;
     return newCoeffs;
 }
+
+
+
+// =========================================================================
+// ============================= Smagorinsky ===============================
+// =========================================================================
+
+void UnsteadyNSTurb::computeNonLinearSnapshot_at_time(const word& snap_time, 
+                 volVectorField& Smag, std::optional<PtrList<volVectorField>> modesU)
+{
+    if (m_parameters->get_DEIMInterpolatedField() == "fullStressFunction"
+      || ITHACAutilities::containsSubstring(m_parameters->get_DEIMInterpolatedField(), "reducedFullStressFunction"))
+    {
+        Smag = computeSmagTerm_at_time(snap_time, modesU) ;
+    }
+    else
+    {
+      Info << "Error : DEIMInterpolatedField not valid : "
+           << m_parameters->get_DEIMInterpolatedField() << endl;
+      Info << "DEIM is available for fullStressFunction and nut only." << endl;
+      abort();
+    }
+}
+
+// Init Smagorinsky term
+volVectorField UnsteadyNSTurb::initSmagFunction()
+{
+    return volVectorField("fullStressFunction", computeSmagTerm_at_time("0") );
+}
+
+// Init Smagorinsky term
+volScalarField UnsteadyNSTurb::initSmagPhiFunction(const volScalarField template_field_phi)
+{
+    return volScalarField(m_parameters->get_DEIMInterpolatedField(), computeSmagTermPhi_at_time("0",template_field_phi));
+}
+
+volVectorField UnsteadyNSTurb::computeSmagTerm_at_time(const word& snap_time, 
+                                        std::optional<PtrList<volVectorField>> modesU)
+{
+    // Read the j-th field
+    volVectorField snapshotj = m_parameters->get_template_field_U();
+    ITHACAstream::read_snapshot(snapshotj, snap_time, m_parameters->get_casenameData());
+
+    if (modesU)
+    {
+        volVectorField proj_snapshotj = ITHACAutilities::project_to_POD_basis(snapshotj, modesU.value(), m_parameters->get_meanU());
+        snapshotj = proj_snapshotj;
+    }
+
+    return computeSmagTerm_fromU(snapshotj);
+}
+
+volScalarField UnsteadyNSTurb::computeSmagTermPhi_at_time(const word& snap_time, const volScalarField template_field_phi)
+{
+    // Read the j-th field
+    volScalarField phij = template_field_phi;
+    ITHACAstream::read_snapshot(phij, snap_time, m_parameters->get_casenameData());
+    volVectorField snapshotj = m_parameters->get_template_field_U();
+    ITHACAstream::read_snapshot(snapshotj, snap_time, m_parameters->get_casenameData());
+    return computeSmagTermPhi_fromUPhi(snapshotj,phij);
+}
+
+volVectorField UnsteadyNSTurb::computeSmagTerm_fromU(const volVectorField& snapshotj)
+{
+    volTensorField S=computeS_fromU(snapshotj);
+    volScalarField nut = computeNut_fromS(S);
+    return (fvc::div(2*nut*dev(S)));
+}
+
+volScalarField UnsteadyNSTurb::computeSmagTermPhi_fromUPhi(const volVectorField& snapshotj, const volScalarField& phij)
+{
+    volTensorField S=computeS_fromU(snapshotj);
+    volScalarField nut = computeNut_fromS(S);
+    return (fvc::div(nut*fvc::grad(phij)));
+}
+
+template<typename T>
+volScalarField UnsteadyNSTurb::diffusion(const T& coefDiff, const volScalarField& phi)
+{
+    return ( fvc::laplacian(coefDiff , phi) );
+}
+template volScalarField UnsteadyNSTurb::diffusion(const volScalarField& coefDiff, const volScalarField& u);
+template volScalarField UnsteadyNSTurb::diffusion(const volTensorField& coefDiff, const volScalarField& u);
+
+template<typename T>
+volVectorField UnsteadyNSTurb::diffusion(const T& coefDiff, const volVectorField& u)
+{
+    volTensorField S_u=computeS_fromU(u);
+    return ( fvc::div( 2 * ITHACAutilities::tensorFieldProduct( coefDiff , dev(S_u) ) ) );
+}
+template volVectorField UnsteadyNSTurb::diffusion(const volScalarField& coefDiff, const volVectorField& u);
+template volVectorField UnsteadyNSTurb::diffusion(const volTensorField& coefDiff, const volVectorField& u);
+
+volVectorField UnsteadyNSTurb::computeSmagTermPhi_fromUPhi(const volVectorField& snapshotj, const volVectorField& phij)
+{
+    return computeSmagTerm_fromU(snapshotj);
+}
+
+
+// =========================================================================
+// ======================= projFullStressFunction ==========================
+// =========================================================================
+
+void UnsteadyNSTurb::computeNonLinearSnapshot_at_time(const word& snap_time, volScalarField& phi, volVectorField& modeU)
+{
+    if (ITHACAutilities::containsSubstring(m_parameters->get_HRSnapshotsField(), "projFullStressFunction") 
+        || ITHACAutilities::containsSubstring(m_parameters->get_HRSnapshotsField(), "projReducedFullStressFunction"))
+    {
+        phi = computeProjSmagTerm_at_time_fromMode(snap_time, modeU);
+    }
+}
+
+// Init projected Smagorinsky term
+volScalarField UnsteadyNSTurb::initProjSmagFunction()
+{
+    return volScalarField("projFullStressFunction",
+        m_parameters->get_template_field_fullStressFunction() & m_parameters->get_template_field_U());
+}
+
+volScalarField UnsteadyNSTurb::computeProjSmagTerm_at_time_fromMode(const word& snap_time, const volVectorField& mode)
+{
+    // Read the j-th field
+    volVectorField Smagj = m_parameters->get_template_field_fullStressFunction();  
+    if (!ITHACAutilities::containsSubstring(m_parameters->get_HRSnapshotsField(), "projReducedFullStressFunction"))
+    {
+        ITHACAstream::read_snapshot(Smagj, snap_time, m_parameters->get_casenameData());
+    }
+    else
+    {
+        word path = "./ITHACAoutput/Hyperreduction/reducedFullStressFunction/";
+        ITHACAstream::read_snapshot(Smagj, snap_time, path);
+    }
+    
+    return Smagj & mode;
+}
+
+void UnsteadyNSTurb::computeProjSmagTerm_fromSmag_fromMode(volScalarField& phi, const volVectorField& Smag, 
+                                                                                 const volVectorField& mode)
+{
+    phi = Smag & mode;
+}
+
+
+// =========================================================================
+// ========================== projSmagFromNut ==============================
+// =========================================================================
+
+void UnsteadyNSTurb::computeNonLinearSnapshot_at_time(const word& snap_time, volScalarField& phi, 
+                                                                 volVectorField& modeU_proj , volVectorField& modeU_grad)
+{
+    if (ITHACAutilities::containsSubstring(m_parameters->get_HRSnapshotsField(), "projSmagFromNut") 
+        || ITHACAutilities::containsSubstring(m_parameters->get_HRSnapshotsField(), "projSmagFromReducedNut"))
+    {
+        phi = computeProjSmagFromNut_at_time_fromModes(snap_time, modeU_proj, modeU_grad);
+    }
+}
+
+// Init projected Smagorinsky term from nut
+volScalarField UnsteadyNSTurb::initProjSmagFromNutFunction()
+{
+    return volScalarField("projSmagFromNut", initSmagFunction() & m_parameters->get_template_field_U());
+}
+
+volScalarField UnsteadyNSTurb::computeProjSmagFromNut_at_time_fromModes
+                  (const word& snap_time, const volVectorField& modeU_proj, const volVectorField& modeU_grad)
+{
+    // Read the j-th field
+    volScalarField Nutj(m_parameters->get_DEIMInterpolatedField(), m_parameters->get_template_field_nut());
+    if (ITHACAutilities::containsSubstring(m_parameters->get_HRSnapshotsField(), "projSmagFromNut") )
+    {
+        ITHACAstream::read_snapshot(Nutj, snap_time, m_parameters->get_casenameData());
+    }
+    else if (ITHACAutilities::containsSubstring(m_parameters->get_HRSnapshotsField(), "projSmagFromReducedNut"))
+    {
+        word path = "./ITHACAoutput/Hyperreduction/reducedNut/";
+        ITHACAstream::read_snapshot(Nutj, snap_time, path);
+    }
+    return projDiffusionIBP(Nutj, modeU_grad, modeU_proj);
+}
+
+void UnsteadyNSTurb::computeProjSmagFromNut_fromNut_fromModes(volScalarField& phi, 
+        const volScalarField& Nut, const volVectorField& modeU_proj, const volVectorField& modeU_grad)
+{
+    phi = projDiffusionIBP(Nut, modeU_grad, modeU_proj);
+}
+
+volScalarField UnsteadyNSTurb::projDiffusionIBP(const volScalarField& coefDiff, 
+                               const volVectorField& u, const volVectorField& v)
+{
+    volTensorField symGradU = computeS_fromU(u);
+    volTensorField symGradV = computeS_fromU(v);
+    return 2*coefDiff*(dev(symGradU) && dev(symGradV));
+}
+
+
+// =========================================================================
+// ============================= NUT =======================================
+// =========================================================================
+
+void UnsteadyNSTurb::computeNonLinearSnapshot_at_time(const word& snap_time, volScalarField& phi, 
+                                                 std::optional<PtrList<volVectorField>> modesU)
+{
+    if (m_parameters->get_DEIMInterpolatedField() == "nut"
+        || ITHACAutilities::containsSubstring(m_parameters->get_DEIMInterpolatedField(), "reducedNut"))
+    {
+        phi = computeNut_at_time(snap_time, modesU) ;
+    }
+    else if (m_parameters->get_DEIMInterpolatedField() == "fullStressFunction_K")
+    {
+        phi = computeSmagTermPhi_at_time(snap_time, m_parameters->get_template_field_k());
+    }
+    else if (m_parameters->get_DEIMInterpolatedField() == "fullStressFunction_Omega")
+    {
+        phi = computeSmagTermPhi_at_time(snap_time, m_parameters->get_template_field_omega());
+    }
+    else
+    {
+        Info << "Error : DEIMInterpolatedField not valid : "
+        << m_parameters->get_DEIMInterpolatedField() << endl;
+        Info << "DEIM is available for fullStressFunction and nut only." << endl;
+        abort();
+    }
+}
+
+volScalarField UnsteadyNSTurb::initNutFunction()
+{
+    return volScalarField(m_parameters->get_template_field_nut());
+}
+
+volScalarField UnsteadyNSTurb::computeNut_at_time(const word& snap_time, std::optional<PtrList<volVectorField>> modesU)
+{
+    // Read the j-th field
+    volVectorField snapshotj = m_parameters->get_template_field_U();
+    ITHACAstream::read_snapshot(snapshotj, snap_time, m_parameters->get_casenameData());
+
+    if (modesU)
+    {
+        volVectorField proj_snapshotj = ITHACAutilities::project_to_POD_basis(snapshotj, modesU.value(), m_parameters->get_meanU());
+        snapshotj = proj_snapshotj;
+    }
+
+    return computeNut_fromU(snapshotj);
+}
+
+volScalarField UnsteadyNSTurb::computeNut_fromU(const volVectorField& snapshotj)
+{
+    volTensorField S=computeS_fromU(snapshotj);
+    return (computeNut_fromS(S));
+}
+
+volScalarField UnsteadyNSTurb::computeNut_fromS(const volTensorField& S)
+{
+
+    volScalarField delta = m_parameters->get_delta();
+    float Ck = m_parameters->get_Ck();
+    float Ce = m_parameters->get_Ce();
+
+    // // Incompressible flows:
+    // float Cs = std::pow(Ck*std::pow(Ck/Ce,0.5),0.5);
+    // return (pow(Cs*delta,2)*sqrt(2*S&&S));
+
+    // OpenFOAM like version
+    // Piece of code strongly inspired by Smagorinsky OpenFOAM Methods
+    // see https://develop.openfoam.com/Development/openfoam/blob/OpenFOAM-v2012/src/TurbulenceModels/turbulenceModels/LES/Smagorinsky/Smagorinsky.C
+
+    volScalarField a(Ce/delta);
+    volScalarField b((2.0/3.0)*tr(S));
+    volScalarField c(2*Ck*delta*(dev(S) && S));
+
+    volScalarField k(sqr((-b + sqrt(sqr(b) + 4*a*c))/(2*a)));
+
+    volScalarField nut = m_parameters->get_template_field_nut();
+
+    // Loop over inner values to conserve BC informations
+    for (int i=0; i<nut.size(); i++)
+        {
+        nut[i] = Ck*delta[i]*std::pow(k[i],0.5);
+        }
+
+    // TO DO : make it works
+    nut.correctBoundaryConditions();
+    return nut;
+ }
+
+
+ // void UnsteadyNSTurb::initTurbModel()
+ // {
+ //   const volVectorField& U(m_parameters->get_template_field_U());
+ //
+ //   Foam::Time runTime(Foam::Time::controlDictName, ".", m_parameters->get_casenameData());
+ //   wordList boundaryTypeNut = m_parameters->get_template_field_nut().boundaryField().types();
+ //
+ //   const surfaceScalarField phi
+ //     (
+ //     IOobject
+ //       (
+ //       "phi",
+ //       runTime.timeName(),
+ //       m_parameters->get_mesh(),
+ //       IOobject::READ_IF_PRESENT,
+ //       IOobject::AUTO_WRITE
+ //       ),
+ //     m_parameters->get_mesh(),
+ //     dimensionedScalar("phi", dimensionSet(0,0,0,0,0,0,0), 1.0),
+ //     boundaryTypeNut
+ //     );
+ //
+ //    const Foam::singlePhaseTransportModel transportModel_(U, phi);
+ //    turbModel = autoPtr<incompressible::turbulenceModel>
+ //      (
+ //          incompressible::turbulenceModel::New(U, phi, transportModel_)
+ //      );
+ //
+ //    // turbModel->correct();
+ //    // volScalarField nut_test( turbModel->nut());
+ //
+ //
+ //  }
+
+
+
+ volTensorField UnsteadyNSTurb::computeS_fromU(const volVectorField& snapshotj)
+ {
+    volTensorField gradV=fvc::grad(snapshotj);
+    return 0.5*(gradV+gradV.T());
+ }
+
+ volVectorField UnsteadyNSTurb::computeS_fromU(const volScalarField& phij)
+ {
+    volVectorField gradV=fvc::grad(phij);
+    return gradV;
+ }

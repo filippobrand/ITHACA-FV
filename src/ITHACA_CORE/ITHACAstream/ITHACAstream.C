@@ -138,7 +138,7 @@ void exportMatrix(Eigen::Matrix < T, -1, dim > & matrix,
 
             if (i != (matrix.rows() - 1))
             {
-                ofs << std::endl;
+                ofs << endl;
             }
         }
 
@@ -519,7 +519,7 @@ void read_fields(
     fileName casename, int first_snap, int n_snap)
 {
     ITHACAparameters* para(ITHACAparameters::getInstance());
-    fvMesh& mesh = para->mesh;
+    const fvMesh& mesh = para->mesh;
     const pointMesh& pMesh  = pointMesh::New(mesh);
     constexpr bool check_vol = std::is_same<volMesh, GeoMesh>::value
                                || std::is_same<surfaceMesh, GeoMesh>::value;
@@ -584,7 +584,7 @@ void read_fields(
             }
         }
 
-        std::cout << std::endl;
+        Info << endl;
     }
     else
     {
@@ -661,7 +661,7 @@ void read_fields(
     fileName casename, int first_snap, int n_snap)
 {
     ITHACAparameters* para(ITHACAparameters::getInstance());
-    fvMesh& mesh = para->mesh;
+    const fvMesh& mesh = para->mesh;
     const pointMesh& pMesh  = pointMesh::New(mesh );
     constexpr bool check_vol = std::is_same<volMesh, GeoMesh>::value
                                || std::is_same<surfaceMesh, GeoMesh>::value;
@@ -727,19 +727,21 @@ void read_fields(
             }
         }
 
-        std::cout << std::endl;
+        Info << endl;
     }
     else
     {
-        Info << "######### Reading the Data for " << field.name() << " #########" <<
+        Info << "################ Parallel Reading the Data for " << field.name() << " #########" <<
              endl;
-        word timename(field.mesh().time().rootPath() + "/" +
-                      field.mesh().time().caseName() );
+
+        word timename = casename + "processor" + name(Pstream::myProcNo());
+        Foam::Time runTime2(Foam::Time::controlDictName, ".", timename);
+        int last_s = runTime2.times().size();
+
+        timename = field.mesh().time().rootPath() + "/" + field.mesh().time().caseName();
         timename = timename.substr(0, timename.find_last_of("\\/"));
         timename = timename + "/" + casename + "/" + "processor" + name(
                        Pstream::myProcNo());
-        int last_s = numberOfFiles(casename,
-                                   "processor" + name(Pstream::myProcNo()) + "/");
 
         if (first_snap > last_s)
         {
@@ -758,13 +760,13 @@ void read_fields(
 
         if  constexpr(check_vol)
         {
-            for (int i = 1 + first_snap; i < last_s + first_snap; i++)
+            for (int i = 2 + first_snap; i < last_s + first_snap; i++)
             {
                 GeometricField<Type, PatchField, GeoMesh> tmp_field(
                     IOobject
                     (
                         field.name(),
-                        timename + "/" + name(i),
+                        timename + "/" + runTime2.times()[i].name(),
                         field.mesh(),
                         IOobject::MUST_READ
                     ),
@@ -804,8 +806,7 @@ void readConvergedFields(
     int par = 1;
     M_Assert(ITHACAutilities::check_folder(casename + "/" + name(par)) != 0,
              "No parameter dependent solutions stored into Offline folder");
-    std::cout << "######### Reading the Data for " << field.name() << " #########"
-              << std::endl;
+    Info << "######### Reading the Data for " << field.name() << " #########" << endl;
 
     while (ITHACAutilities::check_folder(casename + "/" + name(par)))
     {
@@ -872,7 +873,7 @@ void read_last_fields(
             );
         Lfield.append(std::move(tfld));
 #endif
-        std::cout << std::endl;
+        Info << endl;
     }
     else
     {
@@ -968,7 +969,7 @@ void exportFields(
         printProgress(double(j + 1) / field.size());
     }
 
-    std::cout << std::endl;
+    Info << endl;
 }
 
 template void exportFields(
@@ -1009,7 +1010,6 @@ void exportSolution(GeometricField<Type, PatchField, GeoMesh>& s,
         GeometricField<Type, PatchField, GeoMesh> act(fieldName, s);
         fileName fieldname = folder + "/processor" + name(Pstream::myProcNo()) + "/" +
                              subfolder + "/" + fieldName;
-        std::cout << fieldname << std::endl;
         OFstream os(fieldname);
         act.writeHeader(os);
         os << act << endl;
@@ -1146,7 +1146,7 @@ void load(List<Eigen::SparseMatrix<T >>& MatrixList, word folder,
           word MatrixName)
 {
     int number_of_files = numberOfFiles(folder, MatrixName, ".npz");
-    std::cout << "Reading the Matrix " + folder + "/" + MatrixName << std::endl;
+    Info << "Reading the Matrix " + folder + "/" + MatrixName << endl;
     M_Assert(number_of_files != 0,
              "Check if the file you are trying to read exists" );
     MatrixList.resize(0);
@@ -1292,5 +1292,77 @@ readFieldByIndex(
     const GeometricField<vector, fvsPatchField, surfaceMesh>&,
     fileName,
     label);
+
+
+template<typename T>
+void read_snapshot(T& snapshot, const Foam::word snap_time,
+                                  Foam::word path, Foam::word name)
+{
+    // ITHACAparameters* para(ITHACAparameters::getInstance());
+    const fvMesh& mesh = snapshot.mesh();
+    word arg_path = path;
+    word pathProcessor = "";
+
+    if (name == "default_name")
+    {
+        name = snapshot.name();
+    }
+
+    if (Pstream::parRun())
+    {
+        // If specific path, changing processor* from casename directory to the target directory
+        word path_start = mesh.time().rootPath() + "/" + mesh.time().caseName();
+        path_start = path_start.substr(0, path_start.find_last_of("\\/")) + "/";
+        pathProcessor = "/processor" + std::to_string(Pstream::myProcNo());
+
+        if (!ITHACAutilities::containsSubstring(path, pathProcessor + "/"))
+        {
+            path = path_start + arg_path.substr(0, arg_path.find_last_of("\\/")) + pathProcessor
+                              + "/" + arg_path.substr(arg_path.find_last_of("\\/"), arg_path.size());
+        }
+        else
+        {
+            path = path_start + arg_path;
+        }
+    }
+    else
+    {
+        path = arg_path;
+    }
+
+    path = path + "/" + snap_time;
+
+    if (!ITHACAutilities::check_file(path + "/" + name))
+    {
+        Info << "Error: data not found at :" << endl;
+        Info << path << endl;
+        Info << name << endl;
+        Info << endl;
+        abort();
+    }
+
+
+    T snapshot_dummy(
+        IOobject
+        (
+            name,
+            path,
+            mesh,
+            IOobject::MUST_READ
+        ),
+        mesh);
+
+    snapshot = snapshot_dummy;
+}
+
+
+template void read_snapshot(Foam::volScalarField& snapshot,
+        const Foam::word snap_time, Foam::word path, Foam::word name);
+template void read_snapshot(Foam::volVectorField& snapshot,
+        const Foam::word snap_time, Foam::word path, Foam::word name);
+template void read_snapshot(Foam::volTensorField& snapshot,
+        const Foam::word snap_time, Foam::word path, Foam::word name);
+
+
 
 }
