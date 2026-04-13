@@ -75,6 +75,7 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
     bcMethod = ITHACAdict->lookupOrDefault<word>("bcMethod", "lift");
     timeDependentBC = ITHACAdict->lookupOrDefault<bool>("timeDependentBC", false);
     derivativeInRBF = ITHACAdict->lookupOrDefault<bool>("derivativeInRBF", true);
+    centerSnapshots = ITHACAdict->lookupOrDefault<bool>("centerSnapshots", false);
     supremizerApproach = ITHACAdict->lookupOrDefault<word>("supremizerApproach", "modes");
 
     M_Assert(method == "supremizer" || method == "PPE" || method == "VMB",
@@ -103,6 +104,7 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
     // {
     //     NSUPmodes = 0;
     // }
+
     Info << "### INFO ### " << nl << "Method: " << method << nl
          << "BC method: " << bcMethod << nl
          << "Time dependent BCs: " << timeDependentBC << nl
@@ -485,6 +487,114 @@ void UnsteadyBBTurb::assemblePenaltyMatrices()
     pPenaltyMatrices->bcTempMat = bcTemperatureMat(NTmodes);
 }
 
+void UnsteadyBBTurb::removeMean()
+{
+    // Uavg = ITHACAutilities::computeAverage(Ufield);
+    UavgPtr.reset(new volVectorField(
+        IOobject(
+            "Uavg",
+            _runTime().timeName(),
+            _mesh(),
+            IOobject::NO_READ,
+            IOobject::AUTO_WRITE),
+        Ufield[0]));
+    UavgPtr() *= 0.0;
+
+    TavgPtr.reset(new volScalarField(
+        IOobject(
+            "Tavg",
+            _runTime().timeName(),
+            _mesh(),
+            IOobject::NO_READ,
+            IOobject::AUTO_WRITE),
+        Tfield[0]));
+    TavgPtr() *= 0.0;
+
+    p_rghavgPtr.reset(new volScalarField(
+        IOobject(
+            "p_rghavg",
+            _runTime().timeName(),
+            _mesh(),
+            IOobject::NO_READ,
+            IOobject::AUTO_WRITE),
+        Prghfield[0]));
+    p_rghavgPtr() *= 0.0;
+
+    for (label i = 0; i < Ufield.size(); i++)
+    {
+        UavgPtr() += Ufield[i];
+    }
+    UavgPtr() /= Ufield.size();
+    for (label patchi = 0; patchi < UavgPtr().boundaryField().size(); patchi++)
+    {
+        UavgPtr().boundaryFieldRef()[patchi] == 0.0 * Ufield[0].boundaryField()[patchi];
+        for (label i = 0; i < Ufield.size(); i++)
+        {
+            UavgPtr().boundaryFieldRef()[patchi] == UavgPtr().boundaryField()[patchi] + Ufield[i].boundaryField()[patchi];
+        }
+        UavgPtr().boundaryFieldRef()[patchi] == UavgPtr().boundaryField()[patchi] / scalar(Ufield.size());
+    }
+
+    for (label i = 0; i < Ufield.size(); i++)
+    {
+        Ufield[i] -= UavgPtr();
+        for (label patchi = 0; patchi < UavgPtr().boundaryField().size(); patchi++)
+        {
+            Ufield[i].boundaryFieldRef()[patchi] == Ufield[i].boundaryField()[patchi] - UavgPtr().boundaryField()[patchi];
+        }
+    }
+    // Tavg = ITHACAutilities::computeAverage(Tfield);
+    for (label i = 0; i < Tfield.size(); i++)
+    {
+        TavgPtr() += Tfield[i];
+    }
+    TavgPtr() /= Tfield.size();
+    for (label patchi = 0; patchi < TavgPtr().boundaryField().size(); patchi++)
+    {
+        TavgPtr().boundaryFieldRef()[patchi] == 0.0 * Tfield[0].boundaryField()[patchi];
+        for (label i = 0; i < Tfield.size(); i++)
+        {
+            TavgPtr().boundaryFieldRef()[patchi] == TavgPtr().boundaryField()[patchi] + Tfield[i].boundaryField()[patchi];
+        }
+        TavgPtr().boundaryFieldRef()[patchi] == TavgPtr().boundaryField()[patchi] / scalar(Tfield.size());
+    }
+
+    for (label i = 0; i < Tfield.size(); i++)
+    {
+        Tfield[i] -= TavgPtr();
+        for (label patchi = 0; patchi < TavgPtr().boundaryField().size(); patchi++)
+        {
+            Tfield[i].boundaryFieldRef()[patchi] == Tfield[i].boundaryField()[patchi] - TavgPtr().boundaryField()[patchi];
+        }
+    }
+    for (label i = 0; i < Prghfield.size(); i++)
+    {
+        p_rghavgPtr() += Prghfield[i];
+    }
+    p_rghavgPtr() /= Prghfield.size();
+    for (label patchi = 0; patchi < p_rghavgPtr().boundaryField().size(); patchi++)
+    {
+        p_rghavgPtr().boundaryFieldRef()[patchi] == 0.0 * Prghfield[0].boundaryField()[patchi];
+        for (label i = 0; i < Prghfield.size(); i++)
+        {
+            p_rghavgPtr().boundaryFieldRef()[patchi] == p_rghavgPtr().boundaryField()[patchi] + Prghfield[i].boundaryField()[patchi];
+        }
+        p_rghavgPtr().boundaryFieldRef()[patchi] == p_rghavgPtr().boundaryField()[patchi] / scalar(Prghfield.size());
+    }
+
+    for (label i = 0; i < Prghfield.size(); i++)
+    {
+        Prghfield[i] -= p_rghavgPtr();
+        for (label patchi = 0; patchi < p_rghavgPtr().boundaryField().size(); patchi++)
+        {
+            Prghfield[i].boundaryFieldRef()[patchi] == Prghfield[i].boundaryField()[patchi] - p_rghavgPtr().boundaryField()[patchi];
+        }
+    }
+    ITHACAstream::exportSolution(UavgPtr(), "Uavg", "./ITHACAoutput/Debug/");
+    ITHACAstream::exportSolution(TavgPtr(), "Tavg", "./ITHACAoutput/Debug/");
+    ITHACAstream::exportSolution(p_rghavgPtr(), "p_rghavg", "./ITHACAoutput/Debug/");
+}
+
 // * * * * * * * * * * * * * * Projection Methods * * * * * * * * * * * * * * //
 
 void UnsteadyBBTurb::project()
@@ -559,12 +669,13 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
         rbfSplines[i] = std::make_shared<ithacaInterpolator>(viscDict);
         Eigen::MatrixXd x = velDerCoeff[0].transpose();
         Eigen::VectorXd y = velDerCoeff[1].col(i);
+        // rbfSplines[i]->optimizeShapeParameter(x, y, 5);
         rbfSplines[i]->fit(x, y);
-        Info << "Fitting ithacaInterpolator for mode " << i + 1 << " completed." << endl;
+        Info << "###INTERP - Fitting ithacaInterpolator for mode " << i + 1 << " completed. Here's some informations:" << endl;
+        rbfSplines[i]->printInfo();
     }
 
-    Info << "RBF Interpolation completed. Some details of the interpolation are as follows." << endl;
-    rbfSplines[0]->printInfo();
+    Info << "RBF Interpolation completed." << endl;
 }
 
 List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(const Eigen::MatrixXd& A,
@@ -852,7 +963,8 @@ Eigen::MatrixXd UnsteadyBBTurb::buoyancyTerm(label NU, label NT,
     {
         for (label j = 0; j < H2size; j++)
         {
-            H_matrix(i, j) = fvc::domainIntegrate(testFunctionsU[i] & fvc::reconstruct(ghf * fvc::snGrad(-(beta * (L_Tmodes[j]))) * L_Tmodes[j].mesh().magSf())).value();
+            // Maybe there is a minus sign before the beta
+            H_matrix(i, j) = fvc::domainIntegrate(testFunctionsU[i] & fvc::reconstruct(ghf * fvc::snGrad((-beta * (L_Tmodes[j]))) * L_Tmodes[j].mesh().magSf())).value();
         }
     }
 
@@ -1092,7 +1204,6 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTensor2(label NU, label NSUP,
             "CT2_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP) + "_" + name(Nnut) + "_t");
         ITHACAstream::exportTensor(ct2Tensor, "CT2_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
-
     return ct2Tensor;
 }
 
@@ -1691,6 +1802,20 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::bcTemperatureMat(const label NT)
 void UnsteadyBBTurb::prepareModes()
 {
     L_U_SUPmodes.resize(0);
+    L_Tmodes.resize(0);
+    if (centerSnapshots)
+    {
+        L_U_SUPmodes.append(UavgPtr->clone());
+        L_Tmodes.append(TavgPtr->clone());
+        // Add the Prgh mean field to the top of the volScalarModes (derivated from autoPtr<volScalarField>), without substitutuing
+        int oldPsize = P_rghmodes.size();
+        P_rghmodes.resize(oldPsize + 1);
+        for (label i = oldPsize; i > 0; i--)
+        {
+            P_rghmodes.set(i, P_rghmodes.release(i - 1));
+        }
+        P_rghmodes.set(0, p_rghavgPtr->clone());
+        }
     if (liftfield.size() != 0)
     {
         for (label k = 0; k < liftfield.size(); k++)
@@ -1713,7 +1838,6 @@ void UnsteadyBBTurb::prepareModes()
         }
     }
 
-    L_Tmodes.resize(0);
     if (liftfieldT.size() != 0)
     {
         for (label k = 0; k < liftfieldT.size(); k++)
@@ -1878,7 +2002,6 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
         for (label j = 0; j < inletIndexT.rows(); j++)
         {
             label BCind = inletIndexT(j, 0);
-            // Average value of the mode on the BC
             scalar area = gSum(Tmodes[i].mesh().magSf().boundaryField()[BCind]);
             GunzburgerBCMatrixTemperature(i, j) = gSum(Tmodes[i].boundaryField()[BCind] * Tmodes[i].mesh().magSf().boundaryField()[BCind]) / area;
         }

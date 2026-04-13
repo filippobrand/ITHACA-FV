@@ -118,6 +118,11 @@ private:
     /// @brief      Computes the matrices needed for the imposition of the boundary conditions with the penalty method, if this approach is chosen
     void assemblePenaltyMatrices();
 
+protected:
+    //--------------------------------------------------------------------------
+    /// @brief      Centers the snapshots before POD
+    void removeMean();
+
 public:
     // Constructors
     /// Null constructor
@@ -129,6 +134,9 @@ public:
 
     /// Wether the velocity coefficients derivative are used in the RBF interpolaltion for nut
     bool derivativeInRBF = true;
+
+    /// bool for snapshot centering (mean subtraction before POD)
+    bool centerSnapshots = false;
 
     // Lifted BC matrix. [NsampleRun x NBoundaryPatches]. Holds the values of the lifted BCs for each sample and each boundary patch
     Eigen::MatrixXd liftBCMatrix;
@@ -142,6 +150,15 @@ public:
 
     // Eddy viscosity modes
     volScalarModes nutmodes;
+
+    // Snapshot average of velocity
+    autoPtr<volVectorField> UavgPtr;
+
+    // Snapshot average of temperature
+    autoPtr<volScalarField> TavgPtr;
+
+    // Snapshot average of pressure
+    autoPtr<volScalarField> p_rghavgPtr;
 
     // Source term modes - Not implemented yet
     // volScalarModes Sourcemodes;
