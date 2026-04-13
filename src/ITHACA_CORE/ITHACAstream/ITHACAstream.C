@@ -138,7 +138,7 @@ void exportMatrix(Eigen::Matrix < T, -1, dim > & matrix,
 
             if (i != (matrix.rows() - 1))
             {
-                ofs << endl;
+                ofs << std::endl;
             }
         }
 
