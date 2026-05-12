@@ -2129,4 +2129,91 @@ scalar computeFrobeniusInnerProduct(
     return sum(field1.primitiveField()&field2.primitiveField());
 }
 
+template<class Type, template<class> class PatchField, class GeoMesh>
+void getModesMPOD(
+    PtrList<GeometricField<Type, PatchField, GeoMesh >>& snapshots,
+    PtrList<GeometricField<Type, PatchField, GeoMesh >>& modes,
+    word fieldName, label M, bool podex, label nmodes, bool correctBC
+) 
+{
+    ITHACAparameters* para(ITHACAparameters::getInstance());
+    constexpr bool check_vol = std::is_same<volMesh, GeoMesh>::value
+                               || std::is_same<surfaceMesh, GeoMesh>::value;
+    word PODkey = "POD_" + fieldName;
+    word PODnorm = para->ITHACAdict->lookupOrDefault<word>(PODkey, "L2");
+    M_Assert(PODnorm == "L2" ||
+             PODnorm == "Frobenius", "The PODnorm can be only L2 or Frobenius");
+    Info << "Performing POD for " << fieldName << " using the " << PODnorm <<
+            " norm" << endl;
+
+    if (podex == 0)
+    {
+        if (para->eigensolver == "spectra" )
+        {
+            if (nmodes == 0)
+            {
+                nmodes = snapshots.size() - 2;
+            }
+
+            M_Assert(nmodes <= snapshots.size() - 2,
+                     "The number of requested modes cannot be bigger than the number of Snapshots - 2");
+        }
+        else
+        {
+            if (nmodes == 0)
+            {
+                nmodes = snapshots.size();
+            }
+
+            M_Assert(nmodes <= snapshots.size(),
+                     "The number of requested modes cannot be bigger than the number of Snapshots");
+        }
+        
+        Eigen::MatrixXd SnapMatrix = Foam2Eigen::PtrList2Eigen(snapshots);
+        List<Eigen::MatrixXd> SnapMatrixBC = Foam2Eigen::PtrList2EigenBC(snapshots);
+        label NBC = snapshots[0].boundaryField().size();
+        Eigen::MatrixXd _corMatrix;
+        if (PODnorm == "L2")
+        {
+            _corMatrix = ITHACAutilities::getMassMatrix(snapshots);
+        }
+        else if (PODnorm == "Frobenius")
+        {
+            _corMatrix = ITHACAutilities::getMassMatrix(snapshots, 0, false);
+        }
+
+        if (Pstream::parRun())
+        {
+            reduce(_corMatrix, sumOp<Eigen::MatrixXd>());
+        }
+
+        Eigen::MatrixXcd _corMatrixFFT = get2DFFT(_corMatrix);
+    }
 }
+
+Eigen::MatrixXcd get2DFFT(const Eigen::MatrixXd& input)
+{
+    Eigen::MatrixXcd output(input.rows(), input.cols());
+    Eigen::FFT<double> fft;
+
+    Eigen::MatrixXcd temporary(input.rows(), input.cols());
+
+    for (int i = 0; i < input.rows(); ++i)
+    {
+        Eigen::VectorXd inputRow = input.row(i).transpose();
+        Eigen::VectorXcd outRow;
+        fft.fwd(outRow, inputRow);
+        temporary.row(i) = outRow.transpose();
+    }
+
+    for (int j = 0; j < input.cols(); ++j)
+    {
+        Eigen::VectorXcd inputCol = temporary.col(j);
+        Eigen::VectorXcd outCol;
+        fft.fwd(outCol, inputCol);
+        output.col(j) = outCol;
+    }
+    return output;
+}
+
+};

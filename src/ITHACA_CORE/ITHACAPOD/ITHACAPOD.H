@@ -50,6 +50,7 @@ SourceFiles
 #include <Spectra/SymEigsSolver.h>
 #include <Eigen/Eigen>
 #include <unsupported/Eigen/SparseExtra>
+#include <unsupported/Eigen/FFT>
 #pragma GCC diagnostic pop
 
 /*---------------------------------------------------------------------------*\
@@ -422,11 +423,35 @@ scalar computeFrobeniusInnerProduct(
     const GeometricField<Type, PatchField, GeoMesh>& field1,
     const GeometricField<Type, PatchField, GeoMesh>& field2);
 
+//------------------------------------------------------------------------------
+/// @brief     Gets the multiscale POD modes for a scalar field
+///
+/// @param      snapshots     Snapshots
+/// @param      modes         Modes
+/// @param      fieldName     The field name
+/// @param      M             Number of scales
+/// @param      podex         If 1, the functions read the stored mode. If 0, the function computes the modes and stores them.
+/// @param      nModes        Number of modes to be stored. If 0, the maximum number of modes will computed.
+/// @param      correctBC      If true, correct the boundary conditions.
+
+template<class Type, template<class> class PatchField, class GeoMesh>
+void getModesMPOD(
+    PtrList<GeometricField<Type, PatchField, GeoMesh >>& snapshots,
+    PtrList<GeometricField<Type, PatchField, GeoMesh >>& modes,
+    word fieldName, label M, bool podex = false, label nmodes = 0,
+    bool correctBC = true
+);
+
+//------------------------------------------------------------------------------
+/// @brief    Computes the 2D Fourier transform of an Eigen::MatrixXd
+///
+/// @param[in]  input   The input matrix
+/// @return     The 2D Fourier transform of the input matrix
+///
+Eigen::MatrixXcd get2DFFT(const Eigen::MatrixXd& input);
+
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 #endif
-
-
-

@@ -1,0 +1,104 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2.2.2                                 |
+|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      ITHACAdict;
+}
+
+// EigenValue solver, can be eigen or spectra
+EigenSolver eigen;
+
+// Stabilization, can be supremizer, Gunzburger, VMB or PPE. Supremizer can either use modes or snapshots
+method supremizer;
+supremizerApproach modes;
+
+// BC Treatment, can be lift or penalty
+bcMethod Gunzburger;
+optimizeTau true;
+// Penalty method tuning details:
+penaltyMaxIter 20;
+nTimestepsPenaltyAdapt 4000;
+penaltyTolU    1e-3;
+penaltyTolT    1e-2;
+
+// Time varying BC
+timedepbcMethod no;
+
+// Penalty factors for velocity and temperature when using penalty BC treatment. These are 
+// initial guesses and will be adapted during the simulation if the optimizeTau option is set to true.
+tauU 1e-2; // 1e-3
+tauT 1e-2; // 5e-2
+
+// L2 Error Computation 
+ComputeL2Error false;
+NModesForL2Error 20;
+
+// Case identifier - Used to save the L2 galerkin error, it is appended to the foldername
+caseIdentifier B;
+
+// Number of modes to output and to use for projection
+Nmodesuout   5;
+Nmodesuproj  5;
+
+NmodesPrghout 50;
+NmodesPrghproj 4;
+
+NmodesSUPout 50;
+NmodesSUPproj 4;
+
+NmodesTout 50;
+NmodesTproj 8;
+
+NmodesNutout 50;
+NmodesNutproj 9;
+
+// Starting snapshot for the online phase
+startingSnapshot 0;
+
+// Wether in the ROM the temperature and momentum are solved together or separately.
+separateMomentumTemperature false;
+
+// Wether the a time derivative are used in the RBF interpolation for nut.
+derivativeInRBF false;
+
+// Whether snapshots are centered before POD (mean subtracted) or not.
+centerSnapshots false;
+
+// eddy viscosity coefficients computation method
+viscDict 
+{   
+    package mathtoolbox; // mathtoolbox or splinter
+    normalize true; // true or false, normalize data before interpolation
+
+    // RBF parameters
+    algorithm RBF; // RBF for splinter, RBF or GPR for mathtoolbox.
+    kernel gaussian; 
+    // RBF kernels: linear, cubic, quintic, thin_plate_spline, 
+    // gaussian, multiquadric, inverse_multiquadric, inverse_quadratic
+    regularization true; // true or false, only for mathtoolbox RBF
+    polynomial false; // true or false, only for mathtoolbox RBF
+    lambda 1e-4; // regularization parameter, only for mathtoolbox RBF
+    epsilon 0.5;// shape parameter, for both mathtoolbox and splinter RBF
+
+    // // GPR hyperparameters, only for mathtoolbox GPR
+    // algorithm GPR;
+    // kernel matern;
+    // // GPR kernels: matern, squared_exp
+    // optimizeHyperparams true; // true or false
+    // kernelScale 0.1; // initial kernel scale
+    // lengthScale 0.1; // initial length scale
+    // noise 1e-5; // initial noise level
+};
+
+// Output format to save market vectors.
+OutPrecision 20;
+OutType fixed;
