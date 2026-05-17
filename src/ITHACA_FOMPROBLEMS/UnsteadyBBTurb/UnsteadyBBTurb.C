@@ -97,13 +97,7 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
         NPrghmodes = ITHACAdict->lookupOrDefault<label>("NmodesPrghproj", 5);
     }
     NNutModes = ITHACAdict->lookupOrDefault<label>("NmodesNutproj", 5);
-    // if (method == "supremizer")
-    // {
     NSUPmodes = ITHACAdict->lookupOrDefault<label>("NmodesSUPproj", 5);
-    // } else
-    // {
-    //     NSUPmodes = 0;
-    // }
 
     Info << "### INFO ### " << nl << "Method: " << method << nl
          << "BC method: " << bcMethod << nl
@@ -1953,8 +1947,7 @@ void UnsteadyBBTurb::resizeModes()
 
 void UnsteadyBBTurb::computeTestFunctionsBC()
 {
-    // The test functions are computed using QR factorization of the modes
-    // The B matrix is a (Nmodes x NBC) matrix, where each mode is evaluated on a point of the boundary
+    // The test functions are computed using QR factorization of the modes. The B matrix is a (Nmodes x NBC) matrix, where each mode is evaluated on a point of the boundary
     GunzburgerBCMatrixVelocity.resize(NUmodes, inletIndex.rows());
     for (label i = 0; i < NUmodes; i++)
     {
@@ -1967,14 +1960,10 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
         }
     }
     // Now, we want to determine the linear combination psi_l of the POD basis that vanish on the boundary
-    // l goes from 1 to NUmodes-NBC, where NBC is the number of boundary conditions (number of points on the boundary)
-    // We can do this by performing a QR factorization of the B matrix, and taking the last NUmodes-NBC columns of the Q matrix as the coefficients of the linear combination
+    // We use the property that the last (NUmodes-NBC) columns of the complete Q matrix form a nullspace of B
     Eigen::HouseholderQR<Eigen::MatrixXd> qr(GunzburgerBCMatrixVelocity);
     Eigen::MatrixXd Q = qr.householderQ();
-    Info << "QR factorization done, constructing test functions..." << endl;
     Eigen::MatrixXd psiCoeffs = Q.rightCols(NUmodes - inletIndex.rows());
-    Info << "Test function coefficients computed, constructing test functions..." << endl;
-    // Now we have the coefficients of the linear combination, we can construct the test functions
     testFunctionsU.resize(0);
     for (label i = 0; i < NUmodes - inletIndex.rows(); i++)
     {
@@ -1986,7 +1975,7 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
         }
     }
 
-    for (label i = 0; i < testFunctionsU.size(); i++)
+    for (label i = 0; i < testFunctionsU.size(); i++) // Enforce to avoid possible numerical issues, even if the test functions should be zero on the boundary by construction
     {
         for (label j = 0; j < inletIndex.rows(); j++)
         {
@@ -2020,7 +2009,6 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
         }
     }
 
-    // Impose BCs
     for (label i = 0; i < testFunctionsT.size(); i++)
     {
         for (label j = 0; j < inletIndexT.rows(); j++)
@@ -2034,7 +2022,6 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
     // ITHACAstream::exportFields(testFunctionsU, "./ITHACAoutput/testFunctions/", testFunctionsU[0].name()); // For Debugging
     // ITHACAstream::exportFields(testFunctionsT, "./ITHACAoutput/testFunctions/", testFunctionsT[0].name());
 
-    // Check that the test functions are zero on the boundary
     for (label i = 0; i < testFunctionsU.size(); i++)
     {
         for (label j = 0; j < inletIndex.rows(); j++)
