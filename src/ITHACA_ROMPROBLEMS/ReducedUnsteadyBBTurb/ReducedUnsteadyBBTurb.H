@@ -304,6 +304,9 @@ private:
     /// Word to indicate the stabilization method. It gets read from the ITHACAdict, and can be either "supremizer", "PPE" or "VMB"
     word method;
 
+    /// Word to include or not the source term in the temperature equation
+    bool includeTemperatureSourceTerm = false;
+
     /// Boolean flag to indicate wheter the penalty factor will be optimized using the Star method
     bool optimizePenaltyFactor = false;
 

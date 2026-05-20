@@ -99,6 +99,13 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
     NNutModes = ITHACAdict->lookupOrDefault<label>("NmodesNutproj", 5);
     NSUPmodes = ITHACAdict->lookupOrDefault<label>("NmodesSUPproj", 5);
 
+    energySourceTerm = ITHACAdict->lookupOrDefault<bool>("energySourceTerm", false);
+    if (energySourceTerm)
+    {
+        sourceZoneName = ITHACAdict->lookupOrDefault<word>("sourceZoneName", "NOT_DEFINED");
+        TrefSource = ITHACAdict->lookupOrDefault<scalar>("TrefSource", 0);
+    }
+
     Info << "### INFO ### " << nl << "Method: " << method << nl
          << "BC method: " << bcMethod << nl
          << "Time dependent BCs: " << timeDependentBC << nl
@@ -146,7 +153,8 @@ void UnsteadyBBTurb::truthSolve(const List<scalar> mu_now, label nSample)
     runTime.setDeltaT(timeStep);
 
     nextWrite = startTime + writeEvery;
-    label nSavedTimesteps = (finalTime - startTime) / writeEvery;
+    label nSavedTimesteps = static_cast<label>(
+        std::lround((finalTime - startTime) / writeEvery));
     M_Assert(timeSnapshots.size() > nSample,
         "The timeSnapshots list does not have enough space for the current sample index.");
     timeSnapshots[nSample].resize(nSavedTimesteps);
@@ -195,6 +203,8 @@ void UnsteadyBBTurb::truthSolve(const List<scalar> mu_now, label nSample)
             Prghfield.append(p_rgh.clone());
             Tfield.append(T.clone());
             Nutfield.append(nut.clone());
+            // Now we retrieve the source terms from the fvOptions and store them as well
+
             nextWrite += writeEvery;
             writeMu(mu_now);
             counter++;
@@ -423,6 +433,11 @@ void UnsteadyBBTurb::assembleCommonMatrices()
     loadOrCompute(pCommonMatrices->Q, matrixFolder, "Q", suffix2, [this]() { return convectiveTensorTemperature(NUmodes, NTmodes, NSUPmodes); });
     loadOrCompute(pCommonMatrices->YTurb, matrixFolder, "YTurb", suffix7, [this]() { return temperatureTurbulenceTensor(NTmodes, NNutModes); });
     loadOrCompute(pCommonMatrices->AveYTurb, matrixFolder, "AveYTurb", suffix7, [this]() { return turbulenceTemperatureAveTensor(NTmodes); });
+    if (energySourceTerm)
+    {
+        loadOrCompute(pCommonMatrices->St, matrixFolder, "St", suffix5, [this]() { return sourceTermEnergy(NTmodes, sourceZoneName, TrefSource); });
+        loadOrCompute(pCommonMatrices->Sconst, matrixFolder, "Sconst", suffix5, [this]() { return sourceTermConstant(NTmodes, sourceZoneName, TrefSource); });
+    }
 
     pCommonMatrices->BTotal = pCommonMatrices->B + pCommonMatrices->BTurb;
     label sizeTensorC = NUmodes + NSUPmodes + liftfield.size();
@@ -1404,6 +1419,95 @@ Eigen::MatrixXd UnsteadyBBTurb::buoyancyTermPPE(label NPrgh, label NT)
     return HP_matrix;
 }
 
+Eigen::MatrixXd UnsteadyBBTurb::sourceTermEnergy(label NT, word cellZoneName, scalar Tref)
+{
+  label S1size = NT + liftfieldT.size();
+  Eigen::MatrixXd S_matrix(testFunctionsT.size(), S1size);
+  const label zoneID = L_Tmodes[0].mesh().cellZones().findZoneID(cellZoneName);
+  M_Assert(zoneID != -1, "Cell zone not found in the mesh.");
+  const labelList& zoneCells = L_Tmodes[0].mesh().cellZones()[zoneID];
+
+  Info << "S1size: " << S1size 
+     << ", L_Tmodes size: " << L_Tmodes.size() 
+     << ", testFunctionsT size: " << testFunctionsT.size() << endl;
+
+  volScalarField maskedField(
+  IOobject(
+    "maskedField",
+    L_Tmodes[0].time().timeName(),
+    L_Tmodes[0].mesh(),
+    IOobject::NO_READ,
+    IOobject::NO_WRITE),
+  L_Tmodes[0].mesh(),
+  dimensionedScalar("maskedField", dimless, 0));
+
+  for (label i = 0; i < testFunctionsT.size(); i++)
+  {
+    for (label j = 0; j < S1size; j++)
+    {
+      maskedField = maskedField * 0;
+      forAll(zoneCells, celli)
+      {
+        maskedField[zoneCells[celli]] = L_Tmodes[j][zoneCells[celli]];
+      }
+      S_matrix(i, j) = fvc::domainIntegrate(testFunctionsT[i] * maskedField).value();
+    }
+  }
+
+  if (Pstream::parRun())
+  {
+    reduce(S_matrix, sumOp<Eigen::MatrixXd>());
+  }
+
+  if (Pstream::master())
+  {
+    ITHACAstream::SaveDenseMatrix(S_matrix, "./ITHACAoutput/Matrices/",
+        "S_" + name(liftfieldT.size()) + "_" + name(NT) + "_" + cellZoneName);
+    ITHACAstream::exportMatrix(S_matrix, "S_matrix", "python", "./ITHACAoutput/Matrices/python/");
+  }
+  return S_matrix;
+}
+
+Eigen::MatrixXd UnsteadyBBTurb::sourceTermConstant(label NT, word cellZoneName, scalar Tref)
+{
+  Eigen::MatrixXd S_const(testFunctionsT.size(), 1);
+  const label zoneID = L_Tmodes[0].mesh().cellZones().findZoneID(cellZoneName);
+  M_Assert(zoneID != -1, "Cell zone not found in the mesh.");
+  const labelList& zoneCells = L_Tmodes[0].mesh().cellZones()[zoneID];
+  
+  volScalarField refField(
+  IOobject(
+    "refField",
+    L_Tmodes[0].time().timeName(),
+    L_Tmodes[0].mesh(),
+    IOobject::NO_READ,
+    IOobject::NO_WRITE),
+  L_Tmodes[0].mesh(),
+  dimensionedScalar("refField", dimless, 0));
+  
+  forAll(zoneCells, celli)
+  {
+    refField[zoneCells[celli]] = Tref;
+  }
+  for (label i = 0; i < testFunctionsT.size(); i++)
+  {
+    S_const(i, 0) = fvc::domainIntegrate(testFunctionsT[i] * refField).value();
+  }
+
+  if (Pstream::parRun())
+  {
+    reduce(S_const, sumOp<Eigen::MatrixXd>());
+  }
+
+  if (Pstream::master())
+  {
+    ITHACAstream::SaveDenseMatrix(S_const, "./ITHACAoutput/Matrices/",
+        "S_const_" + name(liftfieldT.size()) + "_" + name(NT) + "_" + cellZoneName);
+    ITHACAstream::exportMatrix(S_const, "S_const_vector", "python", "./ITHACAoutput/Matrices/python/");
+  }
+  return S_const;
+}
+
 Eigen::MatrixXd UnsteadyBBTurb::BC1PPE(label NU, label NPrgh)
 {
     label P_BC1size = NPrgh;
@@ -1809,7 +1913,7 @@ void UnsteadyBBTurb::prepareModes()
             P_rghmodes.set(i, P_rghmodes.release(i - 1));
         }
         P_rghmodes.set(0, p_rghavgPtr->clone());
-        }
+    }
     if (liftfield.size() != 0)
     {
         for (label k = 0; k < liftfield.size(); k++)
@@ -2018,9 +2122,6 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
             ITHACAutilities::assignBC(testFunctionsT[i], BCind, bcValue);
         }
     }
-
-    // ITHACAstream::exportFields(testFunctionsU, "./ITHACAoutput/testFunctions/", testFunctionsU[0].name()); // For Debugging
-    // ITHACAstream::exportFields(testFunctionsT, "./ITHACAoutput/testFunctions/", testFunctionsT[0].name());
 
     for (label i = 0; i < testFunctionsU.size(); i++)
     {

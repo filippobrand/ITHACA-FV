@@ -31,11 +31,12 @@
         fvm::ddt(T)
         + fvm::div(phi, T)
         - fvm::laplacian(alphaEff, T)
-        // ==
-        // Sourceterm
+        ==
+           fvOptions(T)
     );
 
     TEqn.relax();
     TEqn.solve();
+    fvOptions.correct(T);
     rhok = 1.0 - beta * (T - TRef);
 }

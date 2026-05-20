@@ -76,6 +76,7 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
         Nphi_t, FOMproblem);
 
     separateMomentumTemperature = problem->ITHACAdict->lookupOrDefault<bool>("separateMomentumTemperature", false);
+    includeTemperatureSourceTerm = problem->ITHACAdict->lookupOrDefault<bool>("energySourceTerm", false);
     method = problem->ITHACAdict->lookupOrDefault<word>("method", "supremizer");
 
     y = Eigen::VectorXd::Zero(Nphi_u + Nphi_prgh + Nphi_t); // Solution vector
@@ -572,6 +573,10 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
     Eigen::VectorXd M6 = pCommonMatrices->Y * c_tmp * (nu / Pr);
     // Mass Term Temperature
     Eigen::VectorXd M8 = pCommonMatrices->W * c_dot;
+    // Temperature equation - Source term
+    Eigen::VectorXd M9 = pCommonMatrices->St * c_tmp;
+    // Temperature equation - Source term constant part
+    Eigen::VectorXd M9_const = pCommonMatrices->Sconst;
     // Penalty term velocity
     Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(Nphi_u, N_BC);
     Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(Nphi_t, N_BC_t);
@@ -627,7 +632,7 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
         qq = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->Q, 0, j) * c_tmp;
         qt = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->YTurb, 0, j) * c_tmp;
         qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->AveYTurb, 0, j) * c_tmp;
-        fvec(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t;
+        fvec(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t + 500*M9(j) -500*M9_const(j); // Heat transfer coefficient is hardcoded, change soon please
         if (problem->bcMethod == "penalty")
         {
             for (int l = 0; l < N_BC_t; l++)

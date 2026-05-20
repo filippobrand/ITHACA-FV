@@ -160,14 +160,14 @@ public:
     // Snapshot average of pressure
     autoPtr<volScalarField> p_rghavgPtr;
 
-    // Source term modes - Not implemented yet
-    // volScalarModes Sourcemodes;
+    // CellZone where the source term is defined
+    word sourceZoneName = "NOT_DEFINED";
 
-    // Source term snapshots - Not implemented yet
-    // PtrList<volScalarField> Sourcefield;
+    // Reference temperature for the source term
+    scalar TrefSource = 0;
 
-    /// Number of modes used for the source term - Not implemented yet
-    // label Nsourcemodes;
+    // Boolean to decide wheter there is a source term
+    bool energySourceTerm = false;
 
     /// List of snapshots for the solution for eddy viscosity
     PtrList<volScalarField> Nutfield;
@@ -195,6 +195,7 @@ public:
         // Temperature equation
         Eigen::MatrixXd W, Y;
         Eigen::Tensor<double, 3> Q, YTurb, AveYTurb;
+        Eigen::MatrixXd St, Sconst;
         // Aggregates
         Eigen::MatrixXd BTotal;
         Eigen::Tensor<double, 3> CTotal, CTotalAve;
@@ -520,6 +521,22 @@ public:
     /// @param[in]  NPrgh    The number of pressure modes.
 
     Eigen::Tensor<double, 3> turbulencePPEAveTensor2(label NU, label NPrgh);
+
+    //--------------------------------------------------------------------------
+    /// @brief      Source term projection in the energy equation. Only projects the temperature dep part
+    /// @param[in]  NU    The number of temperature modes
+    /// @param[in]  cellZoneName The name of the cell zone where the source term is active
+    /// @param[in]  Tref    The reference temperature
+
+    Eigen::MatrixXd sourceTermEnergy(label NT, word cellZoneName, scalar Tref);
+
+    //--------------------------------------------------------------------------
+    /// @brief      Source term projection in the energy equation. Only projects the constant
+    /// @param[in]  NU    The number of temperature modes
+    /// @param[in]  cellZoneName The name of the cell zone where the source term is active
+    /// @param[in]  Tref    The reference temperature
+
+    Eigen::MatrixXd sourceTermConstant(label NT, word cellZoneName, scalar Tref);
 
     //--------------------------------------------------------------------------
     /// @brief      A method to compute the two matrices needed for the RBF interpolation by combining
