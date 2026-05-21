@@ -355,6 +355,31 @@ template<class Type>
 void changeBCtype(GeometricField<Type, fvPatchField, volMesh>&
                   field, word BCtype, label BC_ind);
 
+//--------------------------------------------------------------------------
+/// @brief      Change the boundary condition type for a GeometricField
+///
+/// @param      field   The field
+/// @param[in]  BCtype  The The BC type you want to set
+/// @param[in]  BC_ind  The BC index
+///
+/// @tparam     Type    The type of field it can be scalar or vector
+///
+template<class Type>
+void changeBCtype(GeometricField<Type, fvsPatchField, surfaceMesh>&
+                  field, word BCtype, label BC_ind);
+
+//--------------------------------------------------------------------------
+/// @brief      Change the boundary condition type for a GeometricField
+///
+/// @param      field   The field
+/// @param[in]  BCtype  The The BC type you want to set
+/// @param[in]  BC_ind  The BC index
+///
+/// @tparam     Type    The type of field it can be scalar or vector
+///
+template<class Type>
+void changeBCtype(GeometricField<Type, pointPatchField, pointMesh>&
+                  field, word BCtype, label BC_ind);
 
 //--------------------------------------------------------------------------
 /// @brief      Sets some given Indices of a list of objects to given values

@@ -291,6 +291,14 @@ Modes<Type, PatchField, GeoMesh>::reconstruct(
         InField = (InField.array() < 0).select(0, InField);
     }
 
+    for (label i = 0; i < NBC; i++) // Bit of a hack to reconstruct the shifted pressure field, avoiding the updateCoeffs() error
+    {
+        if (inputField.boundaryField()[i].type() == "fixedFluxPressure")
+        {
+            ITHACAutilities::changeBCtype(inputField, "fixedValue", i);
+        }
+    }
+
     inputField = Foam2Eigen::Eigen2field(inputField, InField);
     inputField.rename(Name);
 

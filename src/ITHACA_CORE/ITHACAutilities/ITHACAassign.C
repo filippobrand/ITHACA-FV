@@ -775,6 +775,40 @@ template void changeBCtype<vector>
 (GeometricField<vector, fvPatchField, volMesh>& field, word BCtype,
  label BC_ind);
 
+// Add support for surfaceMesh (fvsPatchField)
+template<class Type>
+void changeBCtype(
+    GeometricField<Type, fvsPatchField, surfaceMesh>& field, word BCtype,
+    label BC_ind)
+{
+    field.boundaryFieldRef().set(BC_ind, fvsPatchField<Type>::New(BCtype,
+                                 field.mesh().boundary()[BC_ind], field));
+}
+
+template void changeBCtype<scalar>
+(GeometricField<scalar, fvsPatchField, surfaceMesh>& field, word BCtype,
+ label BC_ind);
+template void changeBCtype<vector>
+(GeometricField<vector, fvsPatchField, surfaceMesh>& field, word BCtype,
+ label BC_ind);
+
+// Add support for pointMesh (pointPatchField)
+template<class Type>
+void changeBCtype(
+    GeometricField<Type, pointPatchField, pointMesh>& field, word BCtype,
+    label BC_ind)
+{
+    field.boundaryFieldRef().set(BC_ind, pointPatchField<Type>::New(BCtype,
+                                 field.mesh().boundary()[BC_ind], field));
+}
+
+template void changeBCtype<scalar>
+(GeometricField<scalar, pointPatchField, pointMesh>& field, word BCtype,
+ label BC_ind);
+template void changeBCtype<vector>
+(GeometricField<vector, pointPatchField, pointMesh>& field, word BCtype,
+ label BC_ind);
+
 template<typename Type>
 void assignMixedBC(
     GeometricField<Type, fvPatchField, volMesh>& field, label BC_ind,

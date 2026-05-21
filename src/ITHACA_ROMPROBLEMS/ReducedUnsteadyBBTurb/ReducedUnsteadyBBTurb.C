@@ -816,14 +816,12 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
     volScalarField prghRec("prghRec", problem->P_rghmodes[0]);
     volScalarField nutFluctRec("nutFluctRec", problem->nutmodes[0]);
 
-    // TODO: Implement a reconstruction of the field p_rgh using the reconstruc method instead of the messy one below
-
     uRecFields = problem->L_U_SUPmodes.reconstruct(uRec, CoeffU, "uRec");
     TRecFields = problem->L_Tmodes.reconstruct(TRec, CoeffT, "TRec");
     nutFluctRecFields = problem->nutmodes.reconstruct(nutFluctRec, CoeffNut, "nutFluctRec");
+    prghRecFields = problem->P_rghmodes.reconstruct(prghRec, CoeffPrgh, "prghRec");
 
     // Reconstruct the averaged eddy viscosity field as a linear combination of the nut_param_0 coefficients and the PtrList<volScalarField> avgNutfield;
-
     volScalarField nutAvg(
         IOobject(
             "nutAvgRec",
@@ -850,7 +848,6 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
         dimensionedScalar("zero", problem->nutmodes[0].dimensions(), 0.0));
 
     nutRecFields.resize(0);
-    // Now sum the reconstructed fluctuating and averaged eddy viscosity fields
     forAll(nutFluctRecFields, i)
     {
         nutRecFields.append(nutFluctRecFields[i] + nutAvg);
@@ -861,23 +858,8 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
         ITHACAstream::exportFields(uRecFields, folder, "uRec");
         ITHACAstream::exportFields(TRecFields, folder, "TRec");
         ITHACAstream::exportFields(nutFluctRecFields, folder, "nutFluctRec");
+        ITHACAstream::exportFields(prghRecFields, folder, "prghRec");
         ITHACAstream::exportFields(nutRecFields, folder, "nutRec");
-    }
-    // TODO: Implement correct BC handling for shifted pressure reconstruction (fixedFluxPressure in theory requires a gradient evaluation I guess)
-    // prghRecFields = problem->P_rghmodes.reconstruct(prghRec, CoeffPrgh, "prghRec");
-    // if (exportFields)
-    // {
-    //     ITHACAstream::exportFields(prghRecFields, folder, "prghRec");
-    // }
-    for (int i = 0; i < CoeffPrgh.size(); i++)
-    {
-        volScalarField prghRec("prghRec", problem->P_rghmodes[0]);
-        prghRec *= scalar(0);
-        for (int j = 0; j < Nphi_prgh; j++)
-        {
-            prghRec += problem->P_rghmodes[j] * CoeffPrgh[i](j, 0);
-        }
-        ITHACAstream::exportSolution(prghRec, name(i + 1), folder);
     }
 }
 
@@ -1614,7 +1596,7 @@ void ReducedUnsteadyBBTurb::reset()
 {
     online_solution.clear();
     rbfCoeffMat.setZero();
-    
+
     uRecFields.clear();
     TRecFields.clear();
     nutFluctRecFields.clear();
