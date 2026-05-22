@@ -622,13 +622,9 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
     {
         coeffL2vel = ITHACAutilities::getCoeffs(Uomfield, Umodes, NUmodes); // Returns a [modes x snapshots]
         skipRBFIndex = liftfield.size();
-    } else if (bcMethod == "penalty")
+    } else
     {
         coeffL2vel = ITHACAutilities::getCoeffs(Ufield, Umodes, NUmodes); // Returns a [modes x snapshots]
-    } else if (bcMethod == "Gunzburger")
-    {
-        label testFunctionSize = testFunctionsU.size();
-        coeffL2vel = ITHACAutilities::getCoeffs(Ufield, Umodes, testFunctionSize); // Returns a [modes x snapshots]
     }
     Info << "Shape of the L2 velocity coeff matrix: " << coeffL2vel.rows() << " x " << coeffL2vel.cols() << endl;
     Info << "Shape of the L2 eddy viscosity coeff matrix: " << coeffL2nut.rows() << " x " << coeffL2nut.cols() << endl;
