@@ -1,0 +1,3 @@
+ReducedODESystem.C
+
+LIB = $(FOAM_USER_LIBBIN)/libITHACA_ODE

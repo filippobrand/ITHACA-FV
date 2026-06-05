@@ -88,9 +88,13 @@ private:
 
 public:
     // Constructors
+    BoundaryConditions() { };
     BoundaryConditions(const Eigen::MatrixXd& velocityBC, const Eigen::MatrixXd& temperatureBC, word timeDepMethod);
     BoundaryConditions(const Eigen::VectorXd& velocityBC, const Eigen::VectorXd& temperatureBC);
 
+    // Destructor
+    ~BoundaryConditions() { };
+    
     // Attributes
     /// Vector that stores the current temperature BCs
     Eigen::VectorXd currentTemperatureBC;

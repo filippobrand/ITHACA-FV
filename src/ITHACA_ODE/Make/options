@@ -1,0 +1,17 @@
+sinclude $(GENERAL_RULES)/module-path-user
+
+ifeq (,$(strip $(FOAM_MODULE_APPBIN)))
+    FOAM_MODULE_APPBIN = $(FOAM_USER_APPBIN)
+endif
+ifeq (,$(strip $(FOAM_MODULE_LIBBIN)))
+    FOAM_MODULE_LIBBIN = $(FOAM_USER_LIBBIN)
+endif
+
+EXE_INC = \
+    -I$(LIB_ITHACA_SRC)/thirdparty/Eigen \
+    -I$(LIB_ITHACA_SRC)/ITHACA_CORE/lnInclude \
+    -ftemplate-depth=500 \
+    -Wno-comment \
+    -w \
+    -DOFVER=$${WM_PROJECT_VERSION%.*} \
+    -std=c++17

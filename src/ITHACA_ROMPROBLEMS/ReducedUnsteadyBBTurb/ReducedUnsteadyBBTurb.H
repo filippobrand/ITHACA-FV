@@ -42,255 +42,11 @@ SourceFiles
 #include "ReducedUnsteadyNS.H"
 #include "UnsteadyBBTurb.H"
 #include "BoundaryConditions.H"
+#include "ReducedODESystem.H"
 #include <Eigen/Dense>
 #include <unsupported/Eigen/NonLinearOptimization>
 #include <unsupported/Eigen/NumericalDiff>
 #include <memory>
-
-/// Newton object for the resolution of the reduced problem using a supremizer approach
-struct NewtonUnsteadyBBTurbSup : public newton_argument<double> {
-public:
-    NewtonUnsteadyBBTurbSup() { }
-
-    NewtonUnsteadyBBTurbSup(int Nx, int Ny,
-        UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
-                                  problem(&problem),
-                                  Nphi_u(problem.NUmodes + problem.liftfield.size() + problem.NSUPmodes),
-                                  Nphi_t(problem.NTmodes + problem.liftfieldT.size()),
-                                  N_BC_t(problem.inletIndexT.rows()),
-                                  N_BC(problem.inletIndex.rows()),
-                                  Nphi_prgh(problem.NPrghmodes),
-                                  Nphi_nut(problem.NNutModes),
-                                  nu_fluct(problem.NNutModes),
-                                  nu_param(problem.mu.rows()),
-                                  pCommonMatrices(problem.pCommonMatrices),
-                                  pSupremizerMatrices(problem.pSupremizerMatrices),
-                                  pPPEMatrices(problem.pPPEMatrices),
-                                  pPenaltyMatrices(problem.pPenaltyMatrices)
-    { }
-
-    int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
-    int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
-    UnsteadyBBTurb* problem;
-    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
-    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
-    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
-    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
-    int Nphi_u;
-    int Nphi_t;
-    int N_BC_t;
-    int N_BC;
-    int Nphi_prgh;
-    int Nphi_nut;
-    Eigen::VectorXd nu_fluct;
-    Eigen::VectorXd nu_param;
-    scalar nu;
-    scalar Pr;
-    scalar Pr_t;
-    scalar dt;
-
-    Eigen::VectorXd y_old;
-    Eigen::VectorXd BC_t;
-    Eigen::VectorXd BC;
-    Eigen::MatrixXd tauT;
-    Eigen::MatrixXd tauU;
-    std::vector<SPLINTER::RBFSpline*> SPLINES;
-};
-
-struct NewtonUnsteadyBBTurbSupMomentum : public newton_argument<double> {
-public:
-    NewtonUnsteadyBBTurbSupMomentum() { }
-
-    NewtonUnsteadyBBTurbSupMomentum(int Nx, int Ny,
-        UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
-                                  problem(&problem),
-                                  Nphi_u(problem.NUmodes + problem.liftfield.size() + problem.NSUPmodes),
-                                  Nphi_t(problem.NTmodes + problem.liftfieldT.size()),
-                                  N_BC_t(problem.inletIndexT.rows()),
-                                  N_BC(problem.inletIndex.rows()),
-                                  Nphi_prgh(problem.NPrghmodes),
-                                  Nphi_nut(problem.NNutModes),
-                                  nu_fluct(problem.NNutModes),
-                                  nu_param(problem.mu.rows()),
-                                  pCommonMatrices(problem.pCommonMatrices),
-                                  pSupremizerMatrices(problem.pSupremizerMatrices),
-                                  pPPEMatrices(problem.pPPEMatrices),
-                                  pPenaltyMatrices(problem.pPenaltyMatrices)
-    { }
-    int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
-    int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
-    UnsteadyBBTurb* problem;
-    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
-    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
-    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
-    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
-    int Nphi_u;
-    int Nphi_t;
-    int N_BC_t;
-    int N_BC;
-    int Nphi_prgh;
-    int Nphi_nut;
-    Eigen::VectorXd nu_fluct;
-    Eigen::VectorXd nu_param;
-    scalar nu;
-    scalar Pr;
-    scalar Pr_t;
-    scalar dt;
-
-    Eigen::VectorXd y_old;
-    Eigen::VectorXd BC_t;
-    Eigen::VectorXd BC;
-    Eigen::MatrixXd tauT;
-    Eigen::MatrixXd tauU;
-    std::vector<SPLINTER::RBFSpline*> SPLINES;
-};
-
-struct newtonUnsteadyBBTurbSUPTemperature : public newton_argument<double> {
-public:
-    newtonUnsteadyBBTurbSUPTemperature() { }
-
-    newtonUnsteadyBBTurbSUPTemperature(int Nx, int Ny,
-        UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
-                                  problem(&problem),
-                                  Nphi_u(problem.NUmodes + problem.liftfield.size() + problem.NSUPmodes),
-                                  Nphi_t(problem.NTmodes + problem.liftfieldT.size()),
-                                  N_BC_t(problem.inletIndexT.rows()),
-                                  N_BC(problem.inletIndex.rows()),
-                                  Nphi_prgh(problem.NPrghmodes),
-                                  Nphi_nut(problem.NNutModes),
-                                  nu_fluct(problem.NNutModes),
-                                  nu_param(problem.mu.rows()),
-                                  pCommonMatrices(problem.pCommonMatrices),
-                                  pSupremizerMatrices(problem.pSupremizerMatrices),
-                                  pPPEMatrices(problem.pPPEMatrices),
-                                  pPenaltyMatrices(problem.pPenaltyMatrices)
-    { }
-    int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
-    int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
-    UnsteadyBBTurb* problem;
-    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
-    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
-    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
-    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
-    int Nphi_u;
-    int Nphi_t;
-    int N_BC_t;
-    int N_BC;
-    int Nphi_prgh;
-    int Nphi_nut;
-    Eigen::VectorXd nu_fluct;
-    Eigen::VectorXd nu_param;
-    scalar nu;
-    scalar Pr;
-    scalar Pr_t;
-    scalar dt;
-
-    Eigen::VectorXd y_old;
-    Eigen::VectorXd BC_t;
-    Eigen::VectorXd BC;
-    Eigen::MatrixXd tauT;
-    Eigen::MatrixXd tauU;
-    std::vector<SPLINTER::RBFSpline*> SPLINES;
-};
-
-struct NewtonUnsteadyBBTurbVMB : public newton_argument<double> {
-public:
-    NewtonUnsteadyBBTurbVMB() { }
-
-    NewtonUnsteadyBBTurbVMB(int Nx, int Ny,
-        UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
-                                  problem(&problem),
-                                  Nphi_u(problem.NUmodes + problem.liftfield.size()),
-                                  Nphi_prgh(problem.NPrghmodes),
-                                  Nphi_t(problem.NTmodes + problem.liftfieldT.size()),
-                                  N_BC_t(problem.inletIndexT.rows()),
-                                  N_BC(problem.inletIndex.rows()),
-                                  Nphi_nut(problem.NNutModes),
-                                  nu_fluct(problem.NNutModes),
-                                  nu_param(problem.mu.rows()),
-                                  pCommonMatrices(problem.pCommonMatrices),
-                                  pSupremizerMatrices(problem.pSupremizerMatrices),
-                                  pPPEMatrices(problem.pPPEMatrices),
-                                  pPenaltyMatrices(problem.pPenaltyMatrices)
-    { }
-
-    int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
-    int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
-    UnsteadyBBTurb* problem;
-    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
-    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
-    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
-    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
-    int Nphi_u;
-    int Nphi_t;
-    int Nphi_prgh;
-    int N_BC_t;
-    int N_BC;
-    int Nphi_nut;
-    Eigen::VectorXd nu_fluct;
-    Eigen::VectorXd nu_param;
-    scalar nu;
-    scalar Pr;
-    scalar Pr_t;
-    scalar dt;
-
-    Eigen::VectorXd y_old;
-    Eigen::VectorXd BC_t;
-    Eigen::VectorXd BC;
-    Eigen::MatrixXd tauT;
-    Eigen::MatrixXd tauU;
-    std::vector<SPLINTER::RBFSpline*> SPLINES;
-};
-
-struct NewtonUnsteadyBBTurbPPE : public newton_argument<double> {
-public:
-    NewtonUnsteadyBBTurbPPE() { }
-
-    NewtonUnsteadyBBTurbPPE(int Nx, int Ny,
-        UnsteadyBBTurb& problem): newton_argument<double>(Nx, Ny),
-                                  problem(&problem),
-                                  Nphi_u(problem.NUmodes + problem.liftfield.size()),
-                                  Nphi_t(problem.NTmodes + problem.liftfieldT.size()),
-                                  N_BC_t(problem.inletIndexT.rows()),
-                                  N_BC(problem.inletIndex.rows()),
-                                  Nphi_prgh(problem.NPrghmodes),
-                                  Nphi_nut(problem.NNutModes),
-                                  nu_fluct(problem.NNutModes),
-                                  nu_param(problem.mu.rows()),
-                                  pCommonMatrices(problem.pCommonMatrices),
-                                  pSupremizerMatrices(problem.pSupremizerMatrices),
-                                  pPPEMatrices(problem.pPPEMatrices),
-                                  pPenaltyMatrices(problem.pPenaltyMatrices)
-    { }
-
-    int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
-    int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
-
-    UnsteadyBBTurb* problem;
-    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
-    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
-    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
-    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
-    int Nphi_u;
-    int Nphi_t;
-    int Nphi_prgh;
-    int Nphi_nut;
-    int N_BC_t;
-    int N_BC;
-    Eigen::VectorXd nu_fluct;
-    Eigen::VectorXd nu_param;
-    scalar nu;
-    scalar Pr;
-    scalar Pr_t;
-    scalar dt;
-
-    Eigen::VectorXd y_old;
-    Eigen::VectorXd BC_t;
-    Eigen::VectorXd BC;
-    Eigen::MatrixXd tauT;
-    Eigen::MatrixXd tauU;
-    std::vector<SPLINTER::RBFSpline*> SPLINES;
-};
 
 /*---------------------------------------------------------------------------*\
                         Class reducedProblem Declaration
@@ -337,69 +93,21 @@ private:
 
     /// @brief      Carries out the time loop for the online solve. Templated to support different Newton object types.
     ///
-    /// @param[in,out]  newtonObject      The Newton object to be used in the time loop
-    /// @param[in,out]  boundaryConditions  The BoundaryConditions object containing the BCs
+    /// @param[in,out]  newtonObject     The Newton object to be used in the time loop
     /// @param[in]      firstRBFInd      The first RBF index to use
     /// @param[in]      numberOfStores   The number of stores to be used in the time loop
-    template <typename NewtonType>
-    void onlineTimeLoop(NewtonType& newtonObject, BoundaryConditions& boundaryConditions, int firstRBFInd, int numberOfStores);
-
-    /// @brief      Carries out the time loop for the online solve, but uses a newton object for momentum and one for temperature. Templated to support different Newton object types.
-    ///
-    /// @param[in,out]  newtonObject      The Newton object to be used in the time loop
-    /// @param[in,out]  boundaryConditions  The BoundaryConditions object containing the BCs
-    /// @param[in]      firstRBFInd      The first RBF index to use
-    /// @param[in]      numberOfStores   The number of stores to be used in the time loop
-    template <typename NewtonTypeMomentum, typename NewtonTypeTemperature>
-    void onlineTimeLoopSegregated(NewtonTypeMomentum& newtonObjectMomentum, NewtonTypeTemperature& newtonObjectTemperature, BoundaryConditions& boundaryConditions, int firstRBFInd, int numberOfStores);
-
-    /// @brief      Set the boundary conditions in the (templated) Newton object
-    ///
-    /// @param[in,out]  newtonObject  The Newton object where to set the BCs
-    /// @param[in]      boundaryConditions  The BoundaryConditions object containing the BCs
-    template <typename NewtonType>
-    void setNewtonObjectBC(NewtonType& newtonObject, BoundaryConditions& boundaryConditions);
-
-    /// @brief      Method to configure a generic Newton object with the current settings. What it does is assign physical properties,
-    ///             time step, boundary conditions, stabilization coefficients, etc. Templated to support different Newton object types.
-    ///
-    /// @param[in,out]  newtonObject  The Newton object to be configured
-    /// @param[in]      currentY     The current reduced solution vector
-    template <typename NewtonType>
-    void configureNewtonObject(NewtonType& newtonObject, const Eigen::VectorXd& currentY, BoundaryConditions& boundaryConditions);
-
-    /// @brief Method to perform an online solve using a supremizer stabilisation method
-    /// @param[in]  boundaryConditions The boundary conditions object to be used in the online solve
-    /// @param[in]  startSnap Index of the snapshot used to compute the initial coefficients
-    ///
-    void solveOnline_sup(BoundaryConditions& boundaryConditions, int startSnap = 0);
+    template <typename ODESolver>
+    void onlineTimeLoop(ODESolver& ode_solver, int firstRBFInd, int numberOfStores);
 
     /// @brief Method to perform an online solve using a PPE stabilisation method
-    /// @param[in]  boundaryConditions The boundary conditions object to be used in the online solve
-    /// @param[in]  startSnap Index of the snapshot used to compute the initial coefficients
     ///
-    void solveOnline_PPE(BoundaryConditions& boundaryConditions, int startSnap = 0);
+    void solveOnline_PPE();
 
-    /// @brief Method to perform an online solve using a VMB  method
+    /// @brief Method to carry out the RBF interpolation of nut
     ///
-    /// @param[in]  boundaryConditions The boundary conditions object to be used in the online solve
-    /// @param[in]  startSnap Index of the snapshot used to compute the initial coefficients
-    ///
-    void solveOnline_VMB(BoundaryConditions& boundaryConditions, int startSnap = 0);
-
-    /// @brief   Estimate the penalty factor using the iterative approach developed by S. Star.
-    ///
-    /// @param[in] boundaryConditions  BoundaryConditions object containing the BCs to be used in the online solve
-    /// @param[in] startSnap        Snapshot to use as initial condition
-    ///
-    void estimatePenaltyFactorSupremizer(BoundaryConditions& boundaryConditions, int startSnap);
-
-    /// @brief   Estimate the penalty factor using the iterative approach developed by S. Star.
-    ///
-    /// @param[in] boundaryConditions  BoundaryConditions object containing the BCs to be used in the online solve
-    /// @param[in] startSnap        Snapshot to use as initial condition
-    ///
-    void estimatePenaltyFactorPPE(BoundaryConditions& boundaryConditions, int startSnap);
+    /// @param[in]  ode_solver The ODE solver used for the online time loop, needed to access the solution at the previous time step if the derivative is included in the RBF interpolation
+    template <typename ODESolver>
+    void interpolateEddyViscosity(ODESolver& ode_solver);
 
 public:
     // Constructors
@@ -410,7 +118,12 @@ public:
     /// @param[in]  problem  a full order UnsteadyBBTurb problem
     ///
     explicit ReducedUnsteadyBBTurb(UnsteadyBBTurb& problem);
+
+    /// Destructor
     ~ReducedUnsteadyBBTurb() { };
+
+    /// Boundary Conditions object
+    BoundaryConditions boundaryConditions;
 
     /// List of pointers to store the modes for temperature including lift field modes
     PtrList<volScalarModes> LTmodes;
@@ -423,21 +136,6 @@ public:
 
     /// List of pointers to store the shifted pressure (prgh) modes
     PtrList<volScalarModes> Prghmodes;
-
-    /// Function object to call the non linear solver sup approach
-    NewtonUnsteadyBBTurbSup newton_object_sup;
-
-    /// Newton object to call the non linear solver for momentum when solving momentum and temperature equations separately
-    NewtonUnsteadyBBTurbSupMomentum newton_object_sup_momentum;
-
-    /// Newton object to call the non linear solver for temperature when solving momentum and temperature equations separately
-    newtonUnsteadyBBTurbSUPTemperature newton_object_sup_temperature;
-
-    /// Function object to call the non linear solver PPE approach
-    NewtonUnsteadyBBTurbPPE newton_object_PPE;
-
-    /// Function object to call the non linear solver VMB approach
-    NewtonUnsteadyBBTurbVMB newton_object_VMB;
 
     /// Shared pointer to common matrices object for the reduced problem
     std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
@@ -463,11 +161,11 @@ public:
     /// Reconstructed total turbulent viscosity field
     PtrList<volScalarField> nutRecFields;
 
-    /// Initial eddy viscosity reduced coefficients - fluctuating part
-    Eigen::VectorXd nut0;
+    /// Vector of eddy viscosity coefficients for the fluctuating part
+    Eigen::VectorXd nut_fluct;
 
-    /// Initial eddy viscosity reduced coefficients - parametrized part
-    Eigen::VectorXd nut_param_0;
+    /// Vector of eddy viscosity coefficients for the parametrized part
+    Eigen::VectorXd nut_param;
 
     // Parameters for the current run:
     Eigen::VectorXd mu_now;
@@ -480,6 +178,15 @@ public:
 
     /// Number of turbulent viscosity mdodes
     int Nphi_nut;
+
+    // Velocity test function space size
+    int Ntest_u;
+
+    // Pressure test function space size
+    int Ntest_prgh;
+
+    // Temperature test function space size
+    int Ntest_t;
 
     /// Number of parametrized boundary conditions related to temperature field
     int N_BC_t;
@@ -504,9 +211,6 @@ public:
 
     /// Boolean to choose whether to skip the lifting modes in the reconstruction
     bool skipLift = true;
-
-    /// Boolean flag to chose whether to solve the momentum and temperature equations separately using two different Newton solvers
-    bool separateMomentumTemperature = false;
 
     /// Pointer to the FOM problem
     UnsteadyBBTurb* problem;
@@ -558,5 +262,25 @@ public:
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+/*---------------------------------------------------------------------------*\
+                        Class ODESystemAdapter Declaration
+\*---------------------------------------------------------------------------*/
+/// Adapter class that inherits from ReducedODESystem and defines a evaluateResidual method to interface with ODE solvers
+
+class ODEStructurePPETurb : public ReducedODESystem
+{
+  private:
+    const ReducedUnsteadyBBTurb& rom;
+  
+  public:
+    explicit ODEStructurePPETurb(const ReducedUnsteadyBBTurb& rom) : rom(rom) { }
+
+    void evaluateRHS(const Eigen::VectorXd& state, Eigen::VectorXd& rhs, double t) const override
+    {
+        // This method is not used in the current implementation, as the residual is evaluated directly in the evaluateResidual method. However, it must be defined to inherit from ReducedODESystem.
+    }
+
+    void evaluateResidual(const Eigen::VectorXd& state, const Eigen::VectorXd& state_dot, Eigen::VectorXd& residual, double t) const override;
+};
 
 #endif
