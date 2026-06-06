@@ -62,16 +62,11 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     Ntest_t = pCommonMatrices->Y.rows();
     Nphi_nut = pCommonMatrices->CTotal.dimension(1);
 
-    Info << "Reading the matrices, the following number of modes will be used: " << endl;
-    Info << "Velocity modes and test functions: " << Nphi_u << " and " << Ntest_u << endl;
-    Info << "Pressure modes and test functions: " << Nphi_prgh << " and " << Ntest_prgh << endl;
-    Info << "Temperature modes and test functions: " << Nphi_t << " and " << Ntest_t << endl;
-    Info << "Eddy viscosity modes: " << Nphi_nut << endl;
-
     dimA = problem->dimA;
-    method = problem->ITHACAdict->lookupOrDefault<word>("method", "supremizer");
+    method = problem->ITHACAdict->lookupOrDefault<word>("method", "PPE");
 
     y = Eigen::VectorXd::Zero(Nphi_u + Nphi_prgh + Nphi_t); // Solution vector
+    residual = Eigen::VectorXd::Zero(y.size()); // Residual vector
 
     if (skipLift == true && problem->bcMethod == "lift")
     {
@@ -89,6 +84,31 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     penaltyMaxIter = problem->ITHACAdict->lookupOrDefault<int>("penaltyMaxIter", 50);
     penaltyTolU = problem->ITHACAdict->lookupOrDefault<float>("penaltyTolU", 1e-3);
     penaltyTolT = problem->ITHACAdict->lookupOrDefault<float>("penaltyTolT", 1e-2);
+
+    M_Assert(problem->bcMethod == "penalty" || problem->bcMethod == "Gunzburger" || problem->bcMethod == "lift", "Boundary condition method not recognized. Please select either 'penalty', 'Gunzburger' or 'lift'.");
+    if (problem->bcMethod == "penalty")
+    {
+        penaltyBCs = true;
+        gunzburgerBCs = false;
+        liftBCs = false;
+        Info << "Using penalty boundary conditions." << endl;
+    } else if (problem->bcMethod == "Gunzburger")
+    {
+        gunzburgerBCs = true;
+        penaltyBCs = false;
+        liftBCs = false;
+        Info << "Using Gunzburger boundary conditions." << endl;
+    } else if (problem->bcMethod == "lift")
+    {
+        liftBCs = true;
+        penaltyBCs = false;
+        gunzburgerBCs = false;
+        Info << "Using lifting function for boundary conditions." << endl;
+    }
+    if (problem->timedepbcMethod == "yes")
+    {
+        timeDepBCs = true;
+    }
 
     M_Assert(penaltyTolU > 0 && penaltyTolT > 0, "Penalty factor optimization tolerances must be positive.");
     inf_sup_constant();
@@ -109,28 +129,28 @@ void ReducedUnsteadyBBTurb::solveOnline_PPE()
     time = tstart;
 
     ODEStructurePPETurb ode_structure(*this);
-    BDF2Solver solver(ode_structure, y.size());
+    BDF2Solver ode_solver(ode_structure, y.size());
 
-    onlineTimeLoop(solver, firstRBFIndex, numberOfStores);
+    onlineTimeLoop(ode_solver, numberOfStores);
 }
 
-template <typename ODESolver>
-void ReducedUnsteadyBBTurb::interpolateEddyViscosity(ODESolver& ode_solver)
+template <typename ODESolverType>
+void ReducedUnsteadyBBTurb::interpolateEddyViscosity(ODESolverType& ode_solver)
 {
-  Eigen::VectorXd RBFInput = Eigen::VectorXd::Zero(dimA);
-  if (problem->derivativeInRBF == true)
-  {
-    Eigen::VectorXd aDer = Eigen::VectorXd::Zero(Nphi_u);
-    aDer = (y.head(Nphi_u) - ode_solver.y_old.head(Nphi_u)) / dt;
-    RBFInput << y.segment(firstRBFIndex, dimA / 2), aDer.segment(firstRBFIndex, dimA / 2);
-  } else
-  {
-      RBFInput << y.segment(firstRBFIndex, dimA);
-  }
-  for (int j = 0; j < Nphi_nut; j++)
-  {
-      nut_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
-  }
+    Eigen::VectorXd RBFInput = Eigen::VectorXd::Zero(dimA);
+    if (problem->derivativeInRBF == true)
+    {
+        Eigen::VectorXd aDer = Eigen::VectorXd::Zero(Nphi_u);
+        aDer = (y.head(Nphi_u) - ode_solver.y_old.head(Nphi_u)) / dt;
+        RBFInput << y.segment(firstRBFIndex, dimA / 2), aDer.segment(firstRBFIndex, dimA / 2);
+    } else
+    {
+        RBFInput << y.segment(firstRBFIndex, dimA);
+    }
+    for (int j = 0; j < Nphi_nut; j++)
+    {
+        nut_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
+    }
 }
 
 // * * * * * * * * * * * * * * * Solve Functions  * * * * * * * * * * * * * //
@@ -299,59 +319,6 @@ void ReducedUnsteadyBBTurb::validateSettings()
         "The variable exportEvery must be an integer multiple of the variable storeEvery.");
 }
 
-template <typename ODESolver>
-void ReducedUnsteadyBBTurb::onlineTimeLoop(
-    ODESolver& ode_solver, int firstRBFIndex, int numberOfStores)
-{
-    Color::Modifier red(Color::FG_RED);
-    Color::Modifier green(Color::FG_GREEN);
-    Color::Modifier def(Color::FG_DEFAULT);
-
-    Eigen::VectorXd res(y); // Residual vector
-
-    int timeStepCounter = 0;
-    int nextStore = 0;
-    int storedSnapshotsCounter = 0;
-
-    Eigen::MatrixXd tmp_sol(y.rows() + 1, 1);
-    tmp_sol(0) = time;
-    tmp_sol.col(0).tail(y.rows()) = y;
-
-    while (time < finalTime - dt)
-    {
-        time += dt;
-        boundaryConditions.updateTimeDependentBC(time);
-        res.setZero();
-        ode_solver.solveStep(y, time, dt);
-        interpolateEddyViscosity(ode_solver);
-
-        if (problem->bcMethod == "lift")
-        {
-            boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
-        }
-
-        tmp_sol(0) = time;
-        tmp_sol.col(0).tail(y.rows()) = y;
-
-        if (timeStepCounter == nextStore)
-        {
-            if (storedSnapshotsCounter >= online_solution.size())
-            {
-                online_solution.append(tmp_sol);
-            } else
-            {
-                online_solution[storedSnapshotsCounter] = tmp_sol;
-            }
-            rbfCoeffMat(0, storedSnapshotsCounter) = time;
-            rbfCoeffMat.block(1, storedSnapshotsCounter, Nphi_nut, 1) = nut_fluct;
-            nextStore += numberOfStores;
-            storedSnapshotsCounter++;
-        }
-        timeStepCounter++;
-    }
-    Info << "Online solution computed, with total time steps solved: " << timeStepCounter << endl;
-}
-
 void ReducedUnsteadyBBTurb::inf_sup_constant()
 {
     double a;
@@ -371,13 +338,60 @@ void ReducedUnsteadyBBTurb::inf_sup_constant()
     Info << "### STABILITY: The inf-sup constant is: " << a << endl;
 }
 
+template <typename ODESolverType>
+void ReducedUnsteadyBBTurb::onlineTimeLoop(ODESolverType& ode_solver, int numberOfStores)
+{
+    int timeStepCounter = 0;
+    int nextStore = 0;
+    int storedSnapshotsCounter = 0;
+    bool print_residual = false;
+
+    const Eigen::Index nRows = y.rows();
+    Eigen::MatrixXd tmp_sol(nRows + 1, 1);
+    tmp_sol(0) = time;
+    tmp_sol.bottomRows(nRows) = y;
+
+    while (time < finalTime - dt)
+    {
+        time += dt;
+        boundaryConditions.updateTimeDependentBC(time);
+        ode_solver.solveStep(y, time, dt, print_residual);
+        interpolateEddyViscosity(ode_solver);
+
+        if (liftBCs)
+        {
+            boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
+        }
+        print_residual = false;
+        if (timeStepCounter == nextStore)
+        {
+            tmp_sol(0) = time;
+            tmp_sol.bottomRows(nRows) = y;
+            if (storedSnapshotsCounter >= online_solution.size())
+            {
+                online_solution.append(tmp_sol);
+            } else
+            {
+                online_solution[storedSnapshotsCounter] = tmp_sol;
+            }
+            rbfCoeffMat(0, storedSnapshotsCounter) = time;
+            rbfCoeffMat.block(1, storedSnapshotsCounter, Nphi_nut, 1) = nut_fluct;
+            nextStore += numberOfStores;
+            storedSnapshotsCounter++;
+            print_residual = true;
+        }
+        timeStepCounter++;
+    }
+    Info << "Online solution computed, total time steps solved: " << timeStepCounter << endl;
+}
+
 void ReducedUnsteadyBBTurb::solveOnline(const Eigen::MatrixXd& vel_now_BC, const Eigen::MatrixXd& temp_now_BC, int startSnap)
 {
     Info << "########### Online solve N° " << count_online_solve << " ###########" << endl;
     validateSettings();
     boundaryConditions = BoundaryConditions(vel_now_BC, temp_now_BC, "linear");
     boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC, N_BC_t);
-    if (problem->bcMethod == "lift")
+    if (liftBCs)
     {
         boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
     }
@@ -387,7 +401,7 @@ void ReducedUnsteadyBBTurb::solveOnline(const Eigen::MatrixXd& vel_now_BC, const
 
     M_Assert(method == "PPE", "Currently, only the PPE stabilization method is implemented for the online solve. Please select 'PPE' as method in the ITHACAdict or implement the selected method.");
 
-    if (problem->bcMethod == "penalty" && optimizePenaltyFactor == true)
+    if (penaltyBCs && optimizePenaltyFactor == true)
     {
         Info << "Penalty factor estimation for PPE is not available yet." << endl;
     }
@@ -421,6 +435,11 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
     Eigen::VectorXd b = state.segment(rom.Nphi_u, rom.Nphi_prgh);
     Eigen::VectorXd c = state.tail(rom.Nphi_t);
     Eigen::VectorXd c_dot = state_dot.tail(rom.Nphi_t);
+
+    bool use_penalty_bc = rom.penaltyBCs;
+    bool use_time_dep_bc = rom.timeDepBCs;
+    bool use_gunz_bc = rom.gunzburgerBCs;
+    bool use_lift_bc = rom.liftBCs;
 
     // Convective term momentum equation
     Eigen::MatrixXd cc(1, 1);
@@ -462,7 +481,7 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
     Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(rom.Nphi_u, rom.N_BC);
     Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(rom.Nphi_t, rom.N_BC_t);
 
-    if (rom.problem->bcMethod == "penalty")
+    if (use_penalty_bc)
     {
         for (int l = 0; l < rom.N_BC; l++)
         {
@@ -473,14 +492,14 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
             penaltyT.col(l) = rom.tauT(l, 0) * (rom.boundaryConditions.currentTemperatureBC(l) * rom.pPenaltyMatrices->bcTempVec.col(l) - Eigen::SliceFromTensor(rom.pPenaltyMatrices->bcTempMat, 0, l) * c);
         }
     }
-    for (int i = 0; i < rom.Ntest_u ; i++)
+    for (int i = 0; i < rom.Ntest_u; i++)
     {
         cc = a.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->C, 0, i) * a;
         ct = rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->CTotal, 0, i) * a;
         caveraged = rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->CTotalAve, 0, i) * a;
         residual(i) = -M5(i) + M11(i) - cc(0, 0) - M10(i) - M2(i) + ct(0, 0) + caveraged(0, 0);
 
-        if (rom.problem->bcMethod == "penalty")
+        if (use_penalty_bc)
         {
             for (int l = 0; l < rom.N_BC; l++)
             {
@@ -495,7 +514,7 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
         turbPPE = rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pPPEMatrices->CTotalPPEFluct, 0, j) * a + rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pPPEMatrices->CTotalPPEAve, 0, j) * a;
         residual(k) = M3(j, 0) + gg(0, 0) + M12(j, 0) - M7(j, 0) - turbPPE(0, 0);
 
-        if (rom.problem->timedepbcMethod == "yes")
+        if (use_time_dep_bc)
         {
             residual(k) += M13(j, 0);
         }
@@ -507,7 +526,7 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
         qt = rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->YTurb, 0, j) * c;
         qt_averaged = rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->AveYTurb, 0, j) * c;
         residual(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / rom.Pr_t + qt_averaged(0, 0) / rom.Pr_t;
-        if (rom.problem->bcMethod == "penalty")
+        if (use_penalty_bc)
         {
             for (int l = 0; l < rom.N_BC_t; l++)
             {
@@ -516,7 +535,7 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
         }
     }
 
-    if (rom.problem->bcMethod == "Gunzburger")
+    if (use_gunz_bc)
     {
         Eigen::MatrixXd gunzburgerBCProduct = a.transpose() * rom.problem->GunzburgerBCMatrixVelocity;
         Eigen::MatrixXd gunzburgerBCProductTemp = c.transpose() * rom.problem->GunzburgerBCMatrixTemperature;
@@ -532,7 +551,7 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
         }
     }
 
-    else if (rom.problem->bcMethod == "lift")
+    else if (use_lift_bc)
     {
         for (int j = 0; j < rom.N_BC; j++)
         {

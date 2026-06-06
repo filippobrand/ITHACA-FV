@@ -626,20 +626,18 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
     {
         coeffL2vel = ITHACAutilities::getCoeffs(Ufield, Umodes, NUmodes); // Returns a [modes x snapshots]
     }
-    Info << "Shape of the L2 velocity coeff matrix: " << coeffL2vel.rows() << " x " << coeffL2vel.cols() << endl;
-    Info << "Shape of the L2 eddy viscosity coeff matrix: " << coeffL2nut.rows() << " x " << coeffL2nut.cols() << endl;
     List<Eigen::MatrixXd> velDerCoeff(2);
     // Returns a list of two matrices: [0] = velocity derivative coeffs, [1] = eddy viscosity coeffs. Each matrix is [snapshots x coeffs]
     if (derivativeInRBF)
     {
         velDerCoeff = velDerivativeCoeff(coeffL2vel.transpose(), coeffL2nut.transpose(), timeSnapshots);
-        dimA = velDerCoeff[0].cols();
     } else
     {
         velDerCoeff[0] = coeffL2vel.transpose();
         velDerCoeff[1] = coeffL2nut.transpose();
-        dimA = velDerCoeff[0].cols();
     }
+    dimA = velDerCoeff[0].cols();
+
     if (Pstream::master())
     {
         ITHACAutilities::createSymLink("./ITHACAoutput/Debug");
@@ -653,15 +651,14 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
     }
 
     rbfSplines.resize(NNutModes);
+    Eigen::MatrixXd x = velDerCoeff[0].transpose();
     for (label i = 0; i < NNutModes; i++)
     {
         // Create a RBF interpolator instance
         rbfSplines[i] = std::make_shared<ithacaInterpolator>(viscDict);
-        Eigen::MatrixXd x = velDerCoeff[0].transpose();
         Eigen::VectorXd y = velDerCoeff[1].col(i);
         // rbfSplines[i]->optimizeShapeParameter(x, y, 5);
         rbfSplines[i]->fit(x, y);
-        Info << "###INTERP - Fitting ithacaInterpolator for mode " << i + 1 << " completed. Here's some informations:" << endl;
         rbfSplines[i]->printInfo();
     }
 
@@ -674,7 +671,6 @@ List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(const Eigen::MatrixXd& 
     List<Eigen::MatrixXd> newCoeffs;
     newCoeffs.setSize(2);
     const label velCoeffsNum = A.cols();
-    const label snapshotsNum = A.rows();
     const label parsSamplesNum = snapshotTimes.size();
 
     Eigen::VectorXi timeSnapshotsPerSampleVec(parsSamplesNum);
@@ -686,26 +682,29 @@ List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(const Eigen::MatrixXd& 
     const label newRowsNum = timeSnapshotsPerSampleVec.sum() - 1 * parsSamplesNum;
     newCoeffs[0].resize(newRowsNum, newColsNum);
     newCoeffs[1].resize(newRowsNum, G.cols());
+
+    Eigen::VectorXd deltaT; // Preallocation, so we don't have to keep reallocating inside the loop
+
     label outOffset = 0;
+    label blockStart = 0;
     for (label j = 0; j < parsSamplesNum; j++)
     {
-        const Eigen::VectorXd& timeSnap = snapshotTimes[j];
         // Create shifted blocks to compute differences. Remember that
         // A has all the snapshots stacked for all parameter samples, with the column
         // indicating the different time-varying coefficients (a1, a2, ..., an)
+        const Eigen::VectorXd& timeSnap = snapshotTimes[j];
         label rowsPerBlock = timeSnapshotsPerSampleVec(j) - 1;
-        label blockStart = timeSnapshotsPerSampleVec.head(j).sum();
-        Eigen::MatrixXd b0 = A.middleRows(blockStart, rowsPerBlock);
-        Eigen::MatrixXd b2 = A.middleRows(blockStart + 1, rowsPerBlock);
-        Eigen::VectorXd deltaT = timeSnap.tail(rowsPerBlock) - timeSnap.head(rowsPerBlock);
-        Eigen::MatrixXd derivative = (b2 - b0).array().colwise() / deltaT.array();
-        Eigen::MatrixXd bNew(rowsPerBlock, newColsNum);
-        bNew.leftCols(velCoeffsNum) = b2;
-        bNew.rightCols(velCoeffsNum) = derivative;
-        newCoeffs[0].block(outOffset, 0, rowsPerBlock, newColsNum) = bNew;
-        newCoeffs[1].middleRows(outOffset, rowsPerBlock) =
-            G.middleRows(blockStart + 1, rowsPerBlock);
+
+        const Eigen::Ref<const Eigen::MatrixXd> b0 = A.middleRows(blockStart, rowsPerBlock);
+        const Eigen::Ref<const Eigen::MatrixXd> b2 = A.middleRows(blockStart + 1, rowsPerBlock);
+
+        deltaT = timeSnap.tail(rowsPerBlock) - timeSnap.head(rowsPerBlock);
+        
+        newCoeffs[0].block(outOffset, 0, rowsPerBlock, velCoeffsNum) = b2;
+        newCoeffs[0].block(outOffset, velCoeffsNum, rowsPerBlock, velCoeffsNum) = (b2 - b0).array().colwise() / deltaT.array();
+        newCoeffs[1].middleRows(outOffset, rowsPerBlock) = G.middleRows(blockStart + 1, rowsPerBlock);
         outOffset += rowsPerBlock;
+        blockStart += timeSnapshotsPerSampleVec(j);
     }
     return newCoeffs;
 }
@@ -716,22 +715,13 @@ void UnsteadyBBTurb::splitEddyViscositySnapshots() // TODO: (Maybe) Use the aver
     label globalIndex = 0;
     avgNutfield.clear();
     fluctNutfield.clear();
+    fluctNutfield.setSize(Nutfield.size());
 
     for (label i = 0; i < nSamples; i++)
     {
         label nSnapshotPerSample = timeSnapshots[i].size();
         Info << "Processing sample " << i + 1 << " with " << nSnapshotPerSample << " snapshots." << endl;
         M_Assert(nSnapshotPerSample > 0, "Each parameter sample must have at least one snapshot");
-
-        // PtrList<volScalarField> sampleNutFieldPtr;
-        // sampleNutFieldPtr.setSize(nSnapshotPerSample);
-        // label startIndex = globalIndex;
-        // label endIndex = globalIndex + nSnapshotPerSample - 1;
-        // for (label j = startIndex; j <= endIndex; j++)
-        // {
-        //     sampleNutFieldPtr.set(j - startIndex, Nutfield[j]);
-        // }
-        // ITHACAutilities::computeAverage(sampleNutFieldPtr);
 
         autoPtr<volScalarField> avgPtr(
             new volScalarField(
@@ -749,29 +739,23 @@ void UnsteadyBBTurb::splitEddyViscositySnapshots() // TODO: (Maybe) Use the aver
         }
 
         avgPtr() /= scalar(nSnapshotPerSample);
+        const volScalarField& avgField = *avgPtr;
         avgNutfield.append(avgPtr);
-        globalIndex += nSnapshotPerSample;
-    }
 
-    label totalSnapshots = Nutfield.size();
-    fluctNutfield.setSize(totalSnapshots);
-
-    globalIndex = 0;
-    label flatIndex = 0;
-
-    for (label i = 0; i < nSamples; i++)
-    {
-        label nSnap = timeSnapshots[i].size();
-        const volScalarField& avgField = avgNutfield[i];
-
-        for (label j = 0; j < nSnap; j++)
+        for (label j = 0; j < nSnapshotPerSample; j++)
         {
-            tmp<volScalarField> tempFluct = Nutfield[globalIndex + j] - avgField;
-            tempFluct.ref().rename("fluctNut");
-            fluctNutfield.set(flatIndex, tempFluct.ptr());
-            flatIndex++;
+            volScalarField* fluctFieldPtr = new volScalarField(
+                IOobject(
+                    "fluctNut",
+                    Nutfield[globalIndex + j].time().timeName(),
+                    Nutfield[globalIndex + j].mesh(),
+                    IOobject::NO_READ,
+                    IOobject::NO_WRITE),
+                Nutfield[globalIndex + j] - avgField);
+            fluctNutfield.set(globalIndex + j, fluctFieldPtr);
         }
-        globalIndex += nSnap;
+
+        globalIndex += nSnapshotPerSample;
     }
 
     if (DEBUG_MODE)

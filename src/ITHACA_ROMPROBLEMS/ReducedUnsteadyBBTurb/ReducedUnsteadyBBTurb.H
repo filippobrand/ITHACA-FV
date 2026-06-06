@@ -60,8 +60,8 @@ private:
     /// Word to indicate the stabilization method. It gets read from the ITHACAdict, and can be either "supremizer", "PPE" or "VMB"
     word method;
 
-    /// Boolean flag to indicate wheter the penalty factor will be optimized using the Star method
-    bool optimizePenaltyFactor = false;
+    /// Word to select the ODE solver
+    word odeSolverName;
 
     /// Number of timesteps over which the penalty method is optimized (if any)
     int nTimestepsPenaltyAdapt = 0;
@@ -81,9 +81,22 @@ private:
     // Index of the current online solution being solved
     int onlineSolutionIndex = 0;
 
+    // Residual vector
+    Eigen::VectorXd residual;
+
     /// @brief   Carries out initial checks and assertions
     ///
     void validateSettings();
+    
+    ///@brief       Computes the reduced version of the inf_sup constant
+    ///
+    void inf_sup_constant();
+
+    /// @brief      Carries out the time loop for the online solve. Templated to support different Newton object types.
+    ///
+    /// @param[in]      numberOfStores   The number of stores to be used in the time loop
+    template <typename ODESolverType>
+    void onlineTimeLoop(ODESolverType& ode_solver, int numberOfStores);
 
     /// @brief    Inverse Distance Weighting function to interpolate the averaged eddy viscosity coefficients
     ///           IDW in this case is a misnomer, as the implementation is specific for a vector of 0s except for the i-th component
@@ -91,23 +104,14 @@ private:
     ///
     Eigen::VectorXd interpolateIDW();
 
-    /// @brief      Carries out the time loop for the online solve. Templated to support different Newton object types.
-    ///
-    /// @param[in,out]  newtonObject     The Newton object to be used in the time loop
-    /// @param[in]      firstRBFInd      The first RBF index to use
-    /// @param[in]      numberOfStores   The number of stores to be used in the time loop
-    template <typename ODESolver>
-    void onlineTimeLoop(ODESolver& ode_solver, int firstRBFInd, int numberOfStores);
-
     /// @brief Method to perform an online solve using a PPE stabilisation method
     ///
     void solveOnline_PPE();
 
     /// @brief Method to carry out the RBF interpolation of nut
     ///
-    /// @param[in]  ode_solver The ODE solver used for the online time loop, needed to access the solution at the previous time step if the derivative is included in the RBF interpolation
-    template <typename ODESolver>
-    void interpolateEddyViscosity(ODESolver& ode_solver);
+    template <typename ODESolverType>
+    void interpolateEddyViscosity(ODESolverType& ode_solver);
 
 public:
     // Constructors
@@ -212,15 +216,25 @@ public:
     /// Boolean to choose whether to skip the lifting modes in the reconstruction
     bool skipLift = true;
 
+      /// Bool to use lifting
+    bool liftBCs = false;
+    
+    /// Bool to use gunzburger
+    bool gunzburgerBCs = false;
+
+    /// Bool to use the penalty method
+    bool penaltyBCs = false;
+
+    /// Boolean flag to indicate wheter the penalty factor will be optimized using the Star method
+    bool optimizePenaltyFactor = false;
+
+    /// Boolean to indicate whther time dep BCs are used
+    bool timeDepBCs = false;
+
     /// Pointer to the FOM problem
     UnsteadyBBTurb* problem;
 
     // Methods
-
-    ///@brief       Computes the reduced version of the inf_sup constant
-    ///
-    void inf_sup_constant();
-
     /// @brief    Method to set the time setting for the online solution
     ///
     /// @param[in]  timeMatrix  The matrix containing the time settings, with the following columns:

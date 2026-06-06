@@ -37,6 +37,7 @@
 #define REDUCEDODESYSTEM_H
 
 #include <Eigen/Dense>
+#include "fvCFD.H"
 #include <unsupported/Eigen/NonLinearOptimization>
 #include <unsupported/Eigen/NumericalDiff>
 #include <unsupported/Eigen/AutoDiff>
@@ -57,122 +58,184 @@ public:
     virtual void evaluateResidual(const Eigen::VectorXd& state, const Eigen::VectorXd& state_dot, Eigen::VectorXd& residual, double t) const = 0;
 };
 
-struct EigenImplicitEulerFunctor : public newton_argument<double>
-{
-  const ReducedODESystem& system;
-  const Eigen::VectorXd* y_old;
-  double t_current;
-  double dt;
+struct EigenImplicitEulerFunctor : public newton_argument<double> {
+    const ReducedODESystem& system;
+    const Eigen::VectorXd* y_old;
+    double t_current;
+    double dt;
 
-  EigenImplicitEulerFunctor(const ReducedODESystem& sys, int N) : newton_argument<double>(N, N), system(sys), y_old(nullptr) {}
+    EigenImplicitEulerFunctor(const ReducedODESystem& sys, int N): newton_argument<double>(N, N), system(sys), y_old(nullptr) { }
 
-  int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const
-  {
-    Eigen::VectorXd y_dot = (x - *y_old) / dt;
-    system.evaluateResidual(x, y_dot, fvec, t_current);
-    return 0;
-  }
+    int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const
+    {
+        Eigen::VectorXd y_dot = (x - *y_old) / dt;
+        system.evaluateResidual(x, y_dot, fvec, t_current);
+        return 0;
+    }
 
-  int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const
-  {
-    Eigen::NumericalDiff<EigenImplicitEulerFunctor> numDiff(*this);
-    numDiff.df(x, fjac);
-    return 0;
-  }
+    int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const
+    {
+        Eigen::NumericalDiff<EigenImplicitEulerFunctor> numDiff(*this);
+        numDiff.df(x, fjac);
+        return 0;
+    }
 };
 
-struct EigenBDF2Functor : public newton_argument<double>
-{
-  const ReducedODESystem& system;
-  const Eigen::VectorXd* y_old;
-  const Eigen::VectorXd* y_older;
-  double t_current;
-  double dt;
+struct EigenBDF2Functor : public newton_argument<double> {
+    const ReducedODESystem& system;
+    const Eigen::VectorXd* y_old;
+    const Eigen::VectorXd* y_older;
+    double t_current;
+    double dt;
 
-  EigenBDF2Functor(const ReducedODESystem& sys, int N) : newton_argument<double>(N, N), system(sys), y_old(nullptr), y_older(nullptr) {}
+    EigenBDF2Functor(const ReducedODESystem& sys, int N): newton_argument<double>(N, N), system(sys), y_old(nullptr), y_older(nullptr) { }
 
-  int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const
-  {
-    Eigen::VectorXd y_dot = (3 * x - 4 * (*y_old) + (*y_older)) / (2 * dt);
-    system.evaluateResidual(x, y_dot, fvec, t_current);
-    return 0;
-  }
+    int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const
+    {
+        Eigen::VectorXd y_dot = (3 * x - 4 * (*y_old) + (*y_older)) / (2 * dt);
+        system.evaluateResidual(x, y_dot, fvec, t_current);
+        return 0;
+    }
 
-  int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const
-  {
-    Eigen::NumericalDiff<EigenBDF2Functor> numDiff(*this);
-    numDiff.df(x, fjac);
-    return 0;
-  }
+    int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const
+    {
+        Eigen::NumericalDiff<EigenBDF2Functor> numDiff(*this);
+        numDiff.df(x, fjac);
+        return 0;
+    }
 };
 
 class ImplicitEulerSolver
 {
-  private:
+private:
     EigenImplicitEulerFunctor functor;
     Eigen::HybridNonLinearSolver<EigenImplicitEulerFunctor> solver;
 
-  public:
+public:
+    ImplicitEulerSolver(const ReducedODESystem& system, int N): functor(system, N), solver(functor), y_old(Eigen::VectorXd::Zero(N)) { }
+
     Eigen::VectorXd y_old; // This is stored so that old state can be accessed to compute derivatives
 
-    ImplicitEulerSolver(const ReducedODESystem& system, int N) : functor(system, N), solver(functor) {}
-
-    void solveStep(Eigen::VectorXd& y, double t, double dt)
+    void solveStep(Eigen::VectorXd& y, double t, double dt, bool print_residual = false)
     {
         y_old = y; // Store the old state before updating it
-        functor.y_old = &y;
+        functor.y_old = &y_old;
         functor.t_current = t;
         functor.dt = dt;
         Eigen::VectorXd y_guess = y;
         solver.solve(y_guess);
         y = y_guess;
+
+        if (print_residual)
+        {
+            // Assuming your functor can calculate its own residual vector
+            printResidual(y, t, dt);
+        }
+    }
+
+    void printResidual(Eigen::VectorXd& y, double t, double dt)
+    {
+        static const Color::Modifier red(Color::FG_RED);
+        static const Color::Modifier green(Color::FG_GREEN);
+        static const Color::Modifier def(Color::FG_DEFAULT);
+        Eigen::VectorXd residual = Eigen::VectorXd::Zero(y.size());
+
+        functor.operator()(y, residual);
+
+        if (residual.norm() > 1e-5)
+        {
+            Info << red << "Time: " << t << " - Residual norm: " << residual.norm() << " - Reached in " << solver.iter << " iterations " << def << endl
+                 << endl;
+        } else
+        {
+            Info << green << "Time: " << t << " - Residual norm: " << residual.norm() << " - Reached in " << solver.iter << " iterations" <<def << endl
+                 << endl;
+        }
     }
 };
 
 class BDF2Solver
 {
-  private:
+private:
     EigenBDF2Functor functor;
     Eigen::HybridNonLinearSolver<EigenBDF2Functor> solver;
     EigenImplicitEulerFunctor first_step_functor; // We will use this for the first step
     Eigen::HybridNonLinearSolver<EigenImplicitEulerFunctor> first_step_solver; // We will use this for the first step
     bool hasPreviousSteps;
-  public:
+
+public:
+    BDF2Solver(const ReducedODESystem& system, int N): functor(system, N), solver(functor),
+                                                       hasPreviousSteps(false), first_step_functor(system, N),
+                                                       first_step_solver(first_step_functor),
+                                                       y_old(Eigen::VectorXd::Zero(N)),
+                                                       y_older(Eigen::VectorXd::Zero(N)) { }
+
     Eigen::VectorXd y_old; // This is stored so that old state can be accessed
-    BDF2Solver(const ReducedODESystem& system, int N) : functor(system, N), solver(functor), hasPreviousSteps(false), first_step_functor(system, N), first_step_solver(first_step_functor) {}
-    void solveStep(Eigen::VectorXd& y, double t, double dt)
+    Eigen::VectorXd y_older; // Kept as a buffer
+    Eigen::VectorXd y_current; // Kept as a buffer
+
+    void solveStep(Eigen::VectorXd& y, double t, double dt, bool print_residual = false)
     {
         if (!hasPreviousSteps)
         {
-            // For the first step, we can only use Implicit Euler
-            y_old = y; // Store the old state before updating it
-            first_step_functor.y_old = &y;
+            y_old = y;
+
+            first_step_functor.y_old = &y_old;
             first_step_functor.t_current = t;
             first_step_functor.dt = dt;
-            Eigen::VectorXd y_guess = y;
-            first_step_solver.solve(y_guess);
-            y = y_guess;
+
+            y_current = y;
+            first_step_solver.solve(y_current);
+
+            y_older = y_old;
+            y_old = y_current;
+            y = y_current;
+
             hasPreviousSteps = true;
-        }
-        else
+        } else
         {
-            // For subsequent steps, we can use BDF2
-            functor.y_old = &y;
-            functor.y_older = &y_old; // The current state becomes the "older" state for the next step
+            functor.y_old = &y_old;
+            functor.y_older = &y_older;
             functor.t_current = t;
             functor.dt = dt;
-            Eigen::VectorXd y_guess = y; // We can use the current state as an initial guess
-            solver.solve(y_guess);
-            y_old = y; // Update the old state for the next iteration
-            y = y_guess; // Update the current state with the solution
+
+            y_current = y;
+            solver.solve(y_current);
+
+            if (print_residual)
+            {
+                printResidual(y_current, t, dt);
+            }
+            y_older = y_old;
+            y_old = y_current;
+            y = y_current;
         }
     }
 
+    void printResidual(Eigen::VectorXd& y, double t, double dt)
+    {
+        static const Color::Modifier red(Color::FG_RED);
+        static const Color::Modifier green(Color::FG_GREEN);
+        static const Color::Modifier def(Color::FG_DEFAULT);
+        Eigen::VectorXd residual = Eigen::VectorXd::Zero(y.size());
+
+        functor.operator()(y, residual);
+
+        if (residual.norm() > 1e-5)
+        {
+            Info << red << "Time: " << t << " - Residual norm: " << residual.norm() << " - Reached in " << solver.iter << " iterations. Average residual: " << residual.mean() << def << "\n"
+                 << "\n";
+        } else
+        {
+            Info << green << "Time: " << t << " - Residual norm: " << residual.norm() << " - Reached in " << solver.iter << " iterations. Average residual: " << residual.mean() << def << "\n"
+                 << "\n";
+        }
+    }
 };
 
 class TimeManager
 {
-  private:
+private:
     double current_time;
     double dt;
     double initial_time;
@@ -186,13 +249,13 @@ class TimeManager
     int number_of_exported_steps;
     int number_of_steps_taken;
     bool adaptive_time_stepping;
-    
-  public:
+
+public:
     // Constructors
 
     TimeManager() = default;
 
-    TimeManager(double initial, double final, double timestep, double dt_save, double dt_export) : current_time(initial), dt(timestep), initial_time(initial), final_time(final), dt_save_coefficients(dt_save), dt_export_fields(dt_export), adaptive_time_stepping(false)
+    TimeManager(double initial, double final, double timestep, double dt_save, double dt_export): current_time(initial), dt(timestep), initial_time(initial), final_time(final), dt_save_coefficients(dt_save), dt_export_fields(dt_export), adaptive_time_stepping(false)
     {
         steps_between_saves = static_cast<int>(dt_save_coefficients / dt);
         steps_between_exports = static_cast<int>(dt_export_fields / dt);
@@ -209,16 +272,17 @@ class TimeManager
     double getFinalTime() const { return final_time; }
     double getTimeStep() const { return dt; }
     bool isFinished() const { return current_time >= final_time - dt; }
-    void advanceTime() { 
-      current_time += dt;
-      number_of_steps_taken++;
+    void advanceTime()
+    {
+        current_time += dt;
+        number_of_steps_taken++;
     }
     int getNumberOfStepsTaken() const { return number_of_steps_taken; }
-    bool shouldSaveCoefficients() const {
+    bool shouldSaveCoefficients() const
+    {
         return (number_of_steps_taken % steps_between_saves == 0);
     };
     // bool checkExportFields(double time) const;
-
-  };
+};
 
 #endif
