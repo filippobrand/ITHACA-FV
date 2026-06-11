@@ -285,6 +285,11 @@ class ODEStructurePPETurb : public ReducedODESystem
 {
   private:
     const ReducedUnsteadyBBTurb& rom;
+
+    bool use_penalty_bc = rom.penaltyBCs;
+    bool use_time_dep_bc = rom.timeDepBCs;
+    bool use_gunz_bc = rom.gunzburgerBCs;
+    bool use_lift_bc = rom.liftBCs;
   
   public:
     explicit ODEStructurePPETurb(const ReducedUnsteadyBBTurb& rom) : rom(rom) { }

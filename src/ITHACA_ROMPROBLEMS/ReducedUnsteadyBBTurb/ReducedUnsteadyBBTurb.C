@@ -116,7 +116,6 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     // modes from the FOM problem. Maybe in the future the same could be done here
 }
 
-
 // * * * * * * * * * * * * * * * Solve Functions  * * * * * * * * * * * * * //
 void ReducedUnsteadyBBTurb::solveOnline_PPE()
 {
@@ -435,11 +434,6 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
     Eigen::VectorXd b = state.segment(rom.Nphi_u, rom.Nphi_prgh);
     Eigen::VectorXd c = state.tail(rom.Nphi_t);
     Eigen::VectorXd c_dot = state_dot.tail(rom.Nphi_t);
-
-    bool use_penalty_bc = rom.penaltyBCs;
-    bool use_time_dep_bc = rom.timeDepBCs;
-    bool use_gunz_bc = rom.gunzburgerBCs;
-    bool use_lift_bc = rom.liftBCs;
 
     // Convective term momentum equation
     Eigen::MatrixXd cc(1, 1);
