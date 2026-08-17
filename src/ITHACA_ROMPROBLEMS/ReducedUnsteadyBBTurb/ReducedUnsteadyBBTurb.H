@@ -290,6 +290,10 @@ class ODEStructurePPETurb : public ReducedODESystem
     bool use_time_dep_bc = rom.timeDepBCs;
     bool use_gunz_bc = rom.gunzburgerBCs;
     bool use_lift_bc = rom.liftBCs;
+
+    // ROM matrices, which are needed to evaluate the residual. Declared here to avoid allocation at each time step
+    mutable Eigen::VectorXd M5, M11, M10, M2, M8, M6, M3, M12, M7, M13;
+    mutable Eigen::MatrixXd penaltyU, penaltyT, gunzburgerBCProductU, gunzburgerBCProductT;
   
   public:
     explicit ODEStructurePPETurb(const ReducedUnsteadyBBTurb& rom) : rom(rom) { }

@@ -8,10 +8,15 @@ ifeq (,$(strip $(FOAM_MODULE_LIBBIN)))
 endif
 
 EXE_INC = \
+    -I$(LIB_SRC)/OpenFOAM/lnInclude \
     -I$(LIB_ITHACA_SRC)/thirdparty/Eigen \
     -I$(LIB_ITHACA_SRC)/ITHACA_CORE/lnInclude \
+    -I$(LIB_ITHACA_SRC)/ITHACA_ROMPROBLEMS/lnInclude \
     -ftemplate-depth=500 \
     -Wno-comment \
     -w \
     -DOFVER=$${WM_PROJECT_VERSION%.*} \
     -std=c++17
+
+EXE_LIBS = \
+    -lOpenFOAM

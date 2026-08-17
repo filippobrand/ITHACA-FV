@@ -435,45 +435,29 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
     Eigen::VectorXd c = state.tail(rom.Nphi_t);
     Eigen::VectorXd c_dot = state_dot.tail(rom.Nphi_t);
 
-    // Convective term momentum equation
-    Eigen::MatrixXd cc(1, 1);
-    // Non linear term turbulence in momentum equation - average nut
-    Eigen::MatrixXd caveraged(1, 1);
-    // Non linear term turbulence in momentum equation - fluctuating nut
-    Eigen::MatrixXd ct(1, 1);
-    // Tensor term PPE equation
-    Eigen::MatrixXd gg(1, 1);
-    // Convective term temperature
-    Eigen::MatrixXd qq(1, 1);
-    // Turbulence term temperature - average part
-    Eigen::MatrixXd qt_averaged(1, 1);
-    // Turbulence term temperature - fluctuating part
-    Eigen::MatrixXd qt(1, 1);
-    // Turbulence term - PPE
-    Eigen::MatrixXd turbPPE(1, 1);
     // Momentum Term
-    Eigen::VectorXd M11 = rom.pCommonMatrices->BTotal * a * rom.nu;
+    M11 = rom.pCommonMatrices->BTotal * a * rom.nu;
     // Gradient of pressure
-    Eigen::VectorXd M2 = rom.pCommonMatrices->K * b;
+    M2 = rom.pCommonMatrices->K * b;
     // Mass Term
-    Eigen::VectorXd M5 = rom.pCommonMatrices->M * a_dot;
+    M5 = rom.pCommonMatrices->M * a_dot;
     // Pressure Term - Laplacian
-    Eigen::VectorXd M3 = rom.pPPEMatrices->D * b;
+    M3 = rom.pPPEMatrices->D * b;
     // Buoyancy Term - Momentum equation
-    Eigen::VectorXd M10 = rom.pCommonMatrices->H * c;
+    M10 = rom.pCommonMatrices->H * c;
     // Buoyancy term - PPE Equation
-    Eigen::VectorXd M12 = rom.pPPEMatrices->HP * c;
+    M12 = rom.pPPEMatrices->HP * c;
     // BC Term - PPE Equation
-    Eigen::VectorXd M7 = rom.pPPEMatrices->nuBC * a * rom.nu;
+    M7 = rom.pPPEMatrices->nuBC * a * rom.nu;
     // Time dep BC term - PPE Equation
-    Eigen::VectorXd M13 = rom.pPPEMatrices->timedepBC * a_dot;
+    M13 = rom.pPPEMatrices->timedepBC * a_dot;
     // diffusive term temperature
-    Eigen::VectorXd M6 = rom.pCommonMatrices->Y * c * (rom.nu / rom.Pr);
+    M6 = rom.pCommonMatrices->Y * c * (rom.nu / rom.Pr);
     // Mass Term Temperature
-    Eigen::VectorXd M8 = rom.pCommonMatrices->W * c_dot;
-    // Penalty term velocity
-    Eigen::MatrixXd penaltyU = Eigen::MatrixXd::Zero(rom.Nphi_u, rom.N_BC);
-    Eigen::MatrixXd penaltyT = Eigen::MatrixXd::Zero(rom.Nphi_t, rom.N_BC_t);
+    M8 = rom.pCommonMatrices->W * c_dot;
+    // Penalty term
+    penaltyU = Eigen::MatrixXd::Zero(rom.Nphi_u, rom.N_BC);
+    penaltyT = Eigen::MatrixXd::Zero(rom.Nphi_t, rom.N_BC_t);
 
     if (use_penalty_bc)
     {
@@ -488,10 +472,10 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
     }
     for (int i = 0; i < rom.Ntest_u; i++)
     {
-        cc = a.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->C, 0, i) * a;
-        ct = rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->CTotal, 0, i) * a;
-        caveraged = rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->CTotalAve, 0, i) * a;
-        residual(i) = -M5(i) + M11(i) - cc(0, 0) - M10(i) - M2(i) + ct(0, 0) + caveraged(0, 0);
+        double cc = (a.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->C, 0, i) * a).value();
+        double ct = (rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->CTotal, 0, i) * a).value();
+        double caveraged = (rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->CTotalAve, 0, i) * a).value();
+        residual(i) = -M5(i) + M11(i) - cc - M10(i) - M2(i) + ct + caveraged;
 
         if (use_penalty_bc)
         {
@@ -504,9 +488,9 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
     for (int j = 0; j < rom.Ntest_prgh; j++)
     {
         int k = j + rom.Nphi_u;
-        gg = a.transpose() * Eigen::SliceFromTensor(rom.pPPEMatrices->G, 0, j) * a;
-        turbPPE = rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pPPEMatrices->CTotalPPEFluct, 0, j) * a + rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pPPEMatrices->CTotalPPEAve, 0, j) * a;
-        residual(k) = M3(j, 0) + gg(0, 0) + M12(j, 0) - M7(j, 0) - turbPPE(0, 0);
+        double gg = (a.transpose() * Eigen::SliceFromTensor(rom.pPPEMatrices->G, 0, j) * a).value();
+        double turbPPE = (rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pPPEMatrices->CTotalPPEFluct, 0, j) * a).value() + (rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pPPEMatrices->CTotalPPEAve, 0, j) * a).value();
+        residual(k) = M3(j, 0) + gg + M12(j, 0) - M7(j, 0) - turbPPE;
 
         if (use_time_dep_bc)
         {
@@ -516,10 +500,10 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
     for (int j = 0; j < rom.Ntest_t; j++)
     {
         int k = j + rom.Nphi_u + rom.Nphi_prgh;
-        qq = a.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->Q, 0, j) * c;
-        qt = rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->YTurb, 0, j) * c;
-        qt_averaged = rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->AveYTurb, 0, j) * c;
-        residual(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / rom.Pr_t + qt_averaged(0, 0) / rom.Pr_t;
+        double qq = (a.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->Q, 0, j) * c).value();
+        double qt = (rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->YTurb, 0, j) * c).value();
+        double qt_averaged = (rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->AveYTurb, 0, j) * c).value();
+        residual(k) = -M8(j) + M6(j) - qq + qt / rom.Pr_t + qt_averaged / rom.Pr_t;
         if (use_penalty_bc)
         {
             for (int l = 0; l < rom.N_BC_t; l++)
@@ -531,17 +515,17 @@ void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const E
 
     if (use_gunz_bc)
     {
-        Eigen::MatrixXd gunzburgerBCProduct = a.transpose() * rom.problem->GunzburgerBCMatrixVelocity;
-        Eigen::MatrixXd gunzburgerBCProductTemp = c.transpose() * rom.problem->GunzburgerBCMatrixTemperature;
+        gunzburgerBCProductU = a.transpose() * rom.problem->GunzburgerBCMatrixVelocity;
+        gunzburgerBCProductT = c.transpose() * rom.problem->GunzburgerBCMatrixTemperature;
         for (int j = 0; j < rom.N_BC; j++)
         {
             int idx = j + rom.Ntest_u;
-            residual(idx) = gunzburgerBCProduct(0, j) - rom.boundaryConditions.currentVelocityBC(j);
+            residual(idx) = gunzburgerBCProductU(0, j) - rom.boundaryConditions.currentVelocityBC(j);
         }
         for (int j = 0; j < rom.N_BC_t; j++)
         {
             int k = j + rom.Nphi_u + rom.Nphi_prgh + rom.Ntest_t;
-            residual(k) = gunzburgerBCProductTemp(0, j) - rom.boundaryConditions.currentTemperatureBC(j);
+            residual(k) = gunzburgerBCProductT(0, j) - rom.boundaryConditions.currentTemperatureBC(j);
         }
     }
 

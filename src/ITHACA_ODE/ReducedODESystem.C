@@ -31,20 +31,134 @@
 /// \file
 /// Source file of the ReducedODESystem class, containing the implementation of the TimeManager class and the ODEStructurePPETurb adapter class.
 
+#include "ReducedODESystem.H"
+#include "colormod.H"
+#include "IOstreams.H"
 
-// #include "ReducedODESystem.H"
+/// ----- Implicit Euler Functor -----
 
-// TimeManager::TimeManager(double initial, double final, double timestep, double dt_save, double dt_export)
-// {
-//     current_time = initial;
-//     dt = timestep;
-//     initial_time = initial;
-//     final_time = final;
-//     dt_save_coefficients = dt_save;
-//     dt_export_fields = dt_export;
-//     adaptive_time_stepping = false;
+int EigenImplicitEulerFunctor::operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const
+{
+    Eigen::VectorXd y_dot = (x - (*y_old)) / dt;
+    system.evaluateResidual(x, y_dot, fvec, t_current);
+    return 0;
+}
 
-//     steps_between_saves = static_cast<int>(dt_save_coefficients / dt);
-//     steps_between_exports = static_cast<int>(dt_export_fields / dt);
-//     number_of_saved_steps = static_cast<int>((final_time - initial_time) / dt);
-// }
+int EigenImplicitEulerFunctor::df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const
+{
+    Eigen::NumericalDiff<EigenImplicitEulerFunctor> numDiff(*this);
+    numDiff.df(x, fjac);
+    return 0;
+}
+
+/// ----- BDF2 Functors -----
+
+int EigenBDF2Functor::operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const
+{
+    Eigen::VectorXd y_dot = (3 * x - 4 * (*y_old) + (*y_older)) / (2 * dt);
+    system.evaluateResidual(x, y_dot, fvec, t_current);
+    return 0;
+}
+
+int EigenBDF2Functor::df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const
+{
+    Eigen::NumericalDiff<EigenBDF2Functor> numDiff(*this);
+    numDiff.df(x, fjac);
+    return 0;
+}
+
+// ----- Solvers -----
+
+void ImplicitEulerSolver::solveStep(Eigen::VectorXd& y, double t, double dt, bool print_residual)
+{
+    y_old = y; // Store the old state before updating it
+    functor.y_old = &y_old;
+    functor.t_current = t;
+    functor.dt = dt;
+    Eigen::VectorXd y_guess = y;
+    solver.solve(y_guess);
+    y = y_guess;
+
+    if (print_residual)
+    {
+        // Assuming your functor can calculate its own residual vector
+        printResidual(y, t, dt);
+    }
+}
+
+void ImplicitEulerSolver::printResidual(Eigen::VectorXd& y, double t, double dt)
+{
+    // static const Color::Modifier red(Color::FG_RED);
+    // static const Color::Modifier green(Color::FG_GREEN);
+    // static const Color::Modifier def(Color::FG_DEFAULT);
+    Eigen::VectorXd residual = Eigen::VectorXd::Zero(y.size());
+
+    functor.operator()(y, residual);
+
+    if (residual.norm() > 1e-5)
+    {
+        Foam::Info << "Time: " << t << " - Residual norm: " << residual.norm() << " - Reached in " << solver.iter << " iterations " << "\n"
+             << "\n";
+    } else
+    {
+        Foam::Info << "Time: " << t << " - Residual norm: " << residual.norm() << " - Reached in " << solver.iter << " iterations" << "\n" << "\n";
+    }
+}
+
+void BDF2Solver::solveStep(Eigen::VectorXd& y, double t, double dt, bool print_residual)
+{
+    if (!hasPreviousSteps)
+    {
+        y_old = y;
+
+        first_step_functor.y_old = &y_old;
+        first_step_functor.t_current = t;
+        first_step_functor.dt = dt;
+
+        y_current = y;
+        first_step_solver.solve(y_current);
+
+        y_older = y_old;
+        y_old = y_current;
+        y = y_current;
+
+        hasPreviousSteps = true;
+    } else
+    {
+        functor.y_old = &y_old;
+        functor.y_older = &y_older;
+        functor.t_current = t;
+        functor.dt = dt;
+
+        y_current = y;
+        solver.solve(y_current);
+
+        if (print_residual)
+        {
+            printResidual(y_current, t, dt);
+        }
+        y_older = y_old;
+        y_old = y_current;
+        y = y_current;
+    }
+}
+
+void BDF2Solver::printResidual(Eigen::VectorXd& y, double t, double dt)
+{
+    // static const Color::Modifier red(Color::FG_RED);
+    // static const Color::Modifier green(Color::FG_GREEN);
+    // static const Color::Modifier def(Color::FG_DEFAULT);
+    Eigen::VectorXd residual = Eigen::VectorXd::Zero(y.size());
+
+    functor.operator()(y, residual);
+
+    if (residual.norm() > 1e-5)
+    {
+        Foam::Info << "Time: " << t << " - Residual norm: " << residual.norm() << " - Reached in " << solver.iter << " iterations. Average residual: " << residual.mean() << "\n"
+             << "\n";
+    } else
+    {
+        Foam::Info << "Time: " << t << " - Residual norm: " << residual.norm() << " - Reached in " << solver.iter << " iterations. Average residual: " << residual.mean() << "\n"
+             << "\n";
+    }
+}
