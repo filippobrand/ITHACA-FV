@@ -863,13 +863,14 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
     }
 }
 
-void ReducedUnsteadyBBTurb::saveCoefficients(word folder)
+void ReducedUnsteadyBBTurb::saveCoefficients(word folder, word modeIdentifier)
 {
     if (Pstream::master())
     {
         mkDir("./ITHACAoutput/ReducedCoefficients/");
-        ITHACAstream::exportMatrix(online_solution, "reducedCoefficients", "python", "./ITHACAoutput/ReducedCoefficients/" + folder + "/");
-        ITHACAstream::exportMatrix(rbfCoeffMat, "RBFCoefficients", "python", "./ITHACAoutput/ReducedCoefficients/" + folder + "/");
+        word true_folder = "./ITHACAoutput/ReducedCoefficients/" + folder + "_" + modeIdentifier + "/";
+        ITHACAstream::exportMatrix(online_solution, "reducedCoefficients", "python", true_folder);
+        ITHACAstream::exportMatrix(rbfCoeffMat, "RBFCoefficients", "python", true_folder);
     }
 }
 // * * * * * * * * *  Inverse Distance Weighting Functions  * * * * * * * * //

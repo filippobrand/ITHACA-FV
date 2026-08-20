@@ -551,7 +551,8 @@ public:
     /// @brief   Saves the reduced coefficients and the RBF ones to a specified folder
     ///
     /// @param[in]  folder  The folder where to save the results
-    void saveCoefficients(word folder = "./reducedCoeffs");
+    /// @param[in]  modeIdentifier  The identifier for the mode numbers. Used when comparing different runs
+    void saveCoefficients(word folder = "./reducedCoeffs", word modeIdentifier = "default");
 
     /// @brief   Resets the online solution and the reconstructed fields, to be ready for a new online solve
     void reset();
