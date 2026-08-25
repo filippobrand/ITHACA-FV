@@ -78,7 +78,7 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
     separateMomentumTemperature = problem->ITHACAdict->lookupOrDefault<bool>("separateMomentumTemperature", false);
     method = problem->ITHACAdict->lookupOrDefault<word>("method", "supremizer");
 
-    y = Eigen::VectorXd::Zero(Nphi_u + Nphi_prgh + Nphi_t); // Solution vector
+    y = Eigen::VectorXd::Zero(Nphi_u + Nphi_prgh + Nphi_t);
     if (problem->bcMethod == "Gunzburger")
     {
         // When using the gunzburger method, the first Nphi_u modes are the Nmodes-Nbc
@@ -536,22 +536,6 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
     Eigen::VectorXd c_dot = (x.tail(Nphi_t) - y_old.tail(Nphi_t)) / dt;
     Eigen::VectorXd c_tmp = x.tail(Nphi_t);
 
-    // Convective term momentum equation
-    Eigen::MatrixXd cc(1, 1);
-    // Non linear term turbulence in momentum equation - average nut
-    Eigen::MatrixXd caveraged(1, 1);
-    // Non linear term turbulence in momentum equation - fluctuating nut
-    Eigen::MatrixXd ct(1, 1);
-    // Tensor term PPE equation
-    Eigen::MatrixXd gg(1, 1);
-    // Convective term temperature
-    Eigen::MatrixXd qq(1, 1);
-    // Turbulence term temperature - average part
-    Eigen::MatrixXd qt_averaged(1, 1);
-    // Turbulence term temperature - fluctuating part
-    Eigen::MatrixXd qt(1, 1);
-    // Turbulence term - PPE
-    Eigen::MatrixXd turbPPE(1, 1);
     // Momentum Term
     Eigen::VectorXd M11 = pCommonMatrices->BTotal * a_tmp * nu;
     // Gradient of pressure
@@ -596,10 +580,10 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
     }
     for (int i = 0; i < nTestFunctionsU; i++)
     {
-        cc = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->C, 0, i) * a_tmp;
-        ct = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotal, 0, i) * a_tmp;
-        caveraged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotalAve, 0, i) * a_tmp;
-        fvec(i) = -M5(i) + M11(i) - cc(0, 0) - M10(i) - M2(i) + ct(0, 0) + caveraged(0, 0);
+        scalar cc = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->C, 0, i) * a_tmp;
+        scalar ct = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotal, 0, i) * a_tmp;
+        scalar caveraged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->CTotalAve, 0, i) * a_tmp;
+        fvec(i) = -M5(i) + M11(i) - cc - M10(i) - M2(i) + ct + caveraged;
 
         if (problem->bcMethod == "penalty")
         {
@@ -612,9 +596,11 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
     for (int j = 0; j < Nphi_prgh; j++)
     {
         int k = j + Nphi_u;
-        gg = a_tmp.transpose() * Eigen::SliceFromTensor(pPPEMatrices->G, 0, j) * a_tmp;
-        turbPPE = nu_fluct.transpose() * Eigen::SliceFromTensor(pPPEMatrices->CTotalPPEFluct, 0, j) * a_tmp + nu_param.transpose() * Eigen::SliceFromTensor(pPPEMatrices->CTotalPPEAve, 0, j) * a_tmp;
-        fvec(k) = M3(j, 0) + gg(0, 0) + M12(j, 0) - M7(j, 0) - turbPPE(0, 0);
+        scalar gg = a_tmp.transpose() * Eigen::SliceFromTensor(pPPEMatrices->G, 0, j) * a_tmp;
+        scalar turbPPE = nu_fluct.transpose() * Eigen::SliceFromTensor(pPPEMatrices->CTotalPPEFluct, 0, j) * a_tmp;
+        scalar turbPPE_ave = nu_param.transpose() * Eigen::SliceFromTensor(pPPEMatrices->CTotalPPEAve, 0, j) * a_tmp;
+        
+        fvec(k) = M3(j, 0) + gg + M12(j, 0) - M7(j, 0) - turbPPE - turbPPE_ave;
 
         if (problem->timedepbcMethod == "yes")
         {
@@ -623,18 +609,18 @@ int NewtonUnsteadyBBTurbPPE::operator()(const Eigen::VectorXd& x,
     }
     for (int j = 0; j < nTestFunctionsT; j++)
     {
-        int k = j + Nphi_u + Nphi_prgh;
-        qq = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->Q, 0, j) * c_tmp;
-        qt = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->YTurb, 0, j) * c_tmp;
-        qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->AveYTurb, 0, j) * c_tmp;
-        fvec(k) = -M8(j) + M6(j) - qq(0, 0) + qt(0, 0) / Pr_t + qt_averaged(0, 0) / Pr_t;
-        if (problem->bcMethod == "penalty")
-        {
-            for (int l = 0; l < N_BC_t; l++)
-            {
-                fvec(k) += penaltyT(j, l);
-            }
-        }
+      int k = j + Nphi_u + Nphi_prgh;
+      scalar qq = a_tmp.transpose() * Eigen::SliceFromTensor(pCommonMatrices->Q, 0, j) * c_tmp;
+      scalar qt = nu_fluct.transpose() * Eigen::SliceFromTensor(pCommonMatrices->YTurb, 0, j) * c_tmp;
+      scalar qt_averaged = nu_param.transpose() * Eigen::SliceFromTensor(pCommonMatrices->AveYTurb, 0, j) * c_tmp;
+      fvec(k) = -M8(j) + M6(j) - qq + qt / Pr_t + qt_averaged / Pr_t;
+      if (problem->bcMethod == "penalty")
+      {
+          for (int l = 0; l < N_BC_t; l++)
+          {
+              fvec(k) += penaltyT(j, l);
+          }
+      }
     }
 
     if (problem->bcMethod == "Gunzburger")
