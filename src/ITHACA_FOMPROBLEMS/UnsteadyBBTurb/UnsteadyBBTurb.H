@@ -181,6 +181,9 @@ public:
     // Dimension of the interpolation matrix A
     label dimA;
 
+    // Dimension of the input to the RBF. To be used if you don't want to use all the velocity coefficients to the RBF
+    label dimInputRBF;
+
     /// Interpolators for nut coefficient interpolation
     std::vector<std::shared_ptr<ithacaInterpolator>> rbfSplines;
 
@@ -216,7 +219,7 @@ public:
         Eigen::MatrixXd D, HP, nuBC, timedepBC;
         Eigen::Tensor<double, 3> G, PPEAveCT1, PPECT1, PPEAveCT2, PPECT2, CTotalPPEAve, CTotalPPEFluct;
     };
-
+    
     /// Shared pointer to the common matrices. A shared pointer is used so its ownership can be shared, and thus the memory heavy UnsteadyBBTurb object can be destroyed. Still same treatment needed for the fields/modes
     std::shared_ptr<CommonMatrices> pCommonMatrices;
 

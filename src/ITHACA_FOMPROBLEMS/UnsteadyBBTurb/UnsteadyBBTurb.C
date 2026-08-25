@@ -98,6 +98,9 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
     }
     NNutModes = ITHACAdict->lookupOrDefault<label>("NmodesNutproj", 5);
     NSUPmodes = ITHACAdict->lookupOrDefault<label>("NmodesSUPproj", 5);
+    dimInputRBF = ITHACAdict->lookupOrDefault<label>("dimInputRBF", 0);
+    M_Assert(dimInputRBF <= NUmodes, "The dimension of the input to the RBF must be less than or equal to the number of velocity modes.");
+    M_Assert(dimInputRBF >= 0, "The dimension of the input to the RBF must be greater than or equal to zero.");
 
     Info << "### INFO ### " << nl << "Method: " << method << nl
          << "BC method: " << bcMethod << nl
@@ -618,13 +621,18 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
     Eigen::MatrixXd coeffL2nut = ITHACAutilities::getCoeffs(fluctNutfield, nutmodes, NNutModes);
     Eigen::MatrixXd coeffL2vel;
     coeffL2vel.resize(0, 0);
+    label inputModes = dimInputRBF;
+    if (inputModes == 0)
+    {
+        inputModes = NUmodes;
+    }
     if (bcMethod == "lift")
     {
-        coeffL2vel = ITHACAutilities::getCoeffs(Uomfield, Umodes, NUmodes); // Returns a [modes x snapshots]
+        coeffL2vel = ITHACAutilities::getCoeffs(Uomfield, Umodes, inputModes); // Returns a [modes x snapshots]
         skipRBFIndex = liftfield.size();
     } else
     {
-        coeffL2vel = ITHACAutilities::getCoeffs(Ufield, Umodes, NUmodes); // Returns a [modes x snapshots]
+        coeffL2vel = ITHACAutilities::getCoeffs(Ufield, Umodes, inputModes); // Returns a [modes x snapshots]
     }
     Info << "Shape of the L2 velocity coeff matrix: " << coeffL2vel.rows() << " x " << coeffL2vel.cols() << endl;
     Info << "Shape of the L2 eddy viscosity coeff matrix: " << coeffL2nut.rows() << " x " << coeffL2nut.cols() << endl;
@@ -664,49 +672,68 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
         Info << "###INTERP - Fitting ithacaInterpolator for mode " << i + 1 << " completed. Here's some informations:" << endl;
         rbfSplines[i]->printInfo();
     }
-
-    Info << "RBF Interpolation completed." << endl;
 }
 
-List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(const Eigen::MatrixXd& A,
-    const Eigen::MatrixXd& G, const List<Eigen::VectorXd>& snapshotTimes)
+List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(
+    const Eigen::MatrixXd& A,
+    const Eigen::MatrixXd& G,
+    const List<Eigen::VectorXd>& snapshotTimes)
 {
-    List<Eigen::MatrixXd> newCoeffs;
-    newCoeffs.setSize(2);
     const label velCoeffsNum = A.cols();
-    const label snapshotsNum = A.rows();
     const label parsSamplesNum = snapshotTimes.size();
 
-    Eigen::VectorXi timeSnapshotsPerSampleVec(parsSamplesNum);
-    for (label i = 0; i < parsSamplesNum; i++)
+    // 1. Calculate total rows without storing per-sample counts in a vector
+    label newRowsNum = 0;
+    for (label j = 0; j < parsSamplesNum; ++j)
     {
-        timeSnapshotsPerSampleVec(i) = snapshotTimes[i].size();
+        newRowsNum += (snapshotTimes[j].size() - 1);
     }
+
+    List<Eigen::MatrixXd> newCoeffs;
+    newCoeffs.setSize(2);
+    
     const label newColsNum = 2 * velCoeffsNum;
-    const label newRowsNum = timeSnapshotsPerSampleVec.sum() - 1 * parsSamplesNum;
     newCoeffs[0].resize(newRowsNum, newColsNum);
     newCoeffs[1].resize(newRowsNum, G.cols());
+
     label outOffset = 0;
-    for (label j = 0; j < parsSamplesNum; j++)
+    label blockStart = 0;
+
+    // Pre-alias sub-matrices for readability and safety
+    Eigen::MatrixXd& C0 = newCoeffs[0];
+    Eigen::MatrixXd& C1 = newCoeffs[1];
+
+    for (label j = 0; j < parsSamplesNum; ++j)
     {
         const Eigen::VectorXd& timeSnap = snapshotTimes[j];
-        // Create shifted blocks to compute differences. Remember that
-        // A has all the snapshots stacked for all parameter samples, with the column
-        // indicating the different time-varying coefficients (a1, a2, ..., an)
-        label rowsPerBlock = timeSnapshotsPerSampleVec(j) - 1;
-        label blockStart = timeSnapshotsPerSampleVec.head(j).sum();
-        Eigen::MatrixXd b0 = A.middleRows(blockStart, rowsPerBlock);
-        Eigen::MatrixXd b2 = A.middleRows(blockStart + 1, rowsPerBlock);
-        Eigen::VectorXd deltaT = timeSnap.tail(rowsPerBlock) - timeSnap.head(rowsPerBlock);
-        Eigen::MatrixXd derivative = (b2 - b0).array().colwise() / deltaT.array();
-        Eigen::MatrixXd bNew(rowsPerBlock, newColsNum);
-        bNew.leftCols(velCoeffsNum) = b2;
-        bNew.rightCols(velCoeffsNum) = derivative;
-        newCoeffs[0].block(outOffset, 0, rowsPerBlock, newColsNum) = bNew;
-        newCoeffs[1].middleRows(outOffset, rowsPerBlock) =
-            G.middleRows(blockStart + 1, rowsPerBlock);
+        const label nSnaps = timeSnap.size();
+        const label rowsPerBlock = nSnaps - 1;
+
+        if (rowsPerBlock <= 0) continue;
+
+        // Direct reference blocks into matrix A (zero allocation)
+        auto b0 = A.middleRows(blockStart, rowsPerBlock);
+        auto b2 = A.middleRows(blockStart + 1, rowsPerBlock);
+
+        // Compute time steps: timeSnap[k+1] - timeSnap[k]
+        // Uses Eigen block expression to avoid tail/head array copies
+        auto deltaT = timeSnap.tail(rowsPerBlock) - timeSnap.head(rowsPerBlock);
+
+        // Direct block assignment for newCoeffs[0] left half (b2)
+        C0.block(outOffset, 0, rowsPerBlock, velCoeffsNum) = b2;
+
+        // Direct vectorized calculation into newCoeffs[0] right half (derivative)
+        // Eliminates intermediate matrices b0, b2, derivative, and bNew completely
+        C0.block(outOffset, velCoeffsNum, rowsPerBlock, velCoeffsNum) = 
+            (b2 - b0).array().colwise() / deltaT.array();
+
+        // Direct block assignment for newCoeffs[1]
+        C1.middleRows(outOffset, rowsPerBlock) = G.middleRows(blockStart + 1, rowsPerBlock);
+
         outOffset += rowsPerBlock;
+        blockStart += nSnaps;
     }
+
     return newCoeffs;
 }
 
@@ -720,18 +747,7 @@ void UnsteadyBBTurb::splitEddyViscositySnapshots() // TODO: (Maybe) Use the aver
     for (label i = 0; i < nSamples; i++)
     {
         label nSnapshotPerSample = timeSnapshots[i].size();
-        Info << "Processing sample " << i + 1 << " with " << nSnapshotPerSample << " snapshots." << endl;
         M_Assert(nSnapshotPerSample > 0, "Each parameter sample must have at least one snapshot");
-
-        // PtrList<volScalarField> sampleNutFieldPtr;
-        // sampleNutFieldPtr.setSize(nSnapshotPerSample);
-        // label startIndex = globalIndex;
-        // label endIndex = globalIndex + nSnapshotPerSample - 1;
-        // for (label j = startIndex; j <= endIndex; j++)
-        // {
-        //     sampleNutFieldPtr.set(j - startIndex, Nutfield[j]);
-        // }
-        // ITHACAutilities::computeAverage(sampleNutFieldPtr);
 
         autoPtr<volScalarField> avgPtr(
             new volScalarField(
@@ -796,10 +812,14 @@ Eigen::MatrixXd UnsteadyBBTurb::mass_term(label NUmodes, label NPmodes,
     {
         for (label j = 0; j < Msize; j++)
         {
-            M_matrix(i, j) = fvc::domainIntegrate(testFunctionsU[i] &
-                L_U_SUPmodes[j])
-                                 .value();
+            M_matrix(i, j) = fvc::domainIntegrate(
+              testFunctionsU[i] &  L_U_SUPmodes[j]).value();
         }
+    }
+
+    if (Pstream::parRun())
+    {
+        reduce(M_matrix, sumOp<Eigen::MatrixXd>());
     }
 
     if (Pstream::master())
@@ -809,6 +829,7 @@ Eigen::MatrixXd UnsteadyBBTurb::mass_term(label NUmodes, label NPmodes,
         ITHACAstream::exportMatrix(M_matrix, "M_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
+    Info << "### [MATRICES] - Assembled the mass term matrix M of size " << M_matrix.rows() << " x " << M_matrix.cols() << endl;
     return M_matrix;
 }
 
@@ -819,17 +840,24 @@ Eigen::MatrixXd UnsteadyBBTurb::diffusive_term(label NUmodes, label NPmodes,
     label testFunctionSize = testFunctionsU.size();
     Eigen::MatrixXd B_matrix(testFunctionSize, Bsize);
 
-    // Project everything
-    for (label i = 0; i < testFunctionSize; i++)
+    for (label j = 0; j < Bsize; j++)
     {
-        for (label j = 0; j < Bsize; j++)
+        tmp<volVectorField> laplacianField = fvc::laplacian(dimensionedScalar("1", dimless, 1), L_U_SUPmodes[j]);
+        for (label i = 0; i < testFunctionSize; i++)
         {
-            B_matrix(i, j) = fvc::domainIntegrate(testFunctionsU[i] & fvc::laplacian(dimensionedScalar("1", dimless, 1), L_U_SUPmodes[j])).value();
+            B_matrix(i, j) = fvc::domainIntegrate(testFunctionsU[i] & laplacianField()).value();
         }
+        laplacianField.clear(); // Clear the temporary field to free memory
+    }
+
+    if (Pstream::parRun())
+    {
+        reduce(B_matrix, sumOp<Eigen::MatrixXd>());
     }
 
     if (Pstream::master())
     {
+        Info << "### [MATRICES] - Assembled the diffusive term matrix B of size " << B_matrix.rows() << " x " << B_matrix.cols() << endl;
         ITHACAstream::SaveDenseMatrix(B_matrix, "./ITHACAoutput/Matrices/",
             "B_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NSUPmodes));
         ITHACAstream::exportMatrix(B_matrix, "B_matrix", "python", "./ITHACAoutput/Matrices/python/");
@@ -845,16 +873,16 @@ Eigen::MatrixXd UnsteadyBBTurb::pressureGradientTerm(label NU,
     label K2size = NPrgh;
     Eigen::MatrixXd K_matrix(K1size, K2size);
 
-    // Project everything
-    for (label i = 0; i < K1size; i++)
+    for (label j = 0; j < K2size; j++)
     {
-        for (label j = 0; j < K2size; j++)
+        tmp<volVectorField> gradP = fvc::reconstruct(
+          fvc::snGrad(P_rghmodes[j]) * P_rghmodes[j].mesh().magSf()
+        );
+        for (label i = 0; i < K1size; i++)
         {
-            K_matrix(i, j) = fvc::domainIntegrate(testFunctionsU[i] &
-                fvc::reconstruct(fvc::snGrad(P_rghmodes[j]) *
-                    P_rghmodes[j].mesh().magSf()))
-                                 .value();
+            K_matrix(i, j) = fvc::domainIntegrate(testFunctionsU[i] & gradP()).value();
         }
+        gradP.clear(); // Clear the temporary field to free memory
     }
 
     if (Pstream::parRun())
@@ -870,6 +898,8 @@ Eigen::MatrixXd UnsteadyBBTurb::pressureGradientTerm(label NU,
         ITHACAstream::exportMatrix(K_matrix, "K_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
+    Info << "### [MATRICES] - Assembled the pressure gradient term matrix K of size " << K_matrix.rows() << " x " << K_matrix.cols() << endl;
+
     return K_matrix;
 }
 
@@ -880,12 +910,15 @@ Eigen::MatrixXd UnsteadyBBTurb::diffusiveTermTemperature(label NU,
     label testFunctionSize = testFunctionsT.size();
     Eigen::MatrixXd Y_matrix(testFunctionSize, Ysize);
 
-    for (label i = 0; i < testFunctionSize; i++)
+    // More efficient than the reverse
+    for (label j = 0; j < Ysize; j++)
     {
-        for (label j = 0; j < Ysize; j++)
+        tmp<volScalarField> laplacianField = fvc::laplacian(dimensionedScalar("1", dimless, 1), L_Tmodes[j]);
+        for (label i = 0; i < testFunctionSize; i++)
         {
-            Y_matrix(i, j) = fvc::domainIntegrate(testFunctionsT[i] * fvc::laplacian(dimensionedScalar("1", dimless, 1), L_Tmodes[j])).value();
+            Y_matrix(i, j) = fvc::domainIntegrate(testFunctionsT[i] * laplacianField()).value();
         }
+        laplacianField.clear(); // Clear the temporary field to free memory
     }
 
     if (Pstream::parRun())
@@ -901,6 +934,8 @@ Eigen::MatrixXd UnsteadyBBTurb::diffusiveTermTemperature(label NU,
         ITHACAstream::exportMatrix(Y_matrix, "Y_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
+    Info << "### [MATRICES] - Assembled the diffusive term matrix Y of size " << Y_matrix.rows() << " x " << Y_matrix.cols() << endl;
+
     return Y_matrix;
 }
 
@@ -911,13 +946,14 @@ Eigen::MatrixXd UnsteadyBBTurb::divergenceTerm(label NU, label NPrgh,
     label P2size = NU + NSUP + liftfield.size();
     Eigen::MatrixXd P_matrix(P1size, P2size);
 
-    // Project everything
-    for (label i = 0; i < P1size; i++)
+    for (label j = 0; j < P2size; j++)
     {
-        for (label j = 0; j < P2size; j++)
+        tmp<volScalarField> divField = fvc::div(L_U_SUPmodes[j]);
+        for (label i = 0; i < P1size; i++)
         {
-            P_matrix(i, j) = fvc::domainIntegrate(P_rghmodes[i] * fvc::div(L_U_SUPmodes[j])).value();
+            P_matrix(i, j) = fvc::domainIntegrate(P_rghmodes[i] * divField()).value();
         }
+        divField.clear(); 
     }
 
     if (Pstream::parRun())
@@ -933,6 +969,8 @@ Eigen::MatrixXd UnsteadyBBTurb::divergenceTerm(label NU, label NPrgh,
         ITHACAstream::exportMatrix(P_matrix, "P_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
+    Info << "### [MATRICES] - Assembled the divergence term matrix P of size " << P_matrix.rows() << " x " << P_matrix.cols() << endl;
+
     return P_matrix;
 }
 
@@ -947,15 +985,14 @@ Eigen::MatrixXd UnsteadyBBTurb::buoyancyTerm(label NU, label NT,
     dimensionedVector g = _g();
     surfaceScalarField& ghf = _ghf();
 
-    // Project everything. In the original formulation here it is fvc::snGrad(1.0 - ...). However
-    // it is more numerically stable to compute fvc::snGrad(-beta * (T - TRef)) since fvc::snGrad(1.0) is zero
-    for (label i = 0; i < H1size; i++)
+    for (label j = 0; j < H2size; j++)
     {
-        for (label j = 0; j < H2size; j++)
+        tmp<volVectorField> buoyancyField = fvc::reconstruct(ghf * fvc::snGrad((-beta * (L_Tmodes[j]))) * L_Tmodes[j].mesh().magSf());
+        for (label i = 0; i < H1size; i++)
         {
-            // Maybe there is a minus sign before the beta
-            H_matrix(i, j) = fvc::domainIntegrate(testFunctionsU[i] & fvc::reconstruct(ghf * fvc::snGrad((-beta * (L_Tmodes[j]))) * L_Tmodes[j].mesh().magSf())).value();
+            H_matrix(i, j) = fvc::domainIntegrate(testFunctionsU[i] & buoyancyField()).value();
         }
+        buoyancyField.clear(); // Clear the temporary field to free memory
     }
 
     if (Pstream::parRun())
@@ -970,6 +1007,8 @@ Eigen::MatrixXd UnsteadyBBTurb::buoyancyTerm(label NU, label NT,
             "H_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP) + "_" + name(liftfieldT.size()) + "_" + name(NT));
         ITHACAstream::exportMatrix(H_matrix, "H_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
+
+    Info << "### [MATRICES] - Assembled the buoyancy term matrix H of size " << H_matrix.rows() << " x " << H_matrix.cols() << endl;
 
     return H_matrix;
 }
@@ -999,6 +1038,7 @@ Eigen::MatrixXd UnsteadyBBTurb::massTermTemperature(label NT)
         ITHACAstream::exportMatrix(W_matrix, "W_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
+    Info << "### [MATRICES] - Assembled the mass term matrix W of size " << W_matrix.rows() << " x " << W_matrix.cols() << endl;
     return W_matrix;
 }
 
@@ -1008,17 +1048,16 @@ Eigen::MatrixXd UnsteadyBBTurb::BTturbulence(label NU, label NSUP)
     label testFunctionSize = testFunctionsU.size();
     Eigen::MatrixXd btMatrix(testFunctionSize, btSize);
 
-    btMatrix = btMatrix * 0;
-
-    for (label i = 0; i < testFunctionSize; i++)
+    for (label j = 0; j < btSize; j++)
     {
-        for (label j = 0; j < btSize; j++)
+        tmp<volVectorField> divDev2Field = fvc::div(dev2((T(fvc::grad(L_U_SUPmodes[j])))));
+        for (label i = 0; i < testFunctionSize; i++)
         {
-            btMatrix(i, j) = fvc::domainIntegrate(testFunctionsU[i] &
-                (fvc::div(dev2((T(fvc::grad(L_U_SUPmodes[j])))))))
-                                 .value();
+            btMatrix(i, j) = fvc::domainIntegrate(testFunctionsU[i] & divDev2Field()).value();
         }
+        divDev2Field.clear(); // Clear the temporary field to free memory
     }
+
     if (Pstream::parRun())
     {
         reduce(btMatrix, sumOp<Eigen::MatrixXd>());
@@ -1030,6 +1069,8 @@ Eigen::MatrixXd UnsteadyBBTurb::BTturbulence(label NU, label NSUP)
             "BT_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP));
         ITHACAstream::exportMatrix(btMatrix, "BT_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
+    
+    Info << "### [MATRICES] - Assembled the turbulence term matrix BT of size " << btMatrix.rows() << " x " << btMatrix.cols() << endl;
     return btMatrix;
 }
 
@@ -1038,23 +1079,26 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::convective_term_tens(label NUmodes,
 {
     label Csize = NUmodes + NSUPmodes + liftfield.size();
     label testFunctionSize = testFunctionsU.size();
-    Eigen::Tensor<double, 3> C_tensor;
-    C_tensor.resize(testFunctionSize, Csize, Csize);
+    Eigen::Tensor<double, 3> C_tensor(testFunctionSize, Csize, Csize);
 
-    for (label i = 0; i < testFunctionSize; i++)
+    // More efficient looping 
+    for (label j = 0; j < Csize; j++)
     {
-        for (label j = 0; j < Csize; j++)
+        for (label k = 0; k < Csize; k++)
         {
-            for (label k = 0; k < Csize; k++)
+            tmp<volVectorField> divField;
+            if (fluxMethod == "consistent")
             {
-                if (fluxMethod == "consistent")
-                {
-                    C_tensor(i, j, k) = fvc::domainIntegrate(testFunctionsU[i] & fvc::div(L_PHImodes[j], L_U_SUPmodes[k])).value();
-                } else
-                {
-                    C_tensor(i, j, k) = fvc::domainIntegrate(testFunctionsU[i] & fvc::div(linearInterpolate(L_U_SUPmodes[j]) & L_U_SUPmodes[j].mesh().Sf(), L_U_SUPmodes[k])).value();
-                }
+                divField = fvc::div(L_PHImodes[j], L_U_SUPmodes[k]);
+            } else
+            {
+                divField = fvc::div(linearInterpolate(L_U_SUPmodes[j]) & L_U_SUPmodes[j].mesh().Sf(), L_U_SUPmodes[k]);
             }
+            for (label i = 0; i < testFunctionSize; i++)
+            {
+                C_tensor(i, j, k) = fvc::domainIntegrate(testFunctionsU[i] & divField()).value();
+            }
+            divField.clear();
         }
     }
 
@@ -1066,6 +1110,13 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::convective_term_tens(label NUmodes,
         ITHACAstream::exportTensor(C_tensor, "C_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
 
+    if (Pstream::parRun())
+    {
+        reduce(C_tensor, sumOp<Eigen::Tensor<double, 3>>());
+    }
+
+    Info << "### [MATRICES] - Assembled the convective term tensor C of size " << C_tensor.dimension(0) << " x " << C_tensor.dimension(1) << " x " << C_tensor.dimension(2) << endl;
+
     return C_tensor;
 }
 
@@ -1074,15 +1125,17 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::temperatureTurbulenceTensor(label NT, l
     label Stsize = NT + liftfieldT.size();
     label testFunctionSize = testFunctionsT.size();
     Eigen::Tensor<double, 3> YT_tensor(testFunctionSize, Nnut, Stsize);
-    // YT_tensor.resize(Stsize, Nnut, Stsize);
-    for (label i = 0; i < testFunctionSize; i++)
+
+    for (label k = 0; k < Stsize; k++)
     {
         for (label j = 0; j < Nnut; j++)
         {
-            for (label k = 0; k < Stsize; k++)
+            tmp<volScalarField> laplacianField = fvc::laplacian(nutmodes[j], L_Tmodes[k]);
+            for (label i = 0; i < testFunctionSize; i++)
             {
-                YT_tensor(i, j, k) = fvc::domainIntegrate(testFunctionsT[i] * fvc::laplacian(nutmodes[j], L_Tmodes[k])).value();
+                YT_tensor(i, j, k) = fvc::domainIntegrate(testFunctionsT[i] * laplacianField()).value();
             }
+            laplacianField.clear(); // Clear the temporary field to free memory
         }
     }
 
@@ -1097,6 +1150,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::temperatureTurbulenceTensor(label NT, l
             "YT_" + name(liftfield.size()) + "_" + name(NT) + "_" + name(Nnut) + "_t");
         ITHACAstream::exportTensor(YT_tensor, "YT_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
+    Info << "### [MATRICES] - Assembled the turbulence term tensor YT of size " << YT_tensor.dimension(0) << " x " << YT_tensor.dimension(1) << " x " << YT_tensor.dimension(2) << endl;
     return YT_tensor;
 }
 
@@ -1104,17 +1158,18 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTensor1(label NU, label NSUP,
 {
     label cSize = NU + NSUP + liftfield.size();
     label testFunctionSize = testFunctionsU.size();
-    Eigen::Tensor<double, 3> ct1Tensor;
-    ct1Tensor.resize(testFunctionSize, Nnut, cSize);
+    Eigen::Tensor<double, 3> ct1Tensor(testFunctionSize, Nnut, cSize);
 
-    for (label i = 0; i < testFunctionSize; i++)
+    for (label k = 0; k < cSize; k++)
     {
         for (label j = 0; j < Nnut; j++)
         {
-            for (label k = 0; k < cSize; k++)
+            tmp<volVectorField> laplacianField = fvc::laplacian(nutmodes[j], L_U_SUPmodes[k]);
+            for (label i = 0; i < testFunctionSize; i++)
             {
-                ct1Tensor(i, j, k) = fvc::domainIntegrate(testFunctionsU[i] & fvc::laplacian(nutmodes[j], L_U_SUPmodes[k])).value();
+                ct1Tensor(i, j, k) = fvc::domainIntegrate(testFunctionsU[i] & laplacianField()).value();
             }
+            laplacianField.clear(); // Clear the temporary field to free memory
         }
     }
 
@@ -1129,6 +1184,8 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTensor1(label NU, label NSUP,
             "CT1_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP) + "_" + name(Nnut) + "_t");
         ITHACAstream::exportTensor(ct1Tensor, "CT1_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
+    
+    Info << "### [MATRICES] - Assembled the turbulence term tensor CT1 of size " << ct1Tensor.dimension(0) << " x " << ct1Tensor.dimension(1) << " x " << ct1Tensor.dimension(2) << endl;
     return ct1Tensor;
 }
 
@@ -1136,20 +1193,22 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceAveTensor1(label NU, label NS
 {
     label cSize = NU + NSUP + liftfield.size();
     label testFunctionSize = testFunctionsU.size();
-    Eigen::Tensor<double, 3> ct1AveTensor;
     label samplesNumber = avgNutfield.size();
-    ct1AveTensor.resize(testFunctionSize, samplesNumber, cSize);
+    Eigen::Tensor<double, 3> ct1AveTensor(testFunctionSize, samplesNumber, cSize);
 
-    for (label i = 0; i < testFunctionSize; i++)
+    for (label k=0; k < cSize; k++)
     {
         for (label j = 0; j < samplesNumber; j++)
         {
-            for (label k = 0; k < cSize; k++)
+            tmp<volVectorField> laplacianField = fvc::laplacian(avgNutfield[j], L_U_SUPmodes[k]);
+            for (label i = 0; i < testFunctionSize; i++)
             {
-                ct1AveTensor(i, j, k) = fvc::domainIntegrate(testFunctionsU[i] & fvc::laplacian(avgNutfield[j], L_U_SUPmodes[k])).value();
+                ct1AveTensor(i, j, k) = fvc::domainIntegrate(testFunctionsU[i] & laplacianField()).value();
             }
+            laplacianField.clear(); // Clear the temporary field to free memory
         }
     }
+
     if (Pstream::parRun())
     {
         reduce(ct1AveTensor, sumOp<Eigen::Tensor<double, 3>>());
@@ -1161,6 +1220,8 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceAveTensor1(label NU, label NS
             "CT1Ave_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP) + "_t");
         ITHACAstream::exportTensor(ct1AveTensor, "CT1_ave_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
+    
+    Info << "### [MATRICES] - Assembled the turbulence term tensor CT1Ave of size " << ct1AveTensor.dimension(0) << " x " << ct1AveTensor.dimension(1) << " x " << ct1AveTensor.dimension(2) << endl;
     return ct1AveTensor;
 }
 
@@ -1168,21 +1229,21 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTensor2(label NU, label NSUP,
 {
     label cSize = NU + NSUP + liftfield.size();
     label testFunctionSize = testFunctionsU.size();
-    Eigen::Tensor<double, 3> ct2Tensor;
-    ct2Tensor.resize(testFunctionSize, Nnut, cSize);
+    Eigen::Tensor<double, 3> ct2Tensor(testFunctionSize, Nnut, cSize);
 
-    for (label i = 0; i < testFunctionSize; i++)
+    for (label k = 0; k < cSize; k++)
     {
         for (label j = 0; j < Nnut; j++)
         {
-            for (label k = 0; k < cSize; k++)
+            tmp<volVectorField> divField = fvc::div(nutmodes[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T()));
+            for (label i = 0; i < testFunctionSize; i++)
             {
-                ct2Tensor(i, j, k) = fvc::domainIntegrate(testFunctionsU[i] &
-                    (fvc::div(nutmodes[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T()))))
-                                         .value();
+                ct2Tensor(i, j, k) = fvc::domainIntegrate(testFunctionsU[i] & divField()).value();
             }
+            divField.clear(); // Clear the temporary field to free memory
         }
     }
+
     if (Pstream::parRun())
     {
         reduce(ct2Tensor, sumOp<Eigen::Tensor<double, 3>>());
@@ -1194,6 +1255,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTensor2(label NU, label NSUP,
             "CT2_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP) + "_" + name(Nnut) + "_t");
         ITHACAstream::exportTensor(ct2Tensor, "CT2_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
+    Info << "### [MATRICES] - Assembled the turbulence term tensor CT2 of size " << ct2Tensor.dimension(0) << " x " << ct2Tensor.dimension(1) << " x " << ct2Tensor.dimension(2) << endl;
     return ct2Tensor;
 }
 
@@ -1201,22 +1263,22 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceAveTensor2(label NU, label NS
 {
     label cSize = NU + NSUP + liftfield.size();
     label testFunctionSize = testFunctionsU.size();
-    Eigen::Tensor<double, 3> ct2AveTensor;
     label samplesNumber = avgNutfield.size();
-    ct2AveTensor.resize(testFunctionSize, samplesNumber, cSize);
+    Eigen::Tensor<double, 3> ct2AveTensor(testFunctionSize, samplesNumber, cSize);
 
-    for (label i = 0; i < testFunctionSize; i++)
+    for (label k = 0; k < cSize; k++)
     {
         for (label j = 0; j < samplesNumber; j++)
         {
-            for (label k = 0; k < cSize; k++)
+            tmp<volVectorField> divField = fvc::div(avgNutfield[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T()));
+            for (label i = 0; i < testFunctionSize; i++)
             {
-                ct2AveTensor(i, j, k) = fvc::domainIntegrate(testFunctionsU[i] &
-                    (fvc::div(avgNutfield[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T()))))
-                                            .value();
+                ct2AveTensor(i, j, k) = fvc::domainIntegrate(testFunctionsU[i] & divField()).value();
             }
+            divField.clear(); // Clear the temporary field to free memory
         }
     }
+
     if (Pstream::parRun())
     {
         reduce(ct2AveTensor, sumOp<Eigen::Tensor<double, 3>>());
@@ -1228,6 +1290,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceAveTensor2(label NU, label NS
             "CT2Ave_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP) + "_t");
         ITHACAstream::exportTensor(ct2AveTensor, "CT2_ave_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
+    Info << "### [MATRICES] - Assembled the turbulence term tensor CT2Ave of size " << ct2AveTensor.dimension(0) << " x " << ct2AveTensor.dimension(1) << " x " << ct2AveTensor.dimension(2) << endl;
     return ct2AveTensor;
 }
 
@@ -1238,16 +1301,19 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTemperatureAveTensor(label NT
     label samplesNumber = avgNutfield.size();
     Eigen::Tensor<double, 3> YTAveTensor(testFunctionSize, samplesNumber, ySize);
 
-    for (label i = 0; i < testFunctionSize; i++)
+    for (label k = 0; k < ySize; k++)
     {
         for (label j = 0; j < samplesNumber; j++)
         {
-            for (label k = 0; k < ySize; k++)
+            tmp<volScalarField> laplacianField = fvc::laplacian(avgNutfield[j], L_Tmodes[k]);
+            for (label i = 0; i < testFunctionSize; i++)
             {
-                YTAveTensor(i, j, k) = fvc::domainIntegrate(testFunctionsT[i] * fvc::laplacian(avgNutfield[j], L_Tmodes[k])).value();
+                YTAveTensor(i, j, k) = fvc::domainIntegrate(testFunctionsT[i] * laplacianField()).value();
             }
+            laplacianField.clear();
         }
     }
+
     if (Pstream::parRun())
     {
         reduce(YTAveTensor, sumOp<Eigen::Tensor<double, 3>>());
@@ -1259,6 +1325,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTemperatureAveTensor(label NT
             "YT_ave_" + name(liftfieldT.size()) + "_" + name(NT) + "_t");
         ITHACAstream::exportTensor(YTAveTensor, "YT_ave_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
+    Info << "### [MATRICES] - Assembled the turbulence term tensor YT_ave of size " << YTAveTensor.dimension(0) << " x " << YTAveTensor.dimension(1) << " x " << YTAveTensor.dimension(2) << endl;
     return YTAveTensor;
 }
 
@@ -1272,16 +1339,19 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::convectiveTensorTemperature(label NU,
     label testFunctionSize = testFunctionsT.size();
     Eigen::Tensor<double, 3> Q_tensor(testFunctionSize, Qsize, Qsizet);
 
-    for (label i = 0; i < testFunctionSize; i++)
+    for (label k=0; k < Qsizet; k++)
     {
         for (label j = 0; j < Qsize; j++)
         {
-            for (label k = 0; k < Qsizet; k++)
+            tmp<volScalarField> divField = fvc::div(fvc::interpolate(L_U_SUPmodes[j]) & L_U_SUPmodes[j].mesh().Sf(), L_Tmodes[k]);
+            for (label i = 0; i < testFunctionSize; i++)
             {
-                Q_tensor(i, j, k) = fvc::domainIntegrate(testFunctionsT[i] * fvc::div(fvc::interpolate(L_U_SUPmodes[j]) & L_U_SUPmodes[j].mesh().Sf(), L_Tmodes[k])).value();
+                Q_tensor(i, j, k) = fvc::domainIntegrate(testFunctionsT[i] * divField()).value();
             }
+            divField.clear();
         }
     }
+ 
     if (Pstream::parRun())
     {
         reduce(Q_tensor, sumOp<Eigen::Tensor<double, 3>>());
@@ -1294,20 +1364,32 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::convectiveTensorTemperature(label NU,
                 name(NSUP) + "_" + name(liftfieldT.size()) + "_" + name(NT) + "_t");
         ITHACAstream::exportTensor(Q_tensor, "Q_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
+    
+    Info << "### [MATRICES] - Assembled the convective term tensor Q of size " << Q_tensor.dimension(0) << " x " << Q_tensor.dimension(1) << " x " << Q_tensor.dimension(2) << endl;
     return Q_tensor;
 }
 
 Eigen::MatrixXd UnsteadyBBTurb::laplacianPPE(label NPrgh)
 {
-    label Dsize = NPrghmodes + liftfieldP.size();
+    label Dsize = NPrgh + liftfieldP.size();
     Eigen::MatrixXd D_matrix(Dsize, Dsize);
 
-    // Project everything
+    // Improved, employing the symmetry
+    PtrList<volVectorField> gradP(Dsize);
     for (label i = 0; i < Dsize; i++)
     {
-        for (label j = 0; j < Dsize; j++)
+        gradP.set(i, fvc::grad(P_rghmodes[i]));
+    }
+
+    for (label i = 0; i < Dsize; i++)
+    {
+        for (label j = i; j < Dsize; j++)
         {
-            D_matrix(i, j) = fvc::domainIntegrate(fvc::grad(P_rghmodes[i]) & fvc::grad(P_rghmodes[j])).value();
+            D_matrix(i, j) = fvc::domainIntegrate(gradP[i] & gradP[j]).value();
+            if (i != j)
+            {
+                D_matrix(j, i) = D_matrix(i, j); // Exploit symmetry
+            }
         }
     }
 
@@ -1323,6 +1405,7 @@ Eigen::MatrixXd UnsteadyBBTurb::laplacianPPE(label NPrgh)
         ITHACAstream::exportMatrix(D_matrix, "D_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
+    Info << "### [MATRICES] - Assembled the laplacian term matrix D of size " << D_matrix.rows() << " x " << D_matrix.cols() << endl;
     return D_matrix;
 }
 
@@ -1330,17 +1413,31 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::divMomentum(label NU, label NPrgh)
 {
     label g1Size = NPrgh + liftfieldP.size();
     label g2Size = NU + liftfield.size();
-    Eigen::Tensor<double, 3> gTensor;
-    gTensor.resize(g1Size, g2Size, g2Size);
+    Eigen::Tensor<double, 3> gTensor(g1Size, g2Size, g2Size);
 
+    PtrList<volVectorField> gradP(g1Size);
     for (label i = 0; i < g1Size; i++)
     {
-        for (label j = 0; j < g2Size; j++)
+        gradP.set(i, fvc::grad(P_rghmodes[i]));
+    }
+
+    for (label j = 0; j < g2Size; j++)
+    {
+        for (label k = 0; k < g2Size; k++)
         {
-            for (label k = 0; k < g2Size; k++)
+            tmp<volVectorField> divField;
+            if (fluxMethod == "consistent")
             {
-                gTensor(i, j, k) = fvc::domainIntegrate(fvc::grad(P_rghmodes[i]) & (fvc::div(fvc::interpolate(L_U_SUPmodes[j]) & L_U_SUPmodes[j].mesh().Sf(), L_U_SUPmodes[k]))).value();
+                divField = fvc::div(L_PHImodes[j], L_U_SUPmodes[k]);
+            } else
+            {
+                divField = fvc::div(linearInterpolate(L_U_SUPmodes[j]) & L_U_SUPmodes[j].mesh().Sf(), L_U_SUPmodes[k]);
             }
+            for (label i = 0; i < g1Size; i++)
+            {
+                gTensor(i, j, k) = fvc::domainIntegrate(gradP[i] & divField()).value();
+            }
+            divField.clear();
         }
     }
 
@@ -1357,6 +1454,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::divMomentum(label NU, label NPrgh)
         ITHACAstream::exportTensor(gTensor, "G_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
 
+    Info << "### [MATRICES] - Assembled the divergence term tensor G of size " << gTensor.dimension(0) << " x " << gTensor.dimension(1) << " x " << gTensor.dimension(2) << endl;
     return gTensor;
 }
 
@@ -1366,22 +1464,28 @@ Eigen::MatrixXd UnsteadyBBTurb::buoyancyTermPPE(label NPrgh, label NT)
     label H2size = NT + liftfieldT.size();
     Eigen::MatrixXd HP_matrix(H1size, H2size);
     dimensionedScalar beta = _beta();
-    dimensionedScalar TRef = _TRef();
-    dimensionedVector g = _g();
-    volScalarField& gh = _gh();
     surfaceScalarField& ghf = _ghf();
 
-    // Project everything
+    // Pressure gradient vectors
+    PtrList<volVectorField> gradP(H1size);
+    for (label i = 0; i < H1size; i++)
+    {
+      gradP.set(i, fvc::reconstruct(fvc::snGrad(P_rghmodes[i]) * P_rghmodes[i].mesh().magSf()));
+    }
+
+    // Buoyancy force
+    PtrList<volVectorField> buoyancyForce(H2size);
+    for (label j = 0; j < H2size; j++)
+    {
+      buoyancyForce.set(j, fvc::reconstruct(ghf * fvc::snGrad(-(beta * (L_Tmodes[j]))) * L_Tmodes[j].mesh().magSf()));
+    }
+
+    // Inner product
     for (label i = 0; i < H1size; i++)
     {
         for (label j = 0; j < H2size; j++)
         {
-            HP_matrix(i, j) = fvc::domainIntegrate(fvc::reconstruct(fvc::snGrad(
-                                                                        P_rghmodes[i]) *
-                                                       P_rghmodes[i].mesh().magSf()) &
-                fvc::reconstruct(
-                    ghf * fvc::snGrad(-(beta * (L_Tmodes[j]))) * L_Tmodes[j].mesh().magSf()))
-                                  .value();
+            HP_matrix(i, j) = fvc::domainIntegrate(gradP[i] & buoyancyForce[j]).value();
         }
     }
 
@@ -1397,6 +1501,7 @@ Eigen::MatrixXd UnsteadyBBTurb::buoyancyTermPPE(label NPrgh, label NT)
         ITHACAstream::exportMatrix(HP_matrix, "HP_matrix", "python", "./ITHACAoutput/Matrices/python/");
     }
 
+    Info << "### [MATRICES] - Assembled the buoyancy term matrix HP of size " << HP_matrix.rows() << " x " << HP_matrix.cols() << endl;
     return HP_matrix;
 }
 
@@ -1448,9 +1553,8 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::BC2PPE(label NU, label NPrgh)
 {
     label pressureBC1Size = NPrgh;
     label pressureBC2Size = NU + liftfield.size();
-    Eigen::Tensor<double, 3> bc2Tensor;
     const fvMesh& mesh = L_U_SUPmodes[0].mesh();
-    bc2Tensor.resize(pressureBC1Size, pressureBC2Size, pressureBC2Size);
+    Eigen::Tensor<double, 3> bc2Tensor(pressureBC1Size, pressureBC2Size, pressureBC2Size);
 
     for (label i = 0; i < pressureBC1Size; i++)
     {
@@ -1587,17 +1691,22 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPEAveTensor1(label NU, label
     const label nAvg = avgNutfield.size();
     Eigen::Tensor<double, 3> ct1PPEAveTensor(NPrgh, nAvg, cSize);
 
+    PtrList<volVectorField> gradP(NPrgh);
     for (label i = 0; i < NPrgh; ++i)
     {
-        for (label j = 0; j < nAvg; ++j)
+        gradP.set(i, fvc::grad(P_rghmodes[i]));
+    }
+
+    for (label j = 0; j < nAvg; ++j)
+    {
+        for (label k = 0; k < cSize; ++k)
         {
-            for (label k = 0; k < cSize; ++k)
+            tmp<volVectorField> laplacianField = fvc::laplacian(avgNutfield[j], L_U_SUPmodes[k]);
+            for (label i = 0; i < NPrgh; ++i)
             {
-                ct1PPEAveTensor(i, j, k) =
-                    fvc::domainIntegrate(
-                        fvc::grad(P_rghmodes[i]) & fvc::laplacian(avgNutfield[j], L_U_SUPmodes[k]))
-                        .value();
+                ct1PPEAveTensor(i, j, k) = fvc::domainIntegrate(gradP[i] & laplacianField()).value();
             }
+            laplacianField.clear();
         }
     }
 
@@ -1614,6 +1723,8 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPEAveTensor1(label NU, label
             "ct1PPEAve_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NPrgh) + "_t");
         ITHACAstream::exportTensor(ct1PPEAveTensor, "ct1PPEAve_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
+    
+    Info << "### [MATRICES] - Assembled the turbulence term tensor ct1PPEAve of size " << ct1PPEAveTensor.dimension(0) << " x " << ct1PPEAveTensor.dimension(1) << " x " << ct1PPEAveTensor.dimension(2) << endl;
     return ct1PPEAveTensor;
 }
 
@@ -1622,17 +1733,23 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPETensor1(label NU, label NP
     const label cSize = NU + liftfield.size();
 
     Eigen::Tensor<double, 3> ct1PPEFluctTensor(NPrgh, Nnut, cSize);
+
+    PtrList<volVectorField> gradP(NPrgh);
     for (label i = 0; i < NPrgh; ++i)
     {
-        for (label j = 0; j < Nnut; ++j)
+        gradP.set(i, fvc::grad(P_rghmodes[i]));
+    }
+
+    for (label j = 0; j < Nnut; ++j)
+    {
+        for (label k = 0; k < cSize; ++k)
         {
-            for (label k = 0; k < cSize; ++k)
+            tmp<volVectorField> laplacianField = fvc::laplacian(nutmodes[j], L_U_SUPmodes[k]);
+            for (label i = 0; i < NPrgh; ++i)
             {
-                ct1PPEFluctTensor(i, j, k) =
-                    fvc::domainIntegrate(
-                        fvc::grad(P_rghmodes[i]) & fvc::laplacian(nutmodes[j], L_U_SUPmodes[k]))
-                        .value();
+                ct1PPEFluctTensor(i, j, k) = fvc::domainIntegrate(gradP[i] & laplacianField()).value();
             }
+            laplacianField.clear();
         }
     }
 
@@ -1649,6 +1766,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPETensor1(label NU, label NP
             "ct1PPEFluct_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NPrgh) + "_t");
         ITHACAstream::exportTensor(ct1PPEFluctTensor, "ct1PPEFluct_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
+    Info << "### [MATRICES] - Assembled the turbulence term tensor ct1PPEFluct of size " << ct1PPEFluctTensor.dimension(0) << " x " << ct1PPEFluctTensor.dimension(1) << " x " << ct1PPEFluctTensor.dimension(2) << endl;
     return ct1PPEFluctTensor;
 }
 
@@ -1657,17 +1775,23 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPEAveTensor2(label NU, label
     const label cSize = NU + liftfield.size();
     const label nAvg = avgNutfield.size();
     Eigen::Tensor<double, 3> ct2PPEAveTensor(NPrgh, nAvg, cSize);
+
+    PtrList<volVectorField> gradP(NPrgh);
     for (label i = 0; i < NPrgh; ++i)
     {
-        for (label j = 0; j < nAvg; ++j)
+        gradP.set(i, fvc::grad(P_rghmodes[i]));
+    }
+
+    for (label j = 0; j < nAvg; ++j)
+    {
+        for (label k = 0; k < cSize; ++k)
         {
-            for (label k = 0; k < cSize; ++k)
+            tmp<volVectorField> divField = fvc::div(avgNutfield[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T()));
+            for (label i = 0; i < NPrgh; ++i)
             {
-                ct2PPEAveTensor(i, j, k) =
-                    fvc::domainIntegrate(
-                        fvc::grad(P_rghmodes[i]) & fvc::div(avgNutfield[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T())))
-                        .value();
+                ct2PPEAveTensor(i, j, k) = fvc::domainIntegrate(gradP[i] & divField()).value();
             }
+            divField.clear();
         }
     }
 
@@ -1685,6 +1809,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPEAveTensor2(label NU, label
         ITHACAstream::exportTensor(ct2PPEAveTensor, "ct2PPEAve_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
 
+    Info << "### [MATRICES] - Assembled the turbulence term tensor ct2PPEAve of size " << ct2PPEAveTensor.dimension(0) << " x " << ct2PPEAveTensor.dimension(1) << " x " << ct2PPEAveTensor.dimension(2) << endl;
     return ct2PPEAveTensor;
 }
 
@@ -1693,17 +1818,22 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPETensor2(label NU, label NP
     const label cSize = NU + liftfield.size();
     Eigen::Tensor<double, 3> ct2PPEFluctTensor(NPrgh, Nnut, cSize);
 
+    PtrList<volVectorField> gradP(NPrgh);
     for (label i = 0; i < NPrgh; ++i)
     {
-        for (label j = 0; j < Nnut; ++j)
+        gradP.set(i, fvc::grad(P_rghmodes[i]));
+    }
+
+    for (label j = 0; j < Nnut; ++j)
+    {
+        for (label k = 0; k < cSize; ++k)
         {
-            for (label k = 0; k < cSize; ++k)
+            tmp<volVectorField> divField = fvc::div(nutmodes[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T()));
+            for (label i = 0; i < NPrgh; ++i)
             {
-                ct2PPEFluctTensor(i, j, k) =
-                    fvc::domainIntegrate(
-                        fvc::grad(P_rghmodes[i]) & fvc::div(nutmodes[j] * dev2((fvc::grad(L_U_SUPmodes[k]))().T())))
-                        .value();
+                ct2PPEFluctTensor(i, j, k) = fvc::domainIntegrate(gradP[i] & divField()).value();
             }
+            divField.clear();
         }
     }
 
@@ -1721,6 +1851,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPETensor2(label NU, label NP
         ITHACAstream::exportTensor(ct2PPEFluctTensor, "ct2PPEFluct_tensor", "python", "./ITHACAoutput/Matrices/python/");
     }
 
+    Info << "### [MATRICES] - Assembled the turbulence term tensor ct2PPEFluct of size " << ct2PPEFluctTensor.dimension(0) << " x " << ct2PPEFluctTensor.dimension(1) << " x " << ct2PPEFluctTensor.dimension(2) << endl;
     return ct2PPEFluctTensor;
 }
 
@@ -1944,79 +2075,113 @@ void UnsteadyBBTurb::resizeModes()
 void UnsteadyBBTurb::computeTestFunctionsBC()
 {
     // The test functions are computed using QR factorization of the modes. The B matrix is a (Nmodes x NBC) matrix, where each mode is evaluated on a point of the boundary
-    GunzburgerBCMatrixVelocity.resize(NUmodes, inletIndex.rows());
-    for (label i = 0; i < NUmodes; i++)
+    const label nBC = inletIndex.rows();
+    const label nUTest = NUmodes - nBC;
+    GunzburgerBCMatrixVelocity.resize(NUmodes, nBC);
+    const label nBCT = inletIndexT.rows();
+    const label nTTest = NTmodes - nBCT;
+    GunzburgerBCMatrixTemperature.resize(NTmodes, nBCT);
+
+    M_Assert(nUTest > 0, "Not enough velocity modes to satisfy the boundary conditions. Increase NUmodes or reduce the number of boundary conditions.");
+    M_Assert(nTTest > 0, "Not enough temperature modes to satisfy the boundary conditions. Increase NTmodes or reduce the number of boundary conditions.");
+
+
+    scalarField areaU(nBC, 0.0);
+    for (label j = 0; j < nBC; j++)
     {
-        for (label j = 0; j < inletIndex.rows(); j++)
-        {
-            label BCind = inletIndex(j, 0);
-            label BCcomp = inletIndex(j, 1);
-            scalar area = gSum(Umodes[i].mesh().magSf().boundaryField()[BCind]);
-            GunzburgerBCMatrixVelocity(i, j) = gSum(Umodes[i].boundaryField()[BCind].component(BCcomp) * Umodes[i].mesh().magSf().boundaryField()[BCind]) / area;
-        }
+        label BCind = inletIndex(j, 0);
+        areaU[j] = gSum(Umodes[0].mesh().magSf().boundaryField()[BCind]);
+    }
+
+    for (label j = 0; j < nBC; j++)
+    {
+      label BCind = inletIndex(j, 0);
+      label BCcomp = inletIndex(j, 1);
+      for (label i = 0; i < NUmodes; i++)
+      {
+        scalar avg = gSum(
+          Umodes[i].boundaryField()[BCind].component(BCcomp) *
+          Umodes[i].mesh().magSf().boundaryField()[BCind]
+        ) / areaU[j];
+        GunzburgerBCMatrixVelocity(i, j) = avg;
+      }
     }
     // Now, we want to determine the linear combination psi_l of the POD basis that vanish on the boundary
     // We use the property that the last (NUmodes-NBC) columns of the complete Q matrix form a nullspace of B
-    Eigen::HouseholderQR<Eigen::MatrixXd> qr(GunzburgerBCMatrixVelocity);
-    Eigen::MatrixXd Q = qr.householderQ();
-    Eigen::MatrixXd psiCoeffs = Q.rightCols(NUmodes - inletIndex.rows());
-    testFunctionsU.resize(0);
-    for (label i = 0; i < NUmodes - inletIndex.rows(); i++)
+    Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(GunzburgerBCMatrixVelocity);
+    Eigen::MatrixXd Q = qr.householderQ() * Eigen::MatrixXd::Identity(NUmodes, NUmodes);
+    Eigen::MatrixXd psiCoeffs = Q.rightCols(nUTest);
+  
+    testFunctionsU.setSize(nUTest);
+    for (label i = 0; i < nUTest; i++)
     {
-        testFunctionsU.append(Umodes[0].clone());
-        testFunctionsU[i] = Umodes[0] * 0;
+        testFunctionsU.set(i, volVectorField::New("testFunctionU" + name(i), Umodes[0].mesh(), dimensionedVector(Umodes[0].dimensions(), vector(0, 0, 0))));
         for (label j = 0; j < NUmodes; j++)
         {
             testFunctionsU[i] += psiCoeffs(j, i) * Umodes[j];
         }
-    }
 
-    for (label i = 0; i < testFunctionsU.size(); i++) // Enforce to avoid possible numerical issues, even if the test functions should be zero on the boundary by construction
-    {
-        for (label j = 0; j < inletIndex.rows(); j++)
+        for (label j = 0; j < nBC; j++)
         {
             label BCind = inletIndex(j, 0);
             vector bcValue(0, 0, 0);
             ITHACAutilities::assignBC(testFunctionsU[i], BCind, bcValue);
         }
     }
+
     // Repeat for temperature
-    GunzburgerBCMatrixTemperature.resize(NTmodes, inletIndexT.rows());
-    for (label i = 0; i < NTmodes; i++)
+
+    scalarField areaT(nBCT, 0.0);
+    for (label j = 0; j < nBCT; j++)
     {
-        for (label j = 0; j < inletIndexT.rows(); j++)
+        label BCind = inletIndexT(j, 0);
+        areaT[j] = gSum(Tmodes[0].mesh().magSf().boundaryField()[BCind]);
+    }
+
+    for (label j = 0; j < nBCT; j++)
+    {
+        label BCind = inletIndexT(j, 0);
+        for (label i = 0; i < NTmodes; i++)
         {
-            label BCind = inletIndexT(j, 0);
-            scalar area = gSum(Tmodes[i].mesh().magSf().boundaryField()[BCind]);
-            GunzburgerBCMatrixTemperature(i, j) = gSum(Tmodes[i].boundaryField()[BCind] * Tmodes[i].mesh().magSf().boundaryField()[BCind]) / area;
+            scalar avg = gSum(
+                Tmodes[i].boundaryField()[BCind] *
+                Tmodes[i].mesh().magSf().boundaryField()[BCind]
+            ) / areaT[j];
+            GunzburgerBCMatrixTemperature(i, j) = avg;
         }
     }
-    Eigen::HouseholderQR<Eigen::MatrixXd> qrT(GunzburgerBCMatrixTemperature);
-    Eigen::MatrixXd QT = qrT.householderQ();
-    Eigen::MatrixXd psiCoeffsT = QT.rightCols(NTmodes - inletIndexT.rows());
-    testFunctionsT.resize(0);
-    for (label i = 0; i < NTmodes - inletIndexT.rows(); i++)
+
+    Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qrT(GunzburgerBCMatrixTemperature);
+    Eigen::MatrixXd QT = qrT.householderQ() * Eigen::MatrixXd::Identity(NTmodes, NTmodes);
+    Eigen::MatrixXd psiCoeffsT = QT.rightCols(nTTest);
+    testFunctionsT.setSize(nTTest);
+    for (label i = 0; i < nTTest; i++)
     {
-        testFunctionsT.append(Tmodes[0].clone());
-        testFunctionsT[i] = Tmodes[0] * 0;
-        for (label j = 0; j < NTmodes; j++)
+        testFunctionsT.set(
+          i, 
+          volScalarField::New(
+              "testT_" + name(i), 
+              Tmodes[0].mesh(), 
+              dimensionedScalar(Tmodes[0].dimensions(), Zero)
+          )
+        );
+        
+        for (label j = 0; j < NTmodes; ++j)
         {
             testFunctionsT[i] += psiCoeffsT(j, i) * Tmodes[j];
         }
-    }
 
-    for (label i = 0; i < testFunctionsT.size(); i++)
-    {
-        for (label j = 0; j < inletIndexT.rows(); j++)
+        // Clean up boundary floating-point noise
+        for (label j = 0; j < nBCT; ++j)
         {
-            label BCind = inletIndexT(j, 0);
-            scalar bcValue = 0;
-            ITHACAutilities::assignBC(testFunctionsT[i], BCind, bcValue);
+            const label BCind = inletIndexT(j, 0);
+            ITHACAutilities::assignBC(testFunctionsT[i], BCind, 0.0);
         }
     }
 
-    // ITHACAstream::exportFields(testFunctionsU, "./ITHACAoutput/testFunctions/", testFunctionsU[0].name()); // For Debugging
-    // ITHACAstream::exportFields(testFunctionsT, "./ITHACAoutput/testFunctions/", testFunctionsT[0].name());
+
+    ITHACAstream::exportFields(testFunctionsU, "./ITHACAoutput/testFunctions/", testFunctionsU[0].name()); // For Debugging
+    ITHACAstream::exportFields(testFunctionsT, "./ITHACAoutput/testFunctions/", testFunctionsT[0].name());
 
     for (label i = 0; i < testFunctionsU.size(); i++)
     {
