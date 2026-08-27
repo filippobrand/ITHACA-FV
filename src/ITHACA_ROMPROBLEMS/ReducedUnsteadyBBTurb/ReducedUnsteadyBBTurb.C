@@ -32,10 +32,10 @@ License
 /// Source file of the ReducedUnsteadyBBTurb class
 
 #include "ReducedUnsteadyBBTurb.H"
+#include "ReducedUnsteadyBBTurbSystems.H"
 #include <atomic>
 #include <fstream>
 #include <chrono>
-
 
 // * * * * * * * * * * * * * * * Constructors * * * * * * * * * * * * * * * * //
 
@@ -44,116 +44,335 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb()
 {
 }
 
-ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& FOMproblem):
-    problem(&FOMproblem)
+ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& fom):
+    problem(&fom)
 {
-    pCommonMatrices = FOMproblem.pCommonMatrices;
-    pSupremizerMatrices = FOMproblem.pSupremizerMatrices;
-    pPPEMatrices = FOMproblem.pPPEMatrices;
-    pPenaltyMatrices = FOMproblem.pPenaltyMatrices;
-
-    N_BC = problem->inletIndex.rows();
-    N_BC_t = problem->inletIndexT.rows();
-    Nphi_u = pCommonMatrices->B.cols();
-    Ntest_u = pCommonMatrices->B.rows();
-    Nphi_prgh = pCommonMatrices->K.cols();
-    Ntest_prgh = pCommonMatrices->K.cols();
-    Nphi_t = pCommonMatrices->Y.cols();
-    Ntest_t = pCommonMatrices->Y.rows();
-    Nphi_nut = pCommonMatrices->CTotal.dimension(1);
-
-    dimA = problem->dimA;
-    method = problem->ITHACAdict->lookupOrDefault<word>("method", "PPE");
-
-    y = Eigen::VectorXd::Zero(Nphi_u + Nphi_prgh + Nphi_t); // Solution vector
-    residual = Eigen::VectorXd::Zero(y.size()); // Residual vector
-
-    if (skipLift == true && problem->bcMethod == "lift")
+    // Construct the settings objects for the ROM
+    romSettings_ = ROMSettings
     {
-        firstRBFIndex = problem->skipRBFIndex;
-        Info << "Skipping lifting modes in the RBF evaluation. This means that the first RBF index is set to " << firstRBFIndex << endl;
-    } else
+        problem->ITHACAdict->lookupOrDefault<word>("method", "PPE"),
+        problem->ITHACAdict->lookupOrDefault<word>("bcMethod", "Gunzburger"),
+        problem->ITHACAdict->lookupOrDefault<bool>("hasMonitors", false),
+        problem->ITHACAdict->lookupOrDefault<bool>("timeDependentBC", false),
+        (int)problem->inletIndex.rows(),
+        (int)problem->inletIndexT.rows(),
+        problem->ITHACAdict->lookupOrDefault<word>("solverODE", "BDF2")
+    };
+    M_Assert(romSettings_.bcMethod == "Gunzburger",
+             "Only Gunzburger BC method is implemented for now. Please set bcMethod to Gunzburger in the ITHACA dictionary.");
+    collectMatrices();
+    initializeDimensions();
+
+    if (romSettings_.bcMethod == "Gunzburger")
     {
-        firstRBFIndex = 0;
-        Info << "## COMM - Not skipping lifting modes in the RBF evaluation. This means that the first RBF index is set to " << firstRBFIndex << endl;
+        odeSystem_ = std::make_unique<SystemPPEGunzburger>(*this);
+    }
+    else if (romSettings_.bcMethod == "penalty")
+    {
+        penaltySettings_ = PenaltySettings
+        {
+            problem->ITHACAdict->lookupOrDefault<bool>("optimizeTau", false),
+            problem->ITHACAdict->lookupOrDefault<int>("nTimestepsPenaltyAdapt", 100),
+            problem->ITHACAdict->lookupOrDefault<int>("penaltyMaxIter", 50),
+            problem->ITHACAdict->lookupOrDefault<float>("penaltyTolU", 1e-3),
+            problem->ITHACAdict->lookupOrDefault<float>("penaltyTolT", 1e-2)
+        };
+        M_Assert(penaltySettings_.nTimestepsPenaltyAdapt > 0,
+                 "Number of timesteps for penalty factor adaptation must be positive.");
+        M_Assert(penaltySettings_.penaltyMaxIter > 0,
+                 "Maximum number of iterations for penalty factor optimization must be positive.");
+        M_Assert(penaltySettings_.penaltyTolU > 0 and penaltySettings_.penaltyTolT > 0,
+                 "Penalty factor optimization tolerances must be positive.");
     }
 
-    // Penalty factor optimization settings
-    optimizePenaltyFactor = problem->ITHACAdict->lookupOrDefault<bool>("optimizeTau", false);
-    nTimestepsPenaltyAdapt = problem->ITHACAdict->lookupOrDefault<int>("nTimestepsPenaltyAdapt", 100);
-    penaltyMaxIter = problem->ITHACAdict->lookupOrDefault<int>("penaltyMaxIter", 50);
-    penaltyTolU = problem->ITHACAdict->lookupOrDefault<float>("penaltyTolU", 1e-3);
-    penaltyTolT = problem->ITHACAdict->lookupOrDefault<float>("penaltyTolT", 1e-2);
+    M_Assert(odeSystem_ != nullptr,
+             "ODE system is not initialized. Please check the bcMethod in the ITHACA dictionary.");
+    y = Eigen::VectorXd::Zero(expressionModes_.velocity + expressionModes_.pressure
+                              + expressionModes_.temperature);
+    interpolationSettings_ = InterpolationSettings
+    {
+        problem->ITHACAdict->lookupOrDefault<int>("firstRBFIndex", 0),
+        problem->dimA,
+        problem->ITHACAdict->lookupOrDefault<bool>("derivativeInRBF", false)
+    };
 
-    M_Assert(problem->bcMethod == "penalty" || problem->bcMethod == "Gunzburger" || problem->bcMethod == "lift", "Boundary condition method not recognized. Please select either 'penalty', 'Gunzburger' or 'lift'.");
-    if (problem->bcMethod == "penalty")
+    if (romSettings_.solverODE == "BDF2")
     {
-        penaltyBCs = true;
-        gunzburgerBCs = false;
-        liftBCs = false;
-        Info << "Using penalty boundary conditions." << endl;
-    } else if (problem->bcMethod == "Gunzburger")
-    {
-        gunzburgerBCs = true;
-        penaltyBCs = false;
-        liftBCs = false;
-        Info << "Using Gunzburger boundary conditions." << endl;
-    } else if (problem->bcMethod == "lift")
-    {
-        liftBCs = true;
-        penaltyBCs = false;
-        gunzburgerBCs = false;
-        Info << "Using lifting function for boundary conditions." << endl;
+        // The solver takes in a child of ReducedODESystem, which it whathever odeSystem_ points to
+        odeSolver_ = std::make_unique<BDF2Solver>(*odeSystem_, y.size());
     }
-    if (problem->timedepbcMethod == "yes")
+    else if (romSettings_.solverODE == "BDF1"
+             or romSettings_.solverODE == "BackwardEuler")
     {
-        timeDepBCs = true;
+        odeSolver_ = std::make_unique<ImplicitEulerSolver>(*odeSystem_, y.size());
+    }
+    else
+    {
+        Info << "ODE solver not recognized. Using BDF2 as default." << endl;
+        odeSolver_ = std::make_unique<BDF2Solver>(*odeSystem_, y.size());
     }
 
-    M_Assert(penaltyTolU > 0 && penaltyTolT > 0, "Penalty factor optimization tolerances must be positive.");
-    inf_sup_constant();
     // Note: some other reduced class in ITHACA-FV in the constructor create a local copy of the
-    // modes from the FOM problem. Maybe in the future the same could be done here
+    // modes from the FOM problem. Maybe in the future the same could be done here.
 }
 
-// * * * * * * * * * * * * * * * Solve Functions  * * * * * * * * * * * * * //
-void ReducedUnsteadyBBTurb::solveOnline_PPE()
+ReducedUnsteadyBBTurb::~ReducedUnsteadyBBTurb() = default;
+
+void ReducedUnsteadyBBTurb::collectMatrices()
 {
-    // Set number of online solutions - Time related
-    int numberOfStores = round((storeEvery) / dt); // Number of time steps between two stored solutions
-    int Ntsteps = static_cast<int>((finalTime - tstart) / dt);
-    int onlineSize = static_cast<int>(Ntsteps / numberOfStores); // Total stored solutions, excluding initial condition
-    online_solution.resize(onlineSize);
-    rbfCoeffMat.resize(Nphi_nut + 1, onlineSize);
-    time = tstart;
+    pCommonMatrices = problem->pCommonMatrices;
 
-    ODEStructurePPETurb ode_structure(*this);
-    BDF2Solver ode_solver(ode_structure, y.size());
-
-    onlineTimeLoop(ode_solver, numberOfStores);
-}
-
-template <typename ODESolverType>
-void ReducedUnsteadyBBTurb::interpolateEddyViscosity(ODESolverType& ode_solver)
-{
-    Eigen::VectorXd RBFInput = Eigen::VectorXd::Zero(dimA);
-    if (problem->derivativeInRBF == true)
+    if (romSettings_.method == "supremizer")
     {
-        Eigen::VectorXd aDer = Eigen::VectorXd::Zero(Nphi_u);
-        aDer = (y.head(Nphi_u) - ode_solver.y_old.head(Nphi_u)) / dt;
-        RBFInput << y.segment(firstRBFIndex, dimA / 2), aDer.segment(firstRBFIndex, dimA / 2);
-    } else
-    {
-        RBFInput << y.segment(firstRBFIndex, dimA);
+        pSupremizerMatrices = problem->pSupremizerMatrices;
+        pPPEMatrices = nullptr;
     }
-    for (int j = 0; j < Nphi_nut; j++)
+    else if (romSettings_.method == "PPE")
     {
-        nut_fluct(j) = problem->rbfSplines[j]->predict(RBFInput);
+        pPPEMatrices = problem->pPPEMatrices;
+        pSupremizerMatrices = nullptr;
+    }
+
+    if (romSettings_.bcMethod == "penalty")
+    {
+        pPenaltyMatrices = problem->pPenaltyMatrices;
+        pGunzburgerMatrices = nullptr;
+    }
+    else if (romSettings_.bcMethod == "Gunzburger")
+    {
+        pGunzburgerMatrices = problem->pGunzburgerMatrices;
+        pPenaltyMatrices = nullptr;
+    }
+    else
+    {
+        pPenaltyMatrices = nullptr;
+        pGunzburgerMatrices = nullptr;
     }
 }
 
+void ReducedUnsteadyBBTurb::initializeDimensions()
+{
+    if (romSettings_.bcMethod == "Gunzburger")
+    {
+        // Here the test basis and the expression basis are different, so we need to differentiate
+        testModes_ = NumberOfModes
+        {
+            pCommonMatrices->M.rows(), // Mass matrix <phi_i, phi_j> for velocity
+            pCommonMatrices->K.cols(), // Should maybe implement a PPE based computation
+            pCommonMatrices->W.rows(), // Temperature Mass matrix <xi_i, xi_j>
+            pCommonMatrices->CTotal.dimension(1)
+        };
+        expressionModes_ = NumberOfModes
+        {
+            pCommonMatrices->M.cols(), // Mass matrix <phi_i, phi_j> for velocity
+            pCommonMatrices->K.cols(),
+            pCommonMatrices->W.cols(), // Temperature mass matrix <xi_i, xi_j>
+            pCommonMatrices->CTotal.dimension(1)
+        };
+        // Check whether any of the number of modes is invalid (negative or zero)
+        M_Assert(testModes_.velocity > 0,
+                 "Number of test modes for velocity is invalid.");
+        M_Assert(testModes_.pressure > 0,
+                 "Number of test modes for pressure is invalid.");
+        M_Assert(testModes_.temperature > 0,
+                 "Number of test modes for temperature is invalid.");
+        M_Assert(testModes_.nut > 0, "Number of test modes for nut is invalid.");
+        M_Assert(expressionModes_.velocity > 0,
+                 "Number of expression modes for velocity is invalid.");
+        M_Assert(expressionModes_.pressure > 0,
+                 "Number of expression modes for pressure is invalid.");
+        M_Assert(expressionModes_.temperature > 0,
+                 "Number of expression modes for temperature is invalid.");
+        M_Assert(expressionModes_.nut > 0,
+                 "Number of expression modes for nut is invalid.");
+        Info << "### DEBUG --- Number of test modes: " << testModes_.velocity <<
+             " velocity, "
+             << testModes_.pressure << " pressure, "
+             << testModes_.temperature << " temperature, "
+             << testModes_.nut << " nut." << endl;
+        Info << "### DEBUG --- Number of expression modes: " <<
+             expressionModes_.velocity << " velocity, "
+             << expressionModes_.pressure << " pressure, "
+             << expressionModes_.temperature << " temperature, "
+             << expressionModes_.nut << " nut." << endl;
+    }
+    else
+    {
+        Info << "Not implemented anything other than Gunzburger BC method for now." <<
+             endl;
+    }
+}
+
+void ReducedUnsteadyBBTurb::interpolateNutCoeffs()
+{
+    Eigen::VectorXd velocity_coeffs = y.head(expressionModes_.velocity);
+
+    if (interpolationSettings_.derivative)
+    {
+        // We use the OdeSolver own method to compute the derivative
+        Eigen::VectorXd velocity_derivative;
+        velocity_derivative = odeSolver_->getLatestDerivative(velocity_coeffs);
+        Eigen::VectorXd inputRBF(velocity_coeffs.size() + velocity_derivative.size());
+        inputRBF << velocity_coeffs, velocity_derivative;
+
+        for (int j = 0; j < expressionModes_.nut; j++)
+        {
+            nutCurrentCoeffs_(j) = problem->rbfSplines[j]->predict(inputRBF);
+        }
+    }
+    else
+    {
+        for (int j = 0; j < expressionModes_.nut; j++)
+        {
+            nutCurrentCoeffs_(j) = problem->rbfSplines[j]->predict(velocity_coeffs);
+        }
+    }
+}
+
+void ReducedUnsteadyBBTurb::readEigenvalues()
+{
+    // We read the eigenvalues from the files in the ./ITHACAoutput/POD folder
+    // These files follow this form:
+    // %%MatrixMarket matrix array real general
+    // 2720 1
+    // 0.34428033233490540344
+    // 0.12360804880946965612
+    // 0.08097235508005383442
+    // ...
+    //
+    // We ignore the first two lines and read the first n lines, where n is the number of modes for each variable.
+    // Velocity - file named: Eigenvalues_U
+    std::ifstream uFile("ITHACAoutput/POD/Eigenvalues_U");
+    M_Assert(uFile.is_open(),
+             "Could not open file ITHACAoutput/POD/Eigenvalues_U. Please make sure the file exists and is readable.");
+    std::string line;
+    std::getline(uFile, line); // Ignore first line
+    std::getline(uFile, line); // Ignore second line
+    uEigenvalues_.resize(expressionModes_.velocity);
+
+    for (int i = 0; i < expressionModes_.velocity; i++)
+    {
+        std::getline(uFile, line);
+        uEigenvalues_(i) = std::stod(line);
+    }
+
+    // Pressure - file named: Eigenvalues_p_rgh
+    std::ifstream pFile("ITHACAoutput/POD/Eigenvalues_p_rgh");
+    M_Assert(pFile.is_open(),
+             "Could not open file ITHACAoutput/POD/Eigenvalues_p_rgh. Please make sure the file exists and is readable.");
+    std::getline(pFile, line); // Ignore first line
+    std::getline(pFile, line); // Ignore second line
+    pEigenvalues_.resize(expressionModes_.pressure);
+
+    for (int i = 0; i < expressionModes_.pressure; i++)
+    {
+        std::getline(pFile, line);
+        pEigenvalues_(i) = std::stod(line);
+    }
+
+    // Temperature - file named: Eigenvalues_T
+    std::ifstream tFile("ITHACAoutput/POD/Eigenvalues_T");
+    M_Assert(tFile.is_open(),
+             "Could not open file ITHACAoutput/POD/Eigenvalues_T. Please make sure the file exists and is readable.");
+    std::getline(tFile, line); // Ignore first line
+    std::getline(tFile, line); // Ignore second line
+    tEigenvalues_.resize(expressionModes_.temperature);
+
+    for (int i = 0; i < expressionModes_.temperature; i++)
+    {
+        std::getline(tFile, line);
+        tEigenvalues_(i) = std::stod(line);
+    }
+
+    // Fluctnut - file named: Eigenvalues_fluctNut
+    std::ifstream nutFile("ITHACAoutput/POD/Eigenvalues_fluctNut");
+    M_Assert(nutFile.is_open(),
+             "Could not open file ITHACAoutput/POD/Eigenvalues_fluctNut. Please make sure the file exists and is readable.");
+    std::getline(nutFile, line); // Ignore first line
+    std::getline(nutFile, line); // Ignore second line
+    nutEigenvalues_.resize(expressionModes_.nut);
+
+    for (int i = 0; i < expressionModes_.nut; i++)
+    {
+        std::getline(nutFile, line);
+        nutEigenvalues_(i) = std::stod(line);
+    }
+
+    Info << "### EIGS - Velocity eigenvalues: " << uEigenvalues_.transpose() <<
+         endl;
+    Info << "### EIGS - Pressure eigenvalues: " << pEigenvalues_.transpose() <<
+         endl;
+    Info << "### EIGS - Temperature eigenvalues: " << tEigenvalues_.transpose() <<
+         endl;
+    Info << "### EIGS - FluctNut eigenvalues: " << nutEigenvalues_.transpose() <<
+         endl;
+}
+
 // * * * * * * * * * * * * * * * Solve Functions  * * * * * * * * * * * * * //
-void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName folder)
+void ReducedUnsteadyBBTurb::solveOnline(
+    const Eigen::MatrixXd& vel_now_BC,
+    const Eigen::MatrixXd& temp_now_BC,
+    int startSnap, TimeManager& timeManager)
+{
+    boundaryConditions_ = BoundaryConditions(vel_now_BC, temp_now_BC, "linear");
+    boundaryConditions_.initializeReducedCoeffs(
+        startSnap, y, problem,
+        expressionModes_.velocity, expressionModes_.pressure,
+        expressionModes_.temperature
+    );
+    nutCurrentCoeffs_ = ITHACAutilities::getCoeffs(
+                            problem->fluctNutfield[startSnap], problem->nutmodes);
+    Info << "### DEBUG --- Initialized nut coefficients" << endl;
+    // Temporary: for our test case, only the first two values in boundaryConditions_.getCurrentBCs() are used
+    // in the interpolation.
+    nutAvgCurrentCoeffs_ = interpolateIDW(boundaryConditions_.getCurrentBCs().head(
+            2)); // Interpolate current BCs (parameters)
+    onlineSolution.resize(timeManager.getNumberOfStepsToSave() + 1, y.size() + 1);
+    nutCoeffMat.resize(timeManager.getNumberOfStepsToSave() + 1,
+                       expressionModes_.nut + 1);
+    onlineSolution.setZero();
+    nutCoeffMat.setZero();
+    onlineSolution(0, 0) = timeManager.getCurrentTime();
+    onlineSolution.block(0, 1, 1, y.size()) = y.transpose();
+    nutCoeffMat(0, 0) = timeManager.getCurrentTime();
+    nutCoeffMat.block(0, 1, 1,
+                      expressionModes_.nut) = nutCurrentCoeffs_.transpose();
+    int save_index = 1;
+
+    while (!timeManager.isFinished())
+    {
+        timeManager.advanceTime();
+        boundaryConditions_.updateTimeDependentBC(timeManager.getCurrentTime());
+        odeSolver_->solveStep(y, timeManager.getCurrentTime(),
+                              timeManager.getActualTimeStep(), false);
+        // ADD THE INTERPOLATION OF THE NUT COEFFICIENTS AVG HERE
+        interpolateNutCoeffs();
+
+        if (timeManager.shouldSaveCoefficients())
+        {
+            Info << "### DEBUG --- Saving coefficients at time " <<
+                 timeManager.getCurrentTime() << endl;
+            onlineSolution(save_index, 0) = timeManager.getCurrentTime();
+            onlineSolution.block(save_index, 1, 1, y.size()) = y.transpose();
+            nutCoeffMat(save_index, 0) = timeManager.getCurrentTime();
+            nutCoeffMat.block(save_index, 1, 1,
+                              expressionModes_.nut) = nutCurrentCoeffs_.transpose();
+            save_index++;
+            Info << "### DEBUG --- Saved coefficients at time " <<
+                 timeManager.getCurrentTime() << endl;
+            timeManager.updateAfterSave();
+        }
+    }
+
+    if (save_index < onlineSolution.rows())
+    {
+        onlineSolution.conservativeResize(save_index, y.size() + 1);
+        nutCoeffMat.conservativeResize(save_index, expressionModes_.nut + 1);
+    }
+}
+
+void ReducedUnsteadyBBTurb::reconstructSolution(TimeManager& time_manager,
+        bool exportFields, fileName folder)
 {
     if (exportFields)
     {
@@ -164,61 +383,54 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
         }
     }
 
-    int timeStepCounter = 0;
-    int nextWrite = 0;
-    int exportEveryIndex = round(exportEvery / storeEvery);
+    int exportEveryIndex = time_manager.getExportToEverySaved();
+
+    if (exportEveryIndex < 1)
+    {
+        Info << "Export every saved index is less than 1. Setting it to 1." << endl;
+        exportEveryIndex = 1;
+    }
+
     List<Eigen::MatrixXd> CoeffU;
     List<Eigen::MatrixXd> CoeffPrgh;
     List<Eigen::MatrixXd> CoeffT;
     List<Eigen::MatrixXd> CoeffNut;
-    CoeffU.resize(0);
-    CoeffPrgh.resize(0);
-    CoeffT.resize(0);
-    CoeffNut.resize(0);
+    // Since we know the size, preallocate the lists:
+    CoeffU.resize(time_manager.getNumberOfStepsToExport() + 1);
+    CoeffPrgh.resize(time_manager.getNumberOfStepsToExport() + 1);
+    CoeffT.resize(time_manager.getNumberOfStepsToExport() + 1);
+    CoeffNut.resize(time_manager.getNumberOfStepsToExport() + 1);
 
-    int reconstructionSizeU = Nphi_u;
-    int reconstructionSizeT = Nphi_t;
-
-    for (int i = 0; i < online_solution.size(); i++)
+    for (int i = 0; i < onlineSolution.rows(); i++)
     {
-        if (timeStepCounter == nextWrite)
+        if (i % exportEveryIndex == 0)
         {
-            Eigen::MatrixXd currentUCoeff;
-            Eigen::MatrixXd currentPrghCoeff;
-            Eigen::MatrixXd currentTCoeff;
-            Eigen::MatrixXd currentNutCoeff;
-
-            currentUCoeff = online_solution[i].block(1, 0, reconstructionSizeU, 1);
-            if (method != "VMB")
-            {
-                currentPrghCoeff = online_solution[i].block(reconstructionSizeU + 1, 0, Nphi_prgh, 1);
-            } else
-            {
-                currentPrghCoeff = online_solution[i].block(1, 0, reconstructionSizeU, 1);
-            }
-            currentTCoeff = online_solution[i].bottomRows(reconstructionSizeT);
-            currentNutCoeff = rbfCoeffMat.block(1, i, Nphi_nut, 1);
-
-            CoeffPrgh.append(currentPrghCoeff);
-            CoeffU.append(currentUCoeff);
-            CoeffT.append(currentTCoeff);
-            CoeffNut.append(currentNutCoeff);
-
-            nextWrite += exportEveryIndex;
+            Eigen::MatrixXd currentUCoeff = onlineSolution.block(i, 1, 1,
+                expressionModes_.velocity);
+            Eigen::MatrixXd currentPrghCoeff = onlineSolution.block(i,
+                1 + expressionModes_.velocity, 1, expressionModes_.pressure);
+            Eigen::MatrixXd currentTCoeff = onlineSolution.block(i,
+                1 + expressionModes_.velocity + expressionModes_.pressure, 1,
+                expressionModes_.temperature);
+            Eigen::MatrixXd currentNutCoeff = nutCoeffMat.block(i, 1, 1,
+                expressionModes_.nut);
+            CoeffU[i / exportEveryIndex] = currentUCoeff;
+            CoeffPrgh[i / exportEveryIndex] = currentPrghCoeff;
+            CoeffT[i / exportEveryIndex] = currentTCoeff;
+            CoeffNut[i / exportEveryIndex] = currentNutCoeff;
         }
-        timeStepCounter++;
     }
+
     volVectorField uRec("uRec", problem->L_U_SUPmodes[0]);
     volScalarField TRec("TRec", problem->L_Tmodes[0]);
     volScalarField prghRec("prghRec", problem->P_rghmodes[0]);
     volScalarField nutFluctRec("nutFluctRec", problem->nutmodes[0]);
-
     uRecFields = problem->L_U_SUPmodes.reconstruct(uRec, CoeffU, "uRec");
     TRecFields = problem->L_Tmodes.reconstruct(TRec, CoeffT, "TRec");
-    nutFluctRecFields = problem->nutmodes.reconstruct(nutFluctRec, CoeffNut, "nutFluctRec");
+    nutFluctRecFields = problem->nutmodes.reconstruct(nutFluctRec, CoeffNut,
+        "nutFluctRec");
     prghRecFields = problem->P_rghmodes.reconstruct(prghRec, CoeffPrgh, "prghRec");
-
-    // Reconstruct the averaged eddy viscosity field as a linear combination of the nut_param coefficients and the PtrList<volScalarField> avgNutfield;
+    // Reconstruct the averaged eddy viscosity field as a linear combination
     volScalarField nutAvg(
         IOobject(
             "nutAvgRec",
@@ -229,20 +441,10 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
         problem->nutmodes[0].mesh(),
         dimensionedScalar("zero", problem->nutmodes[0].dimensions(), 0.0));
 
-    for (int k = 0; k < nut_param.size(); k++)
+    for (int k = 0; k < nutAvgCurrentCoeffs_.size(); k++)
     {
-        nutAvg += nut_param(k) * problem->avgNutfield[k];
+        nutAvg += nutAvgCurrentCoeffs_(k) * problem->avgNutfield[k];
     }
-
-    volScalarField nutRecField(
-        IOobject(
-            "nutRec",
-            problem->nutmodes[0].time().timeName(),
-            problem->nutmodes[0].mesh(),
-            IOobject::NO_READ,
-            IOobject::NO_WRITE),
-        problem->nutmodes[0].mesh(),
-        dimensionedScalar("zero", problem->nutmodes[0].dimensions(), 0.0));
 
     nutRecFields.resize(0);
     forAll(nutFluctRecFields, i)
@@ -260,29 +462,37 @@ void ReducedUnsteadyBBTurb::reconstructSolution(bool exportFields, fileName fold
     }
 }
 
-void ReducedUnsteadyBBTurb::saveCoefficients(word folder)
+void ReducedUnsteadyBBTurb::saveCoefficients(word folder, word modeIdentifier)
 {
     if (Pstream::master())
     {
         mkDir("./ITHACAoutput/ReducedCoefficients/");
-        ITHACAstream::exportMatrix(online_solution, "reducedCoefficients", "python", "./ITHACAoutput/ReducedCoefficients/" + folder + "/");
-        ITHACAstream::exportMatrix(rbfCoeffMat, "RBFCoefficients", "python", "./ITHACAoutput/ReducedCoefficients/" + folder + "/");
+        word true_folder = "./ITHACAoutput/ReducedCoefficients/" + folder + "_" +
+                           modeIdentifier + "/";
+        ITHACAstream::exportMatrix(online_solution, "reducedCoefficients", "python",
+                                   true_folder);
+        ITHACAstream::exportMatrix(nutCoeffMat, "RBFCoefficients", "python",
+                                   true_folder);
     }
 }
+
 // * * * * * * * * *  Inverse Distance Weighting Functions  * * * * * * * * //
-Eigen::VectorXd ReducedUnsteadyBBTurb::interpolateIDW()
+Eigen::VectorXd ReducedUnsteadyBBTurb::interpolateIDW(const Eigen::VectorXd&
+        input_parameters)
 {
     // The MatrixXd of offline parameters is stored in problem->mu.
     label nOfflineSamples = problem->mu.cols();
     Eigen::VectorXd interpolatedNutCoeffs(nOfflineSamples);
     Eigen::VectorXd weights(nOfflineSamples);
-    Info << "The shape of problem->mu is: " << problem->mu.rows() << " rows x " << problem->mu.cols() << " columns" << endl;
-    Info << "mu_now has shape: " << mu_now.rows() << " rows x " << mu_now.cols() << " columns" << endl;
+
     for (label i = 0; i < nOfflineSamples; i++)
     {
-        weights(i) = 1.0 / ((mu_now - problem->mu.col(i)).norm() + 1e-10); // Add a small value to avoid division by zero
+        weights(i) = 1.0 / ((input_parameters - problem->mu.col(
+                                 i)).norm() + 1e-10); // Add a small value to avoid division by zero
     }
+
     double weightSum = weights.sum();
+
     for (label j = 0; j < nOfflineSamples; j++)
     {
         Eigen::VectorXd nutCoeffsAtJ(nOfflineSamples);
@@ -290,258 +500,52 @@ Eigen::VectorXd ReducedUnsteadyBBTurb::interpolateIDW()
         nutCoeffsAtJ[j] = 1.0;
         interpolatedNutCoeffs(j) = weights.dot(nutCoeffsAtJ) / weightSum;
     }
-    Info << "The interpolated eddy viscosity coefficients are: " << interpolatedNutCoeffs << endl;
+
+    Info << "The interpolated eddy viscosity coefficients are: " <<
+         interpolatedNutCoeffs << endl;
     return interpolatedNutCoeffs;
 }
 
-void ReducedUnsteadyBBTurb::setTimeSettings(const Eigen::MatrixXd& timeMatrix, int index)
-{
-    tstart = timeMatrix(index, 0);
-    finalTime = timeMatrix(index, 1);
-    dt = timeMatrix(index, 2);
-    storeEvery = timeMatrix(index, 3);
-    exportEvery = timeMatrix(index, 4);
-}
-
 // * * * * * * * * *  Validation and setup helpers  * * * * * * * * //
-void ReducedUnsteadyBBTurb::validateSettings()
-{
-    M_Assert(exportEvery >= dt,
-        "The time step dt must be smaller than exportEvery.");
-    M_Assert(storeEvery >= dt,
-        "The time step dt must be smaller than storeEvery.");
-    M_Assert(ITHACAutilities::isInteger(storeEvery / dt) == true,
-        "The variable storeEvery must be an integer multiple of the time step dt.");
-    M_Assert(ITHACAutilities::isInteger(exportEvery / dt) == true,
-        "The variable exportEvery must be an integer multiple of the time step dt.");
-    M_Assert(ITHACAutilities::isInteger(exportEvery / storeEvery) == true,
-        "The variable exportEvery must be an integer multiple of the variable storeEvery.");
-}
 
 void ReducedUnsteadyBBTurb::inf_sup_constant()
 {
     double a;
-    Eigen::VectorXd sup(Nphi_u);
-    Eigen::VectorXd inf(Nphi_prgh);
+    Eigen::VectorXd sup(expressionModes_.velocity);
+    Eigen::VectorXd inf(expressionModes_.pressure);
 
-    for (int i = 0; i < Nphi_prgh; i++)
+    for (int i = 0; i < expressionModes_.pressure; i++)
     {
-        for (int j = 0; j < Nphi_u; j++)
+        for (int j = 0; j < expressionModes_.velocity; j++)
         {
-            sup(j) = fvc::domainIntegrate(fvc::div(problem->L_U_SUPmodes[j]) * problem->P_rghmodes[i]).value() /
-                ITHACAutilities::H1Seminorm(problem->L_U_SUPmodes[j]) / ITHACAutilities::L2Norm(problem->P_rghmodes[i]);
+            sup(j) = fvc::domainIntegrate(fvc::div(problem->L_U_SUPmodes[j]) *
+                                          problem->P_rghmodes[i]).value() /
+                     ITHACAutilities::H1Seminorm(problem->L_U_SUPmodes[j]) / ITHACAutilities::L2Norm(
+                         problem->P_rghmodes[i]);
         }
+
         inf(i) = sup.maxCoeff();
     }
+
     a = inf.minCoeff();
     Info << "### STABILITY: The inf-sup constant is: " << a << endl;
 }
 
-template <typename ODESolverType>
-void ReducedUnsteadyBBTurb::onlineTimeLoop(ODESolverType& ode_solver, int numberOfStores)
+void ReducedUnsteadyBBTurb::setFluidProperties(scalar nu, scalar Pr,
+        scalar Pr_t)
 {
-    int timeStepCounter = 0;
-    int nextStore = 0;
-    int storedSnapshotsCounter = 0;
-    bool print_residual = false;
-
-    const Eigen::Index nRows = y.rows();
-    Eigen::MatrixXd tmp_sol(nRows + 1, 1);
-    tmp_sol(0) = time;
-    tmp_sol.bottomRows(nRows) = y;
-
-    while (time < finalTime - dt)
-    {
-        time += dt;
-        boundaryConditions.updateTimeDependentBC(time);
-        ode_solver.solveStep(y, time, dt, print_residual);
-        interpolateEddyViscosity(ode_solver);
-
-        if (liftBCs)
-        {
-            boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
-        }
-        print_residual = false;
-        if (timeStepCounter == nextStore)
-        {
-            tmp_sol(0) = time;
-            tmp_sol.bottomRows(nRows) = y;
-            if (storedSnapshotsCounter >= online_solution.size())
-            {
-                online_solution.append(tmp_sol);
-            } else
-            {
-                online_solution[storedSnapshotsCounter] = tmp_sol;
-            }
-            rbfCoeffMat(0, storedSnapshotsCounter) = time;
-            rbfCoeffMat.block(1, storedSnapshotsCounter, Nphi_nut, 1) = nut_fluct;
-            nextStore += numberOfStores;
-            storedSnapshotsCounter++;
-            print_residual = true;
-        }
-        timeStepCounter++;
-    }
-    Info << "Online solution computed, total time steps solved: " << timeStepCounter << endl;
-}
-
-void ReducedUnsteadyBBTurb::solveOnline(const Eigen::MatrixXd& vel_now_BC, const Eigen::MatrixXd& temp_now_BC, int startSnap)
-{
-    Info << "########### Online solve N° " << count_online_solve << " ###########" << endl;
-    validateSettings();
-    boundaryConditions = BoundaryConditions(vel_now_BC, temp_now_BC, "linear");
-    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC, N_BC_t);
-    if (liftBCs)
-    {
-        boundaryConditions.correctLiftingCoeffs(y, N_BC, N_BC_t, Nphi_u, Nphi_prgh);
-    }
-
-    nut_fluct = ITHACAutilities::getCoeffs(problem->fluctNutfield[startSnap], problem->nutmodes);
-    nut_param = interpolateIDW();
-
-    M_Assert(method == "PPE", "Currently, only the PPE stabilization method is implemented for the online solve. Please select 'PPE' as method in the ITHACAdict or implement the selected method.");
-
-    if (penaltyBCs && optimizePenaltyFactor == true)
-    {
-        Info << "Penalty factor estimation for PPE is not available yet." << endl;
-    }
-    boundaryConditions.initializeReducedCoeffs(startSnap, y, problem, Nphi_u, Nphi_prgh, Nphi_t, N_BC, N_BC_t);
-    auto clockStart = std::chrono::steady_clock::now();
-    solveOnline_PPE();
-    auto duration = std::chrono::steady_clock::now() - clockStart;
-    Info << "The online solution took, in milliseconds: " << std::chrono::duration_cast<std::chrono::milliseconds>(duration).count() << " ms" << endl;
-
-    count_online_solve++;
+    fluidProperties.nu = nu;
+    fluidProperties.Pr = Pr;
+    fluidProperties.Pr_t = Pr_t;
 }
 
 void ReducedUnsteadyBBTurb::reset()
 {
     online_solution.clear();
-    rbfCoeffMat.setZero();
-
+    nutCoeffMat.setZero();
     uRecFields.clear();
     TRecFields.clear();
     nutFluctRecFields.clear();
     nutRecFields.clear();
 }
-
-// * * * * * * * * *  BBTurbODESystemPPE class implementation  * * * * * * * * //
-
-void ODEStructurePPETurb::evaluateResidual(const Eigen::VectorXd& state, const Eigen::VectorXd& state_dot, Eigen::VectorXd& residual, double t) const
-{
-    // Here we evaluate the residual for the PPE formulation
-    Eigen::VectorXd a = state.head(rom.Nphi_u);
-    Eigen::VectorXd a_dot = state_dot.head(rom.Nphi_u);
-    Eigen::VectorXd b = state.segment(rom.Nphi_u, rom.Nphi_prgh);
-    Eigen::VectorXd c = state.tail(rom.Nphi_t);
-    Eigen::VectorXd c_dot = state_dot.tail(rom.Nphi_t);
-
-    // Momentum Term
-    M11 = rom.pCommonMatrices->BTotal * a * rom.nu;
-    // Gradient of pressure
-    M2 = rom.pCommonMatrices->K * b;
-    // Mass Term
-    M5 = rom.pCommonMatrices->M * a_dot;
-    // Pressure Term - Laplacian
-    M3 = rom.pPPEMatrices->D * b;
-    // Buoyancy Term - Momentum equation
-    M10 = rom.pCommonMatrices->H * c;
-    // Buoyancy term - PPE Equation
-    M12 = rom.pPPEMatrices->HP * c;
-    // BC Term - PPE Equation
-    M7 = rom.pPPEMatrices->nuBC * a * rom.nu;
-    // Time dep BC term - PPE Equation
-    M13 = rom.pPPEMatrices->timedepBC * a_dot;
-    // diffusive term temperature
-    M6 = rom.pCommonMatrices->Y * c * (rom.nu / rom.Pr);
-    // Mass Term Temperature
-    M8 = rom.pCommonMatrices->W * c_dot;
-    // Penalty term
-    penaltyU = Eigen::MatrixXd::Zero(rom.Nphi_u, rom.N_BC);
-    penaltyT = Eigen::MatrixXd::Zero(rom.Nphi_t, rom.N_BC_t);
-
-    if (use_penalty_bc)
-    {
-        for (int l = 0; l < rom.N_BC; l++)
-        {
-            penaltyU.col(l) = rom.tauU(l, 0) * (rom.boundaryConditions.currentVelocityBC(l) * rom.pPenaltyMatrices->bcVelVec[l] - rom.pPenaltyMatrices->bcVelMat[l] * a);
-        }
-        for (int l = 0; l < rom.N_BC_t; l++)
-        {
-            penaltyT.col(l) = rom.tauT(l, 0) * (rom.boundaryConditions.currentTemperatureBC(l) * rom.pPenaltyMatrices->bcTempVec.col(l) - Eigen::SliceFromTensor(rom.pPenaltyMatrices->bcTempMat, 0, l) * c);
-        }
-    }
-    for (int i = 0; i < rom.Ntest_u; i++)
-    {
-        double cc = (a.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->C, 0, i) * a).value();
-        double ct = (rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->CTotal, 0, i) * a).value();
-        double caveraged = (rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->CTotalAve, 0, i) * a).value();
-        residual(i) = -M5(i) + M11(i) - cc - M10(i) - M2(i) + ct + caveraged;
-
-        if (use_penalty_bc)
-        {
-            for (int l = 0; l < rom.N_BC; l++)
-            {
-                residual(i) += penaltyU(i, l);
-            }
-        }
-    }
-    for (int j = 0; j < rom.Ntest_prgh; j++)
-    {
-        int k = j + rom.Nphi_u;
-        double gg = (a.transpose() * Eigen::SliceFromTensor(rom.pPPEMatrices->G, 0, j) * a).value();
-        double turbPPE = (rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pPPEMatrices->CTotalPPEFluct, 0, j) * a).value() + (rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pPPEMatrices->CTotalPPEAve, 0, j) * a).value();
-        residual(k) = M3(j, 0) + gg + M12(j, 0) - M7(j, 0) - turbPPE;
-
-        if (use_time_dep_bc)
-        {
-            residual(k) += M13(j, 0);
-        }
-    }
-    for (int j = 0; j < rom.Ntest_t; j++)
-    {
-        int k = j + rom.Nphi_u + rom.Nphi_prgh;
-        double qq = (a.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->Q, 0, j) * c).value();
-        double qt = (rom.nut_fluct.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->YTurb, 0, j) * c).value();
-        double qt_averaged = (rom.nut_param.transpose() * Eigen::SliceFromTensor(rom.pCommonMatrices->AveYTurb, 0, j) * c).value();
-        residual(k) = -M8(j) + M6(j) - qq + qt / rom.Pr_t + qt_averaged / rom.Pr_t;
-        if (use_penalty_bc)
-        {
-            for (int l = 0; l < rom.N_BC_t; l++)
-            {
-                residual(k) += penaltyT(j, l);
-            }
-        }
-    }
-
-    if (use_gunz_bc)
-    {
-        gunzburgerBCProductU = a.transpose() * rom.problem->GunzburgerBCMatrixVelocity;
-        gunzburgerBCProductT = c.transpose() * rom.problem->GunzburgerBCMatrixTemperature;
-        for (int j = 0; j < rom.N_BC; j++)
-        {
-            int idx = j + rom.Ntest_u;
-            residual(idx) = gunzburgerBCProductU(0, j) - rom.boundaryConditions.currentVelocityBC(j);
-        }
-        for (int j = 0; j < rom.N_BC_t; j++)
-        {
-            int k = j + rom.Nphi_u + rom.Nphi_prgh + rom.Ntest_t;
-            residual(k) = gunzburgerBCProductT(0, j) - rom.boundaryConditions.currentTemperatureBC(j);
-        }
-    }
-
-    else if (use_lift_bc)
-    {
-        for (int j = 0; j < rom.N_BC; j++)
-        {
-            residual(j) = state(j) - rom.boundaryConditions.currentVelocityBC(j);
-        }
-
-        for (int j = 0; j < rom.N_BC_t; j++)
-        {
-            int k = j + rom.Nphi_u + rom.Nphi_prgh;
-            residual(k) = state(k) - rom.boundaryConditions.currentTemperatureBC(j);
-        }
-    }
-}
-
 // ************************************************************************ //

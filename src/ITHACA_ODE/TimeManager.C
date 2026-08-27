@@ -6,7 +6,10 @@
 
 const double TOLERANCE = 1e-10; // Tolerance for floating-point comparisons
 
-TimeManager::TimeManager(double initial, double final, double timestep, double dt_save, double dt_export): initial_time(initial), final_time(final), dt(timestep), dt_save_coefficients(dt_save), dt_export_fields(dt_export), current_time(initial), adaptive_time_stepping(false)
+TimeManager::TimeManager(double initial, double final, double timestep,
+                         double dt_save, double dt_export): initial_time(initial), final_time(final),
+    dt(timestep), dt_save_coefficients(dt_save), dt_export_fields(dt_export),
+    current_time(initial), adaptive_time_stepping(false)
 {
     number_of_steps_taken = 0;
     next_time_to_save = initial_time + dt_save_coefficients;
@@ -15,23 +18,55 @@ TimeManager::TimeManager(double initial, double final, double timestep, double d
     steps_between_exports = static_cast<int>(dt_export_fields / dt);
     steps_saved = 0;
     total_steps_to_solve = static_cast<int>((final_time - initial_time) / dt);
-    total_steps_to_save = static_cast<int>((final_time - initial_time) / dt_save_coefficients);
-    total_steps_to_export = static_cast<int>((final_time - initial_time) / dt_export_fields);
+    total_steps_to_save = static_cast<int>((final_time - initial_time) /
+                                           dt_save_coefficients);
+    total_steps_to_export = static_cast<int>((final_time - initial_time) /
+        dt_export_fields);
+    export_every_saved = static_cast<int>(total_steps_to_save /
+                                          total_steps_to_export);
+
+    // Ensure that every value makes sense and is positive
+    if (dt <= 0 || dt_save_coefficients <= 0 || dt_export_fields <= 0
+            || final_time <= initial_time)
+    {
+        throw std::invalid_argument("TimeManager: All time parameters must be positive and final_time must be greater than initial_time.");
+    }
+
+    if (steps_between_saves <= 0 || steps_between_exports <= 0)
+    {
+        throw std::invalid_argument("TimeManager: dt_save_coefficients and dt_export_fields must be greater than dt.");
+    }
+
+    if (total_steps_to_solve <= 0 || total_steps_to_save <= 0
+            || total_steps_to_export <= 0)
+    {
+        throw std::invalid_argument("TimeManager: The total number of steps to solve, save, and export must be positive.");
+    }
+
+    if (export_every_saved <= 0)
+    {
+        std::cout << "The number of export every saved step is: " << export_every_saved
+                  << std::endl;
+        throw std::invalid_argument("TimeManager: The number of exports per saved step must be positive.");
+    }
 }
 
 TimeManager::TimeManager(const std::string& filename)
 {
     std::ifstream file(filename);
+
     if (!file.is_open())
     {
         std::cerr << "Error: Could not open file " << filename << std::endl;
         throw std::runtime_error("Could not open time settings file");
     }
+
     throw std::runtime_error("TimeManager constructor from file is not implemented yet. One day...");
 }
 
 bool TimeManager::isFinished()
-{ // Must solve even last step, when current_time == final_time - dt, so we check for >=
+{
+    // Must solve even last step, when current_time == final_time - dt, so we check for >=
     return current_time >= final_time + TOLERANCE;
 }
 
@@ -41,12 +76,13 @@ void TimeManager::advanceTime()
     {
         save_coefficients = true;
         actual_dt = next_time_to_save - current_time;
-    } 
+    }
     else
     {
         save_coefficients = false;
         actual_dt = dt;
     }
+
     current_time += actual_dt;
     number_of_steps_taken++;
 }

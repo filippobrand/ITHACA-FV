@@ -43,6 +43,7 @@ SourceFiles
 #include "UnsteadyBBTurb.H"
 #include "BoundaryConditions.H"
 #include "ReducedODESystem.H"
+#include "TimeManager.H"
 #include <Eigen/Dense>
 #include <unsupported/Eigen/NonLinearOptimization>
 #include <unsupported/Eigen/NumericalDiff>
@@ -52,258 +53,219 @@ SourceFiles
                         Class reducedProblem Declaration
 \*---------------------------------------------------------------------------*/
 
+struct PenaltySettings
+{
+    bool optimizePenaltyFactor = false;
+    int nTimestepsPenaltyAdapt = 0;
+    int penaltyMaxIter = 0;
+    float penaltyTolU = 1e-3;
+    float penaltyTolT = 1e-2;
+};
+
+struct ROMSettings
+{
+    word method = "PPE";
+    word bcMethod = "Gunzburger";
+    bool hasMonitors = false;
+    bool timeDependentBC = false;
+    int N_BC = 0;
+    int N_BC_t = 0;
+    word solverODE = "BDF2";
+};
+
+struct InterpolationSettings
+{
+    int firstRBFIndex = 0;
+    bool skipLift = true;
+    bool derivative = false;
+};
+
+struct NumberOfModes
+{
+    int velocity = 0;
+    int pressure = 0;
+    int temperature = 0;
+    int nut = 0;
+};
+
+struct FluidProperties
+{
+    scalar nu = 0;
+    scalar Pr = 0;
+    scalar Pr_t = 0;
+};
+
+// Forward declaration of the ReducedUnsteadyBBTurbSystem class, which will be defined later
+class ReducedUnsteadyBBTurbSystem;
+
 /// Class where a reduced problem for the <b> unsteady, turbulent, buoyant Navier-stokes </b> problem is implemented.
 /** In this class are implemented the methods to solve a reduced version of the unsteady, turbulent, buoyant Navier-stokes equations. This class must be used together with the FOM class */
 class ReducedUnsteadyBBTurb : public reducedUnsteadyNS
 {
-private:
-    /// Word to indicate the stabilization method. It gets read from the ITHACAdict, and can be either "supremizer", "PPE" or "VMB"
-    word method;
+        friend class ReducedUnsteadyBBTurbSystem;
+        friend class SystemPPEGunzburger;
+    private:
+        // General settings
+        ROMSettings romSettings_;
 
-    /// Word to select the ODE solver
-    word odeSolverName;
+        // Settings about the penalty method
+        PenaltySettings penaltySettings_;
 
-    /// Number of timesteps over which the penalty method is optimized (if any)
-    int nTimestepsPenaltyAdapt = 0;
+        // Settings about the interpolation method
+        InterpolationSettings interpolationSettings_;
 
-    /// Maximum number of inner iteration for the adaptive penalty method (if any)
-    int penaltyMaxIter = 0;
+        // Number of trial modes (Might be different from the POD modes)
+        NumberOfModes testModes_;
 
-    /// Tolerance for the adaptive penalty method (if any)
-    float penaltyTolU = 1e-3;
+        // Number of modes used to express the solution. (Is the POD modes)
+        NumberOfModes expressionModes_;
 
-    /// Tolerance for the adaptive penalty method (if any)
-    float penaltyTolT = 1e-2;
+        // Boundary conditions object, used to handle all things BC, including lift and time-dep BC
+        BoundaryConditions boundaryConditions_;
 
-    // Index of the first RBF mode in the reduced solution vector, used for the online interpolation of the eddy viscosity field. Used to ignore the lifting modes in the interpolation
-    int firstRBFIndex = 0;
+        /// Initial eddy viscosity reduced coefficients - fluctuating part
+        Eigen::VectorXd nutCurrentCoeffs_;
 
-    // Index of the current online solution being solved
-    int onlineSolutionIndex = 0;
+        /// Initial eddy viscosity reduced coefficients - parametrized part
+        Eigen::VectorXd nutAvgCurrentCoeffs_;
 
-    // Residual vector
-    Eigen::VectorXd residual;
+        /// Velocity POD eigenvalues
+        Eigen::VectorXd uEigenvalues_;
 
-    /// @brief   Carries out initial checks and assertions
-    ///
-    void validateSettings();
-    
-    ///@brief       Computes the reduced version of the inf_sup constant
-    ///
-    void inf_sup_constant();
+        /// Pressure POD eigenvalues
+        Eigen::VectorXd pEigenvalues_;
 
-    /// @brief      Carries out the time loop for the online solve. Templated to support different Newton object types.
-    ///
-    /// @param[in]      numberOfStores   The number of stores to be used in the time loop
-    template <typename ODESolverType>
-    void onlineTimeLoop(ODESolverType& ode_solver, int numberOfStores);
+        /// Temperature POD eigenvalues
+        Eigen::VectorXd tEigenvalues_;
 
-    /// @brief    Inverse Distance Weighting function to interpolate the averaged eddy viscosity coefficients
-    ///           IDW in this case is a misnomer, as the implementation is specific for a vector of 0s except for the i-th component
-    /// @param[in]  mu_now   The vector of the online parameter
-    ///
-    Eigen::VectorXd interpolateIDW();
+        /// Eddy viscosity POD eigenvalues
+        Eigen::VectorXd nutEigenvalues_;
 
-    /// @brief Method to perform an online solve using a PPE stabilisation method
-    ///
-    void solveOnline_PPE();
+        /// Solution of the online
+        Eigen::MatrixXd onlineSolution;
 
-    /// @brief Method to carry out the RBF interpolation of nut
-    ///
-    template <typename ODESolverType>
-    void interpolateEddyViscosity(ODESolverType& ode_solver);
+        /// Storing nut coefficients
+        Eigen::MatrixXd nutCoeffMat;
 
-public:
-    // Constructors
-    /// Construct Null
-    ReducedUnsteadyBBTurb();
-    /// Construct Null
-    ///
-    /// @param[in]  problem  a full order UnsteadyBBTurb problem
-    ///
-    explicit ReducedUnsteadyBBTurb(UnsteadyBBTurb& problem);
+        /// Pointer to the ODE system to solve
+        std::unique_ptr<ReducedUnsteadyBBTurbSystem> odeSystem_;
 
-    /// Destructor
-    ~ReducedUnsteadyBBTurb() { };
+        /// Pointer to the ODE solver to be used
+        std::unique_ptr<ODESolver> odeSolver_;
 
-    /// Boundary Conditions object
-    BoundaryConditions boundaryConditions;
+        /// @brief    Inverse Distance Weighting function to interpolate the averaged eddy viscosity coefficients
+        ///           IDW in this case is a misnomer, as the implementation is specific for a vector of 0s except for the i-th component
+        /// @param[in]  input_parameters   The vector of the online parameter
+        ///
+        Eigen::VectorXd interpolateIDW(const Eigen::VectorXd& input_parameters);
 
-    /// List of pointers to store the modes for temperature including lift field modes
-    PtrList<volScalarModes> LTmodes;
+        /// @brief    Collect relevant matrices
+        void collectMatrices();
 
-    /// List of pointers to store the modes for velocity including lift field modes
-    PtrList<volVectorModes> LUmodes;
+        /// @brief    Reads the matrix dimensions
+        void initializeDimensions();
 
-    /// List of pointers to store the eddy viscosity modes
-    PtrList<volScalarModes> nutmodes;
+        /// @brief    Does the nut interpolation
+        void interpolateNutCoeffs();
 
-    /// List of pointers to store the shifted pressure (prgh) modes
-    PtrList<volScalarModes> Prghmodes;
+        /// @brief    Reads the market vectors from disk and fills the eigenvalues vectors
+        void readEigenvalues();
 
-    /// Shared pointer to common matrices object for the reduced problem
-    std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
+    public:
+        // Constructors
+        /// Construct Null
+        ReducedUnsteadyBBTurb();
 
-    /// Shared pointer to supremizer matrices object for the reduced problem
-    std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
+        /// @param[in]  problem  a full order UnsteadyBBTurb problem
+        ///
+        explicit ReducedUnsteadyBBTurb(UnsteadyBBTurb& problem);
 
-    /// Shared pointer to PPE matrices object for the reduced problem
-    std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
+        // Default destructor
+        virtual ~ReducedUnsteadyBBTurb();
 
-    /// Shared pointer to penalty matrices object for the reduced problem
-    std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
+        // Fluid Properties
+        FluidProperties fluidProperties;
 
-    /// Reconstructed temperature field
-    PtrList<volScalarField> TRecFields;
+        /// Shared pointer to common matrices object for the reduced problem
+        std::shared_ptr<UnsteadyBBTurb::CommonMatrices> pCommonMatrices;
 
-    /// Reconstructed pressure field
-    PtrList<volScalarField> prghRecFields;
+        /// Shared pointer to supremizer matrices object for the reduced problem
+        std::shared_ptr<UnsteadyBBTurb::SupremizerMatrices> pSupremizerMatrices;
 
-    /// Reconstructed turbulent viscosity field
-    PtrList<volScalarField> nutFluctRecFields;
+        /// Shared pointer to PPE matrices object for the reduced problem
+        std::shared_ptr<UnsteadyBBTurb::PPEMatrices> pPPEMatrices;
 
-    /// Reconstructed total turbulent viscosity field
-    PtrList<volScalarField> nutRecFields;
+        /// Shared pointer to penalty matrices object for the reduced problem
+        std::shared_ptr<UnsteadyBBTurb::PenaltyMatrices> pPenaltyMatrices;
 
-    /// Vector of eddy viscosity coefficients for the fluctuating part
-    Eigen::VectorXd nut_fluct;
+        /// Shared pointer to the Gunzburger matrices object for the reduced problem
+        std::shared_ptr<UnsteadyBBTurb::GunzburgerMatrices> pGunzburgerMatrices;
 
-    /// Vector of eddy viscosity coefficients for the parametrized part
-    Eigen::VectorXd nut_param;
+        /// Reconstructed temperature field
+        PtrList<volScalarField> TRecFields;
 
-    // Parameters for the current run:
-    Eigen::VectorXd mu_now;
+        /// Reconstructed pressure field
+        PtrList<volScalarField> prghRecFields;
 
-    /// Number of temperature modes
-    int Nphi_t;
+        /// Reconstructed turbulent viscosity field
+        PtrList<volScalarField> nutFluctRecFields;
 
-    /// Number of shifted pressure modes
-    int Nphi_prgh;
+        /// Reconstructed total turbulent viscosity field
+        PtrList<volScalarField> nutRecFields;
 
-    /// Number of turbulent viscosity mdodes
-    int Nphi_nut;
+        /// Matrix of eddy viscosity RBF coefficients, has the first row as time values
+        Eigen::MatrixXd rbfCoeffMat;
 
-    // Velocity test function space size
-    int Ntest_u;
+        /// Penalty related matrices
+        Eigen::MatrixXd tauU, tauT;
 
-    // Pressure test function space size
-    int Ntest_prgh;
+        /// Pointer to the FOM problem
+        UnsteadyBBTurb* problem;
 
-    // Temperature test function space size
-    int Ntest_t;
+        // Methods
+        ///@brief       Computes the reduced version of the inf_sup constant
+        ///
+        void inf_sup_constant();
 
-    /// Number of parametrized boundary conditions related to temperature field
-    int N_BC_t;
+        /// @brief    Sets the fluid properties for the reduced problem
+        ///
+        /// @param[in]  nu  Kinematic viscosity
+        /// @param[in]  Pr  Prandtl number
+        /// @param[in]  Pr_t  Turbulent Prandtl number
+        ///
+        void setFluidProperties(scalar nu, scalar Pr, scalar Pr_t);
 
-    /// Dimensions of the interpolation independent variable (for example the (A, A_dot) pair)
-    int dimA;
+        /// @brief    Method that, given a boundary condition object, solves the online problem
+        ///
+        void solveOnline(const Eigen::MatrixXd& vel_now_BC,
+                         const Eigen::MatrixXd& temp_now_BC, int startSnap, TimeManager& timeManager);
 
-    /// DimensionedScalar Pr;
-    scalar Pr;
+        /// @brief    Method to reconstruct a solution from an online solve
+        ///
+        /// @param[in]  exportFields  Boolean to choose whether to export or not the reconstructed fields
+        /// @param[in]  folder        The folder where you want to store the results
+        ///
+        void reconstructSolution(TimeManager& time_manager, bool exportFields = false,
+                                 fileName folder = "./online_rec");
 
-    /// DimensionedScalar Prt;
-    scalar Pr_t;
+        /// @brief   Saves the reduced coefficients and the RBF ones to a specified folder
+        ///
+        /// @param[in]  folder  The folder where to save the results
+        /// @param[in]  modeIdentifier  The identifier for the mode numbers. Used when comparing different runs
+        void saveCoefficients(word folder = "./reducedCoeffs",
+                              word modeIdentifier = "default");
 
-    /// Matrix of eddy viscosity RBF coefficients, has the first row as time values
-    Eigen::MatrixXd rbfCoeffMat;
+        /// @brief   Const method that returns a reference to the boundary conditions object, to be used in the ODE
+        const BoundaryConditions& getBoundaryConditions() const
+        {
+            return boundaryConditions_;
+        }
 
-    /// Penalty term for the temperature equation
-    Eigen::MatrixXd penaltyT;
-
-    /// Penalty coefficient tauT for the temperature equation
-    Eigen::MatrixXd tauT;
-
-    /// Boolean to choose whether to skip the lifting modes in the reconstruction
-    bool skipLift = true;
-
-      /// Bool to use lifting
-    bool liftBCs = false;
-    
-    /// Bool to use gunzburger
-    bool gunzburgerBCs = false;
-
-    /// Bool to use the penalty method
-    bool penaltyBCs = false;
-
-    /// Boolean flag to indicate wheter the penalty factor will be optimized using the Star method
-    bool optimizePenaltyFactor = false;
-
-    /// Boolean to indicate whther time dep BCs are used
-    bool timeDepBCs = false;
-
-    /// Pointer to the FOM problem
-    UnsteadyBBTurb* problem;
-
-    // Methods
-    /// @brief    Method to set the time setting for the online solution
-    ///
-    /// @param[in]  timeMatrix  The matrix containing the time settings, with the following columns:
-    ///                         Column 1: initial time
-    ///                         Column 2: final time
-    ///                         Column 3: time step
-    ///                         Column 4: exportEvery
-    ///                         Column 5: storeEvery
-    ///
-    void setTimeSettings(const Eigen::MatrixXd& timeMatrix, int index);
-
-    /// @brief    Method to reconstruct a solution from an online solve
-    ///
-    /// @param[in]  exportFields  Boolean to choose whether to export or not the reconstructed fields
-    /// @param[in]  folder        The folder where you want to store the results
-    ///
-    void reconstructSolution(bool exportFields = false, fileName folder = "./online_rec");
-
-    /// @brief    High level method to perform an online solve. It calls the specific method for the chosen stabilization method
-    ///
-    /// @param[in]  temp_now_BC   The scalar of online temperature. It is defined in
-    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
-    /// then each nth column corresponds to the value of the
-    /// n-th BC at that time.
-    /// @param[in] vel_now_BC   The scalar of online velocity. It is defined in
-    /// with an Eigen::MatrixXd. For the time-dependent BCs, it has the first column as time,
-    /// then each nth column corresponds to the value of the n-th BC at that time.
-    /// @param[in]  startSnap The first snapshot taken from the offline snapshots and used to get the reduced initial condition default = 0.
-    ///
-    void solveOnline(const Eigen::MatrixXd& vel_now_BC, const Eigen::MatrixXd& temp_now_BC, int startSnap = 0);
-
-    /// @brief   Saves the reduced coefficients and the RBF ones to a specified folder
-    ///
-    /// @param[in]  folder  The folder where to save the results
-    void saveCoefficients(word folder = "./reducedCoeffs");
-
-    /// @brief   Resets the online solution and the reconstructed fields, to be ready for a new online solve
-    void reset();
+        /// @brief Reset
+        ///
+        void reset();
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
-/*---------------------------------------------------------------------------*\
-                        Class ODESystemAdapter Declaration
-\*---------------------------------------------------------------------------*/
-/// Adapter class that inherits from ReducedODESystem and defines a evaluateResidual method to interface with ODE solvers
-
-class ODEStructurePPETurb : public ReducedODESystem
-{
-  private:
-    const ReducedUnsteadyBBTurb& rom;
-
-    bool use_penalty_bc = rom.penaltyBCs;
-    bool use_time_dep_bc = rom.timeDepBCs;
-    bool use_gunz_bc = rom.gunzburgerBCs;
-    bool use_lift_bc = rom.liftBCs;
-
-    // ROM matrices, which are needed to evaluate the residual. Declared here to avoid allocation at each time step
-    mutable Eigen::VectorXd M5, M11, M10, M2, M8, M6, M3, M12, M7, M13;
-    mutable Eigen::MatrixXd penaltyU, penaltyT, gunzburgerBCProductU, gunzburgerBCProductT;
-  
-  public:
-    explicit ODEStructurePPETurb(const ReducedUnsteadyBBTurb& rom) : rom(rom) { }
-
-    void evaluateRHS(const Eigen::VectorXd& state, Eigen::VectorXd& rhs, double t) const override
-    {
-        // This method is not used in the current implementation, as the residual is evaluated directly in the evaluateResidual method. However, it must be defined to inherit from ReducedODESystem.
-    }
-
-    void evaluateResidual(const Eigen::VectorXd& state, const Eigen::VectorXd& state_dot, Eigen::VectorXd& residual, double t) const override;
-};
 
 #endif

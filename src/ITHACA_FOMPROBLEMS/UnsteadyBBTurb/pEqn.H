@@ -66,9 +66,9 @@
     if (p_rgh.needReference())
     {
         p += dimensionedScalar(
-            "p",
-            p.dimensions(),
-            pRefValue - getRefCellValue(p, pRefCell));
+                 "p",
+                 p.dimensions(),
+                 pRefValue - getRefCellValue(p, pRefCell));
         p_rgh = p - rhok * gh;
     }
 }

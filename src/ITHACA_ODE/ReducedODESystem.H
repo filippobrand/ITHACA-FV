@@ -45,77 +45,101 @@
 template<typename ScalarT, int NX = Eigen::Dynamic, int NY = Eigen::Dynamic>
 class EigenNonlinearFunctor
 {
-public:
-    typedef ScalarT Scalar;
-    enum
-    {
-        InputsAtCompileTime = NX,
-        ValuesAtCompileTime = NY
-    };
-    typedef Eigen::Matrix<Scalar, InputsAtCompileTime, 1> InputType;
-    typedef Eigen::Matrix<Scalar, ValuesAtCompileTime, 1> ValueType;
-    typedef Eigen::Matrix<Scalar, ValuesAtCompileTime, InputsAtCompileTime> JacobianType;
+    public:
+        typedef ScalarT Scalar;
+        enum
+        {
+            InputsAtCompileTime = NX,
+            ValuesAtCompileTime = NY
+        };
+        typedef Eigen::Matrix<Scalar, InputsAtCompileTime, 1> InputType;
+        typedef Eigen::Matrix<Scalar, ValuesAtCompileTime, 1> ValueType;
+        typedef Eigen::Matrix<Scalar, ValuesAtCompileTime, InputsAtCompileTime>
+        JacobianType;
 
-    EigenNonlinearFunctor() : m_inputs(InputsAtCompileTime), m_values(ValuesAtCompileTime) { }
+        EigenNonlinearFunctor() : m_inputs(InputsAtCompileTime),
+            m_values(ValuesAtCompileTime) { }
 
-    EigenNonlinearFunctor(int inputs, int values) : m_inputs(inputs), m_values(values) { }
+        EigenNonlinearFunctor(int inputs, int values) : m_inputs(inputs),
+            m_values(values) { }
 
-    int inputs() const { return m_inputs; }
+        int inputs() const
+        {
+            return m_inputs;
+        }
 
-    int values() const { return m_values; }
+        int values() const
+        {
+            return m_values;
+        }
 
-private:
-    int m_inputs;
-    int m_values;
+    private:
+        int m_inputs;
+        int m_values;
 };
 
 class ODESolver
 {
-  public:
-    virtual ~ODESolver() = default;
+    public:
+        virtual ~ODESolver() = default;
 
-    virtual void solveStep(Eigen::VectorXd& y, double t, double dt, bool print_residual = false) = 0;
+        virtual void solveStep(Eigen::VectorXd& y, double t, double dt,
+                               bool print_residual = false) = 0;
 
-    virtual void printResidual(Eigen::VectorXd& y, double t, double dt) = 0;
+        virtual void printResidual(Eigen::VectorXd& y, double t, double dt) = 0;
+
+        virtual Eigen::VectorXd getLatestDerivative(const Eigen::VectorXd& x) const = 0;
 };
 
 class ReducedODESystem
 {
-public:
-    // Constructor
-    ReducedODESystem() = default;
+    public:
+        // Constructor
+        ReducedODESystem() = default;
 
-    // Destructor
-    virtual ~ReducedODESystem() = default;
+        // Destructor
+        virtual ~ReducedODESystem() = default;
 
-    // Explicit virtual, evaluates the RHS
-    virtual void evaluateRHS(const Eigen::VectorXd& state, Eigen::VectorXd& rhs, double t) const = 0;
+        // Explicit virtual, evaluates the RHS
+        virtual void evaluateRHS(const Eigen::VectorXd& state, Eigen::VectorXd& rhs,
+                                 double t) const = 0;
 
-    // Implicit virtual, evaluates the residual
-    virtual void evaluateResidual(const Eigen::VectorXd& state, const Eigen::VectorXd& state_dot, Eigen::VectorXd& residual, double t) const = 0;
+        // Implicit virtual, evaluates the residual
+        virtual void evaluateResidual(const Eigen::VectorXd& state,
+                                      const Eigen::VectorXd& state_dot, Eigen::VectorXd& residual,
+                                      double t) const = 0;
 };
 
-struct EigenImplicitEulerFunctor : public EigenNonlinearFunctor<double> {
+struct EigenImplicitEulerFunctor : public EigenNonlinearFunctor<double>
+{
     const ReducedODESystem& system;
     const Eigen::VectorXd* y_old;
     double t_current;
     double dt;
 
-    EigenImplicitEulerFunctor(const ReducedODESystem& sys, int N): EigenNonlinearFunctor<double>(N, N), system(sys), y_old(nullptr) { }
+    EigenImplicitEulerFunctor(const ReducedODESystem& sys,
+                              int N): EigenNonlinearFunctor<double>(N, N), system(sys), y_old(nullptr) { }
+
+    Eigen::VectorXd computeTimeDerivative(const Eigen::VectorXd& x) const;
 
     int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
 
     int df(const Eigen::VectorXd& x, Eigen::MatrixXd& fjac) const;
 };
 
-struct EigenBDF2Functor : public EigenNonlinearFunctor<double> {
+struct EigenBDF2Functor : public EigenNonlinearFunctor<double>
+{
     const ReducedODESystem& system;
     const Eigen::VectorXd* y_old;
     const Eigen::VectorXd* y_older;
     double t_current;
     double dt;
 
-    EigenBDF2Functor(const ReducedODESystem& sys, int N): EigenNonlinearFunctor<double>(N, N), system(sys), y_old(nullptr), y_older(nullptr) { }
+    EigenBDF2Functor(const ReducedODESystem& sys,
+                     int N): EigenNonlinearFunctor<double>(N, N), system(sys), y_old(nullptr),
+        y_older(nullptr) { }
+
+    Eigen::VectorXd computeTimeDerivative(const Eigen::VectorXd& x) const;
 
     int operator()(const Eigen::VectorXd& x, Eigen::VectorXd& fvec) const;
 
@@ -124,43 +148,54 @@ struct EigenBDF2Functor : public EigenNonlinearFunctor<double> {
 
 class ImplicitEulerSolver : public ODESolver
 {
-private:
-    EigenImplicitEulerFunctor functor;
-    Eigen::HybridNonLinearSolver<EigenImplicitEulerFunctor> solver;
+    private:
+        EigenImplicitEulerFunctor functor;
+        Eigen::HybridNonLinearSolver<EigenImplicitEulerFunctor> solver;
 
-public:
-    ImplicitEulerSolver(const ReducedODESystem& system, int N): functor(system, N), solver(functor), y_old(Eigen::VectorXd::Zero(N)) { }
+    public:
+        ImplicitEulerSolver(const ReducedODESystem& system, int N): functor(system, N),
+            solver(functor), y_old(Eigen::VectorXd::Zero(N)) { }
 
-    Eigen::VectorXd y_old; // This is stored so that old state can be accessed to compute derivatives
+        Eigen::VectorXd
+        y_old; // This is stored so that old state can be accessed to compute derivatives
 
-    void solveStep(Eigen::VectorXd& y, double t, double dt, bool print_residual = false) override;
+        void solveStep(Eigen::VectorXd& y, double t, double dt,
+                       bool print_residual = false) override;
 
-    void printResidual(Eigen::VectorXd& y, double t, double dt) override;
+        void printResidual(Eigen::VectorXd& y, double t, double dt) override;
+
+        Eigen::VectorXd getLatestDerivative(const Eigen::VectorXd& x) const;
 };
 
 class BDF2Solver : public ODESolver
 {
-private:
-    EigenBDF2Functor functor;
-    Eigen::HybridNonLinearSolver<EigenBDF2Functor> solver;
-    EigenImplicitEulerFunctor first_step_functor; // We will use this for the first step
-    Eigen::HybridNonLinearSolver<EigenImplicitEulerFunctor> first_step_solver; // We will use this for the first step
-    bool hasPreviousSteps;
+    private:
+        EigenBDF2Functor functor;
+        Eigen::HybridNonLinearSolver<EigenBDF2Functor> solver;
+        EigenImplicitEulerFunctor
+        first_step_functor; // We will use this for the first step
+        Eigen::HybridNonLinearSolver<EigenImplicitEulerFunctor>
+        first_step_solver; // We will use this for the first step
+        bool hasPreviousSteps;
 
-public:
-    BDF2Solver(const ReducedODESystem& system, int N): functor(system, N), solver(functor),
-                                                       hasPreviousSteps(false), first_step_functor(system, N),
-                                                       first_step_solver(first_step_functor),
-                                                       y_old(Eigen::VectorXd::Zero(N)),
-                                                       y_older(Eigen::VectorXd::Zero(N)) { }
+    public:
+        BDF2Solver(const ReducedODESystem& system, int N): functor(system, N),
+            solver(functor),
+            hasPreviousSteps(false), first_step_functor(system, N),
+            first_step_solver(first_step_functor),
+            y_old(Eigen::VectorXd::Zero(N)),
+            y_older(Eigen::VectorXd::Zero(N)) { }
 
-    Eigen::VectorXd y_old; // This is stored so that old state can be accessed
-    Eigen::VectorXd y_older; // Kept as a buffer
-    Eigen::VectorXd y_current; // Kept as a buffer
+        Eigen::VectorXd y_old; // This is stored so that old state can be accessed
+        Eigen::VectorXd y_older; // Kept as a buffer
+        Eigen::VectorXd y_current; // Kept as a buffer
 
-    void solveStep(Eigen::VectorXd& y, double t, double dt, bool print_residual = false) override;
+        void solveStep(Eigen::VectorXd& y, double t, double dt,
+                       bool print_residual = false) override;
 
-    void printResidual(Eigen::VectorXd& y, double t, double dt) override;
+        void printResidual(Eigen::VectorXd& y, double t, double dt) override;
+
+        Eigen::VectorXd getLatestDerivative(const Eigen::VectorXd& x) const;
 };
 
 #endif
