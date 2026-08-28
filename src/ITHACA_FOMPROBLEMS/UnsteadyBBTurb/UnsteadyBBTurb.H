@@ -304,20 +304,18 @@ class UnsteadyBBTurb : public UnsteadyBB
         /// @brief      Computes the mass matrix for the momentum equation
         ///
         /// @param[in]  NUmodes    The number of velocity modes.
-        /// @param[in]  NPmodes    The number of pressure modes.
         /// @param[in]  NSUPmodes  The number of supremizer modes.
         ///
-        Eigen::MatrixXd mass_term(label NUmodes, label NPmodes, label NSUPmodes);
+        Eigen::MatrixXd mass_term(label NUmodes, label NSUPmodes);
 
         //--------------------------------------------------------------------------
         /// @brief      Computes the diffusive term for the momentum equation
         ///
         /// @param[in]  NUmodes    The number of velocity modes.
-        /// @param[in]  NPmodes    The number of pressure modes.
         /// @param[in]  NSUPmodes  The number of supremizer modes.
         ///
         /// @return     reduced matrix in Eigen::MatrixXd format for the diffusive term.
-        Eigen::MatrixXd diffusive_term(label NUmodes, label NPmodes, label NSUPmodes);
+        Eigen::MatrixXd diffusive_term(label NUmodes, label NSUPmodes);
 
         //--------------------------------------------------------------------------
         /// Gradient of pressure

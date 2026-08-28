@@ -13,13 +13,33 @@ void SystemPPEGunzburger::evaluateResidual(
     Eigen::VectorXd& residual,
     double t) const
 {
-    residual.setZero();
-    const auto a_tmp = state.head(rom.expressionModes_.velocity);
-    const auto b_tmp = state.segment(rom.expressionModes_.velocity,
-                                     rom.expressionModes_.pressure);
-    const auto c_tmp = state.tail(rom.expressionModes_.temperature);
-    const auto a_dot = state_dot.head(rom.expressionModes_.velocity);
-    const auto c_dot = state_dot.tail(rom.expressionModes_.temperature);
+    residual.setZero(state.size());
+    Eigen::VectorXd a_tmp = state.head(rom.expressionModes_.velocity);
+    Eigen::VectorXd b_tmp = state.segment(rom.expressionModes_.velocity, rom.expressionModes_.pressure);
+    Eigen::VectorXd c_tmp = state.tail(rom.expressionModes_.temperature);
+    Eigen::VectorXd a_dot = state_dot.head(rom.expressionModes_.velocity);
+    Eigen::VectorXd c_dot = state_dot.tail(rom.expressionModes_.temperature);
+
+    if (rom.romSettings_.normalizeWithEigenvalues)
+    {
+      // If the user has chosen normalization, we need to pass the coefficients back to the original scale before computing the residual
+      // They were scaled using std::sqrt(eigenvalue), so we multiply by the same factor to revert to the original scale
+      for (int i = 0; i < rom.expressionModes_.velocity; i++)
+      {
+          a_tmp(i) *= std::sqrt(rom.uEigenvalues_(i));
+          a_dot(i) *= std::sqrt(rom.uEigenvalues_(i));
+      }
+      for (int i = 0; i < rom.expressionModes_.pressure; i++)
+      {
+          b_tmp(i) *= std::sqrt(rom.pEigenvalues_(i));
+      }
+      for (int i = 0; i < rom.expressionModes_.temperature; i++)
+      {
+          c_tmp(i) *= std::sqrt(rom.tEigenvalues_(i));
+          c_dot(i) *= std::sqrt(rom.tEigenvalues_(i));
+      }
+    }
+    
     // Momentum equation terms
     const Eigen::VectorXd M11 = commonMat_.BTotal * a_tmp *
                                 rom.fluidProperties.nu; // Viscous term
@@ -36,7 +56,7 @@ void SystemPPEGunzburger::evaluateResidual(
     const Eigen::VectorXd M7 = ppeMat_.nuBC * a_tmp *
                                rom.fluidProperties.nu; // BC term
     const Eigen::VectorXd M13 = ppeMat_.timedepBC * a_dot; // Time-dependent BC
-    // Gunzburger matrices
+    // Gunzburger matrices 
     const Eigen::MatrixXd gunzburgerBCProduct = a_tmp.transpose() *
         gunzMat_.bcVelMat;
     const Eigen::MatrixXd gunzburgerBCProductTemp = c_tmp.transpose() *
@@ -64,7 +84,7 @@ void SystemPPEGunzburger::evaluateResidual(
     // Fill the Pressure poisson equation
     for (int j = 0; j < rom.testModes_.pressure; j++)
     {
-        int idx = rom.testModes_.velocity + rom.romSettings_.N_BC + j;
+        int idx = rom.expressionModes_.velocity + j;
         scalar gg = a_tmp.transpose() * Eigen::SliceFromTensor(ppeMat_.G, 0, j) * a_tmp;
         scalar turbPPE = rom.nutCurrentCoeffs_.transpose() * Eigen::SliceFromTensor(
                              ppeMat_.CTotalPPEFluct, 0, j) * a_tmp;
@@ -78,19 +98,21 @@ void SystemPPEGunzburger::evaluateResidual(
     {
         int idx = j + rom.expressionModes_.velocity + rom.expressionModes_.pressure;
         scalar qq = a_tmp.transpose() * Eigen::SliceFromTensor(commonMat_.Q, 0,
-            j) * a_tmp;
+            j) * c_tmp;
         scalar qt = rom.nutCurrentCoeffs_.transpose() * Eigen::SliceFromTensor(
-                        commonMat_.YTurb, 0, j) * a_tmp;
+                        commonMat_.YTurb, 0, j) * c_tmp;
         scalar qaveraged = rom.nutAvgCurrentCoeffs_.transpose() *
-                           Eigen::SliceFromTensor(commonMat_.AveYTurb, 0, j) * a_tmp;
-        residual(idx) = -M8(j) + M6(j) - qq - qt / rom.fluidProperties.Pr_t -
+                           Eigen::SliceFromTensor(commonMat_.AveYTurb, 0, j) * c_tmp;
+        residual(idx) = -M8(j) + M6(j) - qq + qt / rom.fluidProperties.Pr_t +
                         qaveraged / rom.fluidProperties.Pr_t;
     }
 
-    // Fill the Temperature BC gunzburger method
     for (int j = 0; j < rom.romSettings_.N_BC_t; j++)
     {
-        int idx = rom.expressionModes_.velocity + rom.expressionModes_.pressure + j;
+        int idx = rom.expressionModes_.velocity 
+                + rom.expressionModes_.pressure 
+                + rom.testModes_.temperature 
+                + j;
         residual(idx) = gunzburgerBCProductTemp(0, j) - bc_.currentTemperatureBC(j);
     }
 }

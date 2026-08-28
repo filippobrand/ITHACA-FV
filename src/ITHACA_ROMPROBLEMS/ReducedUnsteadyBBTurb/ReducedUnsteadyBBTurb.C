@@ -54,6 +54,7 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& fom):
         problem->ITHACAdict->lookupOrDefault<word>("bcMethod", "Gunzburger"),
         problem->ITHACAdict->lookupOrDefault<bool>("hasMonitors", false),
         problem->ITHACAdict->lookupOrDefault<bool>("timeDependentBC", false),
+        problem->ITHACAdict->lookupOrDefault<bool>("normalizeWithEigenvalues", false),
         (int)problem->inletIndex.rows(),
         (int)problem->inletIndexT.rows(),
         problem->ITHACAdict->lookupOrDefault<word>("solverODE", "BDF2")
@@ -62,6 +63,10 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& fom):
              "Only Gunzburger BC method is implemented for now. Please set bcMethod to Gunzburger in the ITHACA dictionary.");
     collectMatrices();
     initializeDimensions();
+    if (romSettings_.normalizeWithEigenvalues)
+    { 
+        readEigenvalues();
+    }
 
     if (romSettings_.bcMethod == "Gunzburger")
     {
@@ -213,6 +218,15 @@ void ReducedUnsteadyBBTurb::interpolateNutCoeffs()
         Eigen::VectorXd velocity_derivative;
         velocity_derivative = odeSolver_->getLatestDerivative(velocity_coeffs);
         Eigen::VectorXd inputRBF(velocity_coeffs.size() + velocity_derivative.size());
+        if (romSettings_.normalizeWithEigenvalues)
+        {
+          for (int i = 0; i < expressionModes_.velocity; i++)
+          {
+            // We need to scale the velocity coefficients back to the original scale before passing them to the RBF interpolation
+            velocity_coeffs(i) *= std::sqrt(uEigenvalues_(i));
+            velocity_derivative(i) *= std::sqrt(uEigenvalues_(i));
+          }
+        }
         inputRBF << velocity_coeffs, velocity_derivative;
 
         for (int j = 0; j < expressionModes_.nut; j++)
@@ -222,6 +236,14 @@ void ReducedUnsteadyBBTurb::interpolateNutCoeffs()
     }
     else
     {
+      if (romSettings_.normalizeWithEigenvalues)
+      {
+        // We need to scale the velocity coefficients back to the original scale before passing them to the RBF interpolation
+        for (int i = 0; i < expressionModes_.velocity; i++)
+        {
+            velocity_coeffs(i) *= std::sqrt(uEigenvalues_(i));
+        }
+      }
         for (int j = 0; j < expressionModes_.nut; j++)
         {
             nutCurrentCoeffs_(j) = problem->rbfSplines[j]->predict(velocity_coeffs);
@@ -314,6 +336,7 @@ void ReducedUnsteadyBBTurb::solveOnline(
     const Eigen::MatrixXd& temp_now_BC,
     int startSnap, TimeManager& timeManager)
 {
+    odeSolver_->reset();
     boundaryConditions_ = BoundaryConditions(vel_now_BC, temp_now_BC, "linear");
     boundaryConditions_.initializeReducedCoeffs(
         startSnap, y, problem,
@@ -322,53 +345,98 @@ void ReducedUnsteadyBBTurb::solveOnline(
     );
     nutCurrentCoeffs_ = ITHACAutilities::getCoeffs(
                             problem->fluctNutfield[startSnap], problem->nutmodes);
-    Info << "### DEBUG --- Initialized nut coefficients" << endl;
-    // Temporary: for our test case, only the first two values in boundaryConditions_.getCurrentBCs() are used
-    // in the interpolation.
-    nutAvgCurrentCoeffs_ = interpolateIDW(boundaryConditions_.getCurrentBCs().head(
-            2)); // Interpolate current BCs (parameters)
-    onlineSolution.resize(timeManager.getNumberOfStepsToSave() + 1, y.size() + 1);
-    nutCoeffMat.resize(timeManager.getNumberOfStepsToSave() + 1,
-                       expressionModes_.nut + 1);
+    // Temporary: for our test case, only the first two values in boundaryConditions_.getCurrentBCs() are used in the interpolation.
+    nutAvgCurrentCoeffs_ = interpolateIDW(
+      boundaryConditions_.getCurrentBCs().head(2)
+    );
+    // Handling the eventual normalization of the coefficients with the eigenvalues
+    if (romSettings_.normalizeWithEigenvalues)
+    {
+        for (int i = 0; i < expressionModes_.velocity; i++)
+        {
+            y(i) /= std::sqrt(uEigenvalues_(i));
+        }
+        for (int i = 0; i < expressionModes_.pressure; i++)
+        {
+            y(expressionModes_.velocity + i) /= std::sqrt(pEigenvalues_(i));
+        }
+        for (int i = 0; i < expressionModes_.temperature; i++)
+        {
+            y(expressionModes_.velocity + expressionModes_.pressure + i) /=
+                std::sqrt(tEigenvalues_(i));
+        }
+    }
+    onlineSolution.resize(
+      timeManager.getNumberOfStepsToSave(), 
+      y.size() + 1
+    );
+    nutCoeffMat.resize(
+      timeManager.getNumberOfStepsToSave(),
+      expressionModes_.nut + 1
+    );
     onlineSolution.setZero();
     nutCoeffMat.setZero();
-    onlineSolution(0, 0) = timeManager.getCurrentTime();
-    onlineSolution.block(0, 1, 1, y.size()) = y.transpose();
-    nutCoeffMat(0, 0) = timeManager.getCurrentTime();
-    nutCoeffMat.block(0, 1, 1,
-                      expressionModes_.nut) = nutCurrentCoeffs_.transpose();
-    int save_index = 1;
 
+    // onlineSolution(0, 0) = timeManager.getCurrentTime();
+    // onlineSolution.block(0, 1, 1, y.size()) = y.transpose();
+    // nutCoeffMat(0, 0) = timeManager.getCurrentTime();
+    // nutCoeffMat.block(0, 1, 1, expressionModes_.nut) = nutCurrentCoeffs_.transpose();
+    
+    int save_index = 0;
+    auto start_time = std::chrono::high_resolution_clock::now();
     while (!timeManager.isFinished())
     {
         timeManager.advanceTime();
-        boundaryConditions_.updateTimeDependentBC(timeManager.getCurrentTime());
+        if (romSettings_.timeDependentBC)
+        {
+            boundaryConditions_.updateTimeDependentBC(timeManager.getCurrentTime());
+        }
         odeSolver_->solveStep(y, timeManager.getCurrentTime(),
                               timeManager.getActualTimeStep(), false);
-        // ADD THE INTERPOLATION OF THE NUT COEFFICIENTS AVG HERE
+        // ADD THE INTERPOLATION OF THE AVERAGE NUT COEFFICIENTS AVG HERE
         interpolateNutCoeffs();
 
         if (timeManager.shouldSaveCoefficients())
         {
-            Info << "### DEBUG --- Saving coefficients at time " <<
-                 timeManager.getCurrentTime() << endl;
             onlineSolution(save_index, 0) = timeManager.getCurrentTime();
             onlineSolution.block(save_index, 1, 1, y.size()) = y.transpose();
             nutCoeffMat(save_index, 0) = timeManager.getCurrentTime();
             nutCoeffMat.block(save_index, 1, 1,
                               expressionModes_.nut) = nutCurrentCoeffs_.transpose();
             save_index++;
-            Info << "### DEBUG --- Saved coefficients at time " <<
-                 timeManager.getCurrentTime() << endl;
             timeManager.updateAfterSave();
         }
     }
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+    Info << "### TIME --- Time taken by the online solve: " << duration.count() << " ms." << endl;
 
     if (save_index < onlineSolution.rows())
     {
         onlineSolution.conservativeResize(save_index, y.size() + 1);
         nutCoeffMat.conservativeResize(save_index, expressionModes_.nut + 1);
+        Info << "### DEBUG --- Resized online solution and nut coefficient matrix to " <<
+             save_index << " rows." << endl;
     }
+    // De-normalize the coefficients if they were normalized before the solve
+    if (romSettings_.normalizeWithEigenvalues)
+    {
+        for (int i = 0; i < onlineSolution.rows(); i++)
+        {
+            for (int j = 0; j < expressionModes_.velocity; j++)
+            {
+                onlineSolution(i, 1 + j) *= std::sqrt(uEigenvalues_(j));
+            }
+            for (int j = 0; j < expressionModes_.pressure; j++)
+            {
+                onlineSolution(i, 1 + expressionModes_.velocity + j) *= std::sqrt(pEigenvalues_(j));
+            }
+            for (int j = 0; j < expressionModes_.temperature; j++)
+            {
+                onlineSolution(i, 1 + expressionModes_.velocity + expressionModes_.pressure + j) *= std::sqrt(tEigenvalues_(j));
+            }
+        }
+      }
 }
 
 void ReducedUnsteadyBBTurb::reconstructSolution(TimeManager& time_manager,
@@ -384,7 +452,6 @@ void ReducedUnsteadyBBTurb::reconstructSolution(TimeManager& time_manager,
     }
 
     int exportEveryIndex = time_manager.getExportToEverySaved();
-
     if (exportEveryIndex < 1)
     {
         Info << "Export every saved index is less than 1. Setting it to 1." << endl;
@@ -396,31 +463,31 @@ void ReducedUnsteadyBBTurb::reconstructSolution(TimeManager& time_manager,
     List<Eigen::MatrixXd> CoeffT;
     List<Eigen::MatrixXd> CoeffNut;
     // Since we know the size, preallocate the lists:
-    CoeffU.resize(time_manager.getNumberOfStepsToExport() + 1);
-    CoeffPrgh.resize(time_manager.getNumberOfStepsToExport() + 1);
-    CoeffT.resize(time_manager.getNumberOfStepsToExport() + 1);
-    CoeffNut.resize(time_manager.getNumberOfStepsToExport() + 1);
+    CoeffU.resize(time_manager.getNumberOfStepsToExport());
+    CoeffPrgh.resize(time_manager.getNumberOfStepsToExport());
+    CoeffT.resize(time_manager.getNumberOfStepsToExport());
+    CoeffNut.resize(time_manager.getNumberOfStepsToExport());
 
     for (int i = 0; i < onlineSolution.rows(); i++)
     {
         if (i % exportEveryIndex == 0)
         {
             Eigen::MatrixXd currentUCoeff = onlineSolution.block(i, 1, 1,
-                expressionModes_.velocity);
+                expressionModes_.velocity).transpose();
             Eigen::MatrixXd currentPrghCoeff = onlineSolution.block(i,
-                1 + expressionModes_.velocity, 1, expressionModes_.pressure);
+                1 + expressionModes_.velocity, 1, expressionModes_.pressure).transpose();
             Eigen::MatrixXd currentTCoeff = onlineSolution.block(i,
                 1 + expressionModes_.velocity + expressionModes_.pressure, 1,
-                expressionModes_.temperature);
+                expressionModes_.temperature).transpose();
             Eigen::MatrixXd currentNutCoeff = nutCoeffMat.block(i, 1, 1,
-                expressionModes_.nut);
+                expressionModes_.nut).transpose();
             CoeffU[i / exportEveryIndex] = currentUCoeff;
             CoeffPrgh[i / exportEveryIndex] = currentPrghCoeff;
             CoeffT[i / exportEveryIndex] = currentTCoeff;
             CoeffNut[i / exportEveryIndex] = currentNutCoeff;
         }
     }
-
+    Info << "### DEBUG --- Size of CoeffU: " << CoeffU.size() << endl;
     volVectorField uRec("uRec", problem->L_U_SUPmodes[0]);
     volScalarField TRec("TRec", problem->L_Tmodes[0]);
     volScalarField prghRec("prghRec", problem->P_rghmodes[0]);
@@ -464,12 +531,18 @@ void ReducedUnsteadyBBTurb::reconstructSolution(TimeManager& time_manager,
 
 void ReducedUnsteadyBBTurb::saveCoefficients(word folder, word modeIdentifier)
 {
+    M_Assert(onlineSolution.rows() > 0,
+             "Online solution is empty. Cannot save coefficients.");
+    M_Assert(nutCoeffMat.rows() > 0,
+             "Nut coefficient matrix is empty. Cannot save coefficients.");
+    Info << "Saving online solution and nut coefficient matrix to folder: " << folder <<
+         endl;
     if (Pstream::master())
     {
         mkDir("./ITHACAoutput/ReducedCoefficients/");
         word true_folder = "./ITHACAoutput/ReducedCoefficients/" + folder + "_" +
                            modeIdentifier + "/";
-        ITHACAstream::exportMatrix(online_solution, "reducedCoefficients", "python",
+        ITHACAstream::exportMatrix(onlineSolution, "reducedCoefficients", "python",
                                    true_folder);
         ITHACAstream::exportMatrix(nutCoeffMat, "RBFCoefficients", "python",
                                    true_folder);
@@ -507,7 +580,6 @@ Eigen::VectorXd ReducedUnsteadyBBTurb::interpolateIDW(const Eigen::VectorXd&
 }
 
 // * * * * * * * * *  Validation and setup helpers  * * * * * * * * //
-
 void ReducedUnsteadyBBTurb::inf_sup_constant()
 {
     double a;
@@ -542,7 +614,10 @@ void ReducedUnsteadyBBTurb::setFluidProperties(scalar nu, scalar Pr,
 void ReducedUnsteadyBBTurb::reset()
 {
     online_solution.clear();
+
+    onlineSolution.setZero();
     nutCoeffMat.setZero();
+    
     uRecFields.clear();
     TRecFields.clear();
     nutFluctRecFields.clear();

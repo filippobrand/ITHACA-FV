@@ -89,6 +89,8 @@ class ODESolver
         virtual void printResidual(Eigen::VectorXd& y, double t, double dt) = 0;
 
         virtual Eigen::VectorXd getLatestDerivative(const Eigen::VectorXd& x) const = 0;
+
+        virtual void reset() = 0;
 };
 
 class ReducedODESystem
@@ -165,6 +167,11 @@ class ImplicitEulerSolver : public ODESolver
         void printResidual(Eigen::VectorXd& y, double t, double dt) override;
 
         Eigen::VectorXd getLatestDerivative(const Eigen::VectorXd& x) const;
+
+        void reset() override
+        {
+            y_old.setZero();
+        }
 };
 
 class BDF2Solver : public ODESolver
@@ -196,6 +203,14 @@ class BDF2Solver : public ODESolver
         void printResidual(Eigen::VectorXd& y, double t, double dt) override;
 
         Eigen::VectorXd getLatestDerivative(const Eigen::VectorXd& x) const;
+
+        void reset() override
+        {
+            hasPreviousSteps = false;
+            y_old.setZero();
+            y_older.setZero();
+            y_current.setZero();
+        }
 };
 
 #endif

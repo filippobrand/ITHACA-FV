@@ -429,6 +429,7 @@ void UnsteadyBBTurb::assembleCommonMatrices()
                        NSUPmodes);
     word suffix2 = name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(
                        NSUPmodes) + "_" + name(NPrghmodes);
+                       
     word suffix3 = name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(
                        NSUPmodes) + "_" + name(liftfieldT.size()) + "_" + name(NTmodes);
     word suffix5 = name(liftfield.size()) + "_" + name(NTmodes);
@@ -439,11 +440,11 @@ void UnsteadyBBTurb::assembleCommonMatrices()
     word matrixFolder = "./ITHACAoutput/Matrices";
     loadOrCompute(pCommonMatrices->M, matrixFolder, "M", suffix1, [this]()
     {
-        return mass_term(NUmodes, NPrghmodes, NSUPmodes);
+        return mass_term(NUmodes, NSUPmodes);
     });
-    loadOrCompute(pCommonMatrices->B, matrixFolder, "B", suffix2, [this]()
+    loadOrCompute(pCommonMatrices->B, matrixFolder, "B", suffix1, [this]()
     {
-        return diffusive_term(NUmodes, NPrghmodes, NSUPmodes);
+        return diffusive_term(NUmodes, NSUPmodes);
     });
     loadOrCompute(pCommonMatrices->BTurb, matrixFolder, "BT", suffix2, [this]()
     {
@@ -944,8 +945,8 @@ void UnsteadyBBTurb::splitEddyViscositySnapshots()
 
 // * * * * * * * * * * * * * * Matrices Methods * * * * * * * * * * * * * * //
 
-Eigen::MatrixXd UnsteadyBBTurb::mass_term(label NUmodes, label NPmodes,
-        label NSUPmodes)
+Eigen::MatrixXd UnsteadyBBTurb::mass_term(label NUmodes, 
+  label NSUPmodes)
 {
     label testFunctionSize = testFunctionsU.size();
     label Msize = NUmodes + NSUPmodes + liftfield.size();
@@ -979,7 +980,7 @@ Eigen::MatrixXd UnsteadyBBTurb::mass_term(label NUmodes, label NPmodes,
     return M_matrix;
 }
 
-Eigen::MatrixXd UnsteadyBBTurb::diffusive_term(label NUmodes, label NPmodes,
+Eigen::MatrixXd UnsteadyBBTurb::diffusive_term(label NUmodes,
         label NSUPmodes)
 {
     label Bsize = NUmodes + NSUPmodes + liftfield.size();

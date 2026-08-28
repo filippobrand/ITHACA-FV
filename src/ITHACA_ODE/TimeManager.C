@@ -49,6 +49,19 @@ TimeManager::TimeManager(double initial, double final, double timestep,
                   << std::endl;
         throw std::invalid_argument("TimeManager: The number of exports per saved step must be positive.");
     }
+
+    std::cout << "###TIME - TimeManager initialized with the following parameters:" << std::endl;
+    std::cout << "---Initial time: " << initial_time << std::endl;
+    std::cout << "---Final time: " << final_time << std::endl;
+    std::cout << "---Time step: " << dt << std::endl;
+    std::cout << "---Time step to save coefficients: " << dt_save_coefficients << std::endl;
+    std::cout << "---Time step to export fields: " << dt_export_fields << std::endl;
+    std::cout << "---Total steps to solve: " << total_steps_to_solve << std::endl;
+    std::cout << "---Total steps to save: " << total_steps_to_save << std::endl;
+    std::cout << "---Total steps to export: " << total_steps_to_export << std::endl;
+    std::cout << "---Steps between saves: " << steps_between_saves << std::endl;
+    std::cout << "---Steps between exports: " << steps_between_exports << std::endl;
+    std::cout << "---Exports every saved step: " << export_every_saved << std::endl;
 }
 
 TimeManager::TimeManager(const std::string& filename)
@@ -67,11 +80,15 @@ TimeManager::TimeManager(const std::string& filename)
 bool TimeManager::isFinished()
 {
     // Must solve even last step, when current_time == final_time - dt, so we check for >=
-    return current_time >= final_time + TOLERANCE;
+    return current_time >= final_time - TOLERANCE;
 }
 
 void TimeManager::advanceTime()
 {
+    if (current_time + dt > final_time - TOLERANCE)
+    {
+      actual_dt = final_time - current_time;
+    }
     if (current_time + dt >= next_time_to_save - TOLERANCE)
     {
         save_coefficients = true;

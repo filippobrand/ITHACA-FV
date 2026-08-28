@@ -68,6 +68,7 @@ struct ROMSettings
     word bcMethod = "Gunzburger";
     bool hasMonitors = false;
     bool timeDependentBC = false;
+    bool normalizeWithEigenvalues = false;
     int N_BC = 0;
     int N_BC_t = 0;
     word solverODE = "BDF2";
@@ -141,7 +142,7 @@ class ReducedUnsteadyBBTurb : public reducedUnsteadyNS
         /// Eddy viscosity POD eigenvalues
         Eigen::VectorXd nutEigenvalues_;
 
-        /// Solution of the online
+        /// Solution of the online ODE system
         Eigen::MatrixXd onlineSolution;
 
         /// Storing nut coefficients
