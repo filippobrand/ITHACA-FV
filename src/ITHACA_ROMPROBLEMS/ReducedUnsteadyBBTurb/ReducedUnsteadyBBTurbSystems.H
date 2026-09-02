@@ -107,4 +107,43 @@ class SystemPPEGunzburger : public ReducedUnsteadyBBTurbSystem
             double t) const override;
 };
 
+
+class SystemSupremizerGunzburger : public ReducedUnsteadyBBTurbSystem
+{
+  private:
+    const UnsteadyBBTurb::CommonMatrices& commonMat_;
+    const UnsteadyBBTurb::GunzburgerMatrices& gunzMat_;
+    const UnsteadyBBTurb::SupremizerMatrices& supMat_;
+    const BoundaryConditions& bc_;
+
+  public:
+    explicit SystemSupremizerGunzburger(const ReducedUnsteadyBBTurb& rom)
+        : ReducedUnsteadyBBTurbSystem(rom),
+          commonMat_(*rom.pCommonMatrices),
+          gunzMat_(*rom.pGunzburgerMatrices),
+          supMat_(*rom.pSupremizerMatrices),
+          bc_(rom.getBoundaryConditions()) { };
+    
+    virtual ~SystemSupremizerGunzburger() = default;
+
+    /// @brief Evaluates the right-hand side of the ODE system
+    /// @param state Current state vector
+    /// @param rhs  Vector to store the computed right-hand side
+    /// @param t Current time
+    void evaluateRHS(
+        const Eigen::VectorXd& state,
+        Eigen::VectorXd& rhs,
+        double t) const override;
+
+    /// @brief Evaluates the residual of the ODE system for implicit time integration
+    /// @param state Current state vector
+    /// @param state_dot Time derivative of the state vector
+    /// @param residual Vector to store the computed residual
+    /// @param t Current time
+    void evaluateResidual(
+        const Eigen::VectorXd& state,
+        const Eigen::VectorXd& state_dot,
+        Eigen::VectorXd& residual,
+        double t) const override;
+};
 #endif // ReducedUnsteadyBBTurbSystems_H

@@ -48,6 +48,24 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& fom):
     problem(&fom)
 {
     // Construct the settings objects for the ROM
+    initializeSettings();
+    collectMatrices();
+    initializeDimensions();
+    initializeODESystem();
+    y = Eigen::VectorXd::Zero(expressionModes_.velocity + 
+                              expressionModes_.pressure + 
+                              expressionModes_.temperature);
+    initializeEigenvalues();
+    initializeODESolver();
+    inf_sup_constant();
+    // Note: some other reduced class in ITHACA-FV in the constructor create a local copy of the
+    // modes from the FOM problem. Maybe in the future the same could be done here.
+}
+
+ReducedUnsteadyBBTurb::~ReducedUnsteadyBBTurb() = default;
+
+void ReducedUnsteadyBBTurb::initializeSettings()
+{
     romSettings_ = ROMSettings
     {
         problem->ITHACAdict->lookupOrDefault<word>("method", "PPE"),
@@ -59,18 +77,25 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& fom):
         (int)problem->inletIndexT.rows(),
         problem->ITHACAdict->lookupOrDefault<word>("solverODE", "BDF2")
     };
-    M_Assert(romSettings_.bcMethod == "Gunzburger",
-             "Only Gunzburger BC method is implemented for now. Please set bcMethod to Gunzburger in the ITHACA dictionary.");
-    collectMatrices();
-    initializeDimensions();
-    if (romSettings_.normalizeWithEigenvalues)
-    { 
-        readEigenvalues();
-    }
+    interpolationSettings_ = InterpolationSettings
+    {
+        problem->ITHACAdict->lookupOrDefault<int>("firstRBFIndex", 0),
+        problem->dimA,
+        problem->ITHACAdict->lookupOrDefault<bool>("derivativeInRBF", false),
+        problem->ITHACAdict->lookupOrDefault<label>("dimInputRBF", 0)
+    };
+    
+}
 
-    if (romSettings_.bcMethod == "Gunzburger")
+void ReducedUnsteadyBBTurb::initializeODESystem()
+{
+    if (romSettings_.bcMethod == "Gunzburger" && romSettings_.method == "PPE")
     {
         odeSystem_ = std::make_unique<SystemPPEGunzburger>(*this);
+    }
+    else if (romSettings_.bcMethod == "Gunzburger" && romSettings_.method == "supremizer")
+    {
+        odeSystem_ = std::make_unique<SystemSupremizerGunzburger>(*this);
     }
     else if (romSettings_.bcMethod == "penalty")
     {
@@ -92,36 +117,42 @@ ReducedUnsteadyBBTurb::ReducedUnsteadyBBTurb(UnsteadyBBTurb& fom):
 
     M_Assert(odeSystem_ != nullptr,
              "ODE system is not initialized. Please check the bcMethod in the ITHACA dictionary.");
-    y = Eigen::VectorXd::Zero(expressionModes_.velocity + expressionModes_.pressure
-                              + expressionModes_.temperature);
-    interpolationSettings_ = InterpolationSettings
-    {
-        problem->ITHACAdict->lookupOrDefault<int>("firstRBFIndex", 0),
-        problem->dimA,
-        problem->ITHACAdict->lookupOrDefault<bool>("derivativeInRBF", false)
-    };
+}
 
-    if (romSettings_.solverODE == "BDF2")
-    {
-        // The solver takes in a child of ReducedODESystem, which it whathever odeSystem_ points to
-        odeSolver_ = std::make_unique<BDF2Solver>(*odeSystem_, y.size());
-    }
-    else if (romSettings_.solverODE == "BDF1"
-             or romSettings_.solverODE == "BackwardEuler")
+void ReducedUnsteadyBBTurb::initializeODESolver()
+{
+    if (romSettings_.solverODE == "BDF1" || romSettings_.solverODE == "BackwardEuler")
     {
         odeSolver_ = std::make_unique<ImplicitEulerSolver>(*odeSystem_, y.size());
     }
     else
     {
-        Info << "ODE solver not recognized. Using BDF2 as default." << endl;
+        if (romSettings_.solverODE != "BDF2")
+        {
+            Info << "ODE solver not recognized. Using BDF2 as default." << endl;
+        }
         odeSolver_ = std::make_unique<BDF2Solver>(*odeSystem_, y.size());
     }
-
-    // Note: some other reduced class in ITHACA-FV in the constructor create a local copy of the
-    // modes from the FOM problem. Maybe in the future the same could be done here.
 }
 
-ReducedUnsteadyBBTurb::~ReducedUnsteadyBBTurb() = default;
+void ReducedUnsteadyBBTurb::initializeEigenvalues()
+{
+    if (Pstream::master())
+    {
+      readEigenvalues();
+    }
+    if (romSettings_.normalizeWithEigenvalues)
+    {
+      scalingVector_ = Eigen::VectorXd::Ones(y.size());
+      scalingVector_.head(expressionModes_.velocity) = uEigenvalues_.cwiseSqrt();
+      scalingVector_.segment(expressionModes_.velocity, expressionModes_.pressure) = pEigenvalues_.cwiseSqrt();
+      scalingVector_.tail(expressionModes_.temperature) = tEigenvalues_.cwiseSqrt();
+    }
+    else
+    {
+      scalingVector_ = Eigen::VectorXd::Ones(y.size());
+    }
+}
 
 void ReducedUnsteadyBBTurb::collectMatrices()
 {
@@ -190,16 +221,6 @@ void ReducedUnsteadyBBTurb::initializeDimensions()
                  "Number of expression modes for temperature is invalid.");
         M_Assert(expressionModes_.nut > 0,
                  "Number of expression modes for nut is invalid.");
-        Info << "### DEBUG --- Number of test modes: " << testModes_.velocity <<
-             " velocity, "
-             << testModes_.pressure << " pressure, "
-             << testModes_.temperature << " temperature, "
-             << testModes_.nut << " nut." << endl;
-        Info << "### DEBUG --- Number of expression modes: " <<
-             expressionModes_.velocity << " velocity, "
-             << expressionModes_.pressure << " pressure, "
-             << expressionModes_.temperature << " temperature, "
-             << expressionModes_.nut << " nut." << endl;
     }
     else
     {
@@ -210,7 +231,8 @@ void ReducedUnsteadyBBTurb::initializeDimensions()
 
 void ReducedUnsteadyBBTurb::interpolateNutCoeffs()
 {
-    Eigen::VectorXd velocity_coeffs = y.head(expressionModes_.velocity);
+    const label inputRBFSize = interpolationSettings_.dimInputRBF;
+    Eigen::VectorXd velocity_coeffs = y.head(inputRBFSize);
 
     if (interpolationSettings_.derivative)
     {
@@ -220,7 +242,7 @@ void ReducedUnsteadyBBTurb::interpolateNutCoeffs()
         Eigen::VectorXd inputRBF(velocity_coeffs.size() + velocity_derivative.size());
         if (romSettings_.normalizeWithEigenvalues)
         {
-          for (int i = 0; i < expressionModes_.velocity; i++)
+          for (int i = 0; i < inputRBFSize; i++)
           {
             // We need to scale the velocity coefficients back to the original scale before passing them to the RBF interpolation
             velocity_coeffs(i) *= std::sqrt(uEigenvalues_(i));
@@ -239,7 +261,7 @@ void ReducedUnsteadyBBTurb::interpolateNutCoeffs()
       if (romSettings_.normalizeWithEigenvalues)
       {
         // We need to scale the velocity coefficients back to the original scale before passing them to the RBF interpolation
-        for (int i = 0; i < expressionModes_.velocity; i++)
+        for (int i = 0; i < inputRBFSize; i++)
         {
             velocity_coeffs(i) *= std::sqrt(uEigenvalues_(i));
         }
@@ -345,27 +367,12 @@ void ReducedUnsteadyBBTurb::solveOnline(
     );
     nutCurrentCoeffs_ = ITHACAutilities::getCoeffs(
                             problem->fluctNutfield[startSnap], problem->nutmodes);
-    // Temporary: for our test case, only the first two values in boundaryConditions_.getCurrentBCs() are used in the interpolation.
+    // Temporary: for our test case, only the first two values
+    // in boundaryConditions_.getCurrentBCs() are used in the interpolation.
     nutAvgCurrentCoeffs_ = interpolateIDW(
       boundaryConditions_.getCurrentBCs().head(2)
     );
-    // Handling the eventual normalization of the coefficients with the eigenvalues
-    if (romSettings_.normalizeWithEigenvalues)
-    {
-        for (int i = 0; i < expressionModes_.velocity; i++)
-        {
-            y(i) /= std::sqrt(uEigenvalues_(i));
-        }
-        for (int i = 0; i < expressionModes_.pressure; i++)
-        {
-            y(expressionModes_.velocity + i) /= std::sqrt(pEigenvalues_(i));
-        }
-        for (int i = 0; i < expressionModes_.temperature; i++)
-        {
-            y(expressionModes_.velocity + expressionModes_.pressure + i) /=
-                std::sqrt(tEigenvalues_(i));
-        }
-    }
+    y = y.array() / scalingVector_.array();
     onlineSolution.resize(
       timeManager.getNumberOfStepsToSave(), 
       y.size() + 1
@@ -377,6 +384,8 @@ void ReducedUnsteadyBBTurb::solveOnline(
     onlineSolution.setZero();
     nutCoeffMat.setZero();
 
+    // If you uncomment this, you'll save the initial condition
+    // AND BAD THINGS WILL HAPPEN.
     // onlineSolution(0, 0) = timeManager.getCurrentTime();
     // onlineSolution.block(0, 1, 1, y.size()) = y.transpose();
     // nutCoeffMat(0, 0) = timeManager.getCurrentTime();
@@ -418,25 +427,8 @@ void ReducedUnsteadyBBTurb::solveOnline(
         Info << "### DEBUG --- Resized online solution and nut coefficient matrix to " <<
              save_index << " rows." << endl;
     }
-    // De-normalize the coefficients if they were normalized before the solve
-    if (romSettings_.normalizeWithEigenvalues)
-    {
-        for (int i = 0; i < onlineSolution.rows(); i++)
-        {
-            for (int j = 0; j < expressionModes_.velocity; j++)
-            {
-                onlineSolution(i, 1 + j) *= std::sqrt(uEigenvalues_(j));
-            }
-            for (int j = 0; j < expressionModes_.pressure; j++)
-            {
-                onlineSolution(i, 1 + expressionModes_.velocity + j) *= std::sqrt(pEigenvalues_(j));
-            }
-            for (int j = 0; j < expressionModes_.temperature; j++)
-            {
-                onlineSolution(i, 1 + expressionModes_.velocity + expressionModes_.pressure + j) *= std::sqrt(tEigenvalues_(j));
-            }
-        }
-      }
+    // De-normalize the coefficients
+    onlineSolution.rightCols(y.size()) = (onlineSolution.rightCols(y.size()).array().rowwise() * scalingVector_.transpose().array()).matrix();
 }
 
 void ReducedUnsteadyBBTurb::reconstructSolution(TimeManager& time_manager,
@@ -487,16 +479,13 @@ void ReducedUnsteadyBBTurb::reconstructSolution(TimeManager& time_manager,
             CoeffNut[i / exportEveryIndex] = currentNutCoeff;
         }
     }
-    Info << "### DEBUG --- Size of CoeffU: " << CoeffU.size() << endl;
-    volVectorField uRec("uRec", problem->L_U_SUPmodes[0]);
-    volScalarField TRec("TRec", problem->L_Tmodes[0]);
-    volScalarField prghRec("prghRec", problem->P_rghmodes[0]);
-    volScalarField nutFluctRec("nutFluctRec", problem->nutmodes[0]);
-    uRecFields = problem->L_U_SUPmodes.reconstruct(uRec, CoeffU, "uRec");
-    TRecFields = problem->L_Tmodes.reconstruct(TRec, CoeffT, "TRec");
-    nutFluctRecFields = problem->nutmodes.reconstruct(nutFluctRec, CoeffNut,
+
+    uRecFields = problem->L_U_SUPmodes.reconstruct(("uRec", problem->L_U_SUPmodes[0]), CoeffU, "uRec");
+    TRecFields = problem->L_Tmodes.reconstruct(("TRec", problem->L_Tmodes[0]), CoeffT, "TRec");
+    prghRecFields = problem->P_rghmodes.reconstruct(("prghRec", problem->P_rghmodes[0]), CoeffPrgh, "prghRec");
+    nutFluctRecFields = problem->nutmodes.reconstruct(("nutFluctRec", problem->nutmodes[0]), CoeffNut,
         "nutFluctRec");
-    prghRecFields = problem->P_rghmodes.reconstruct(prghRec, CoeffPrgh, "prghRec");
+
     // Reconstruct the averaged eddy viscosity field as a linear combination
     volScalarField nutAvg(
         IOobject(
@@ -598,7 +587,10 @@ void ReducedUnsteadyBBTurb::inf_sup_constant()
 
         inf(i) = sup.maxCoeff();
     }
-
+    if (Pstream::ParRun())
+    {
+        reduce(inf, maxOp<Eigen::VectorXd>());
+    }
     a = inf.minCoeff();
     Info << "### STABILITY: The inf-sup constant is: " << a << endl;
 }
@@ -623,4 +615,3 @@ void ReducedUnsteadyBBTurb::reset()
     nutFluctRecFields.clear();
     nutRecFields.clear();
 }
-// ************************************************************************ //

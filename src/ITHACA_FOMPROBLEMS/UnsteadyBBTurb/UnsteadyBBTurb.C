@@ -102,8 +102,12 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
 
     NNutModes = ITHACAdict->lookupOrDefault<label>("NmodesNutproj", 5);
     NSUPmodes = ITHACAdict->lookupOrDefault<label>("NmodesSUPproj", 5);
+    if (method != "supremizer")
+    {
+        NSUPmodes = 0;
+    }
     dimInputRBF = ITHACAdict->lookupOrDefault<label>("dimInputRBF", 0);
-    M_Assert(dimInputRBF <= NUmodes,
+    M_Assert(dimInputRBF <= NUmodes + NSUPmodes,
              "The dimension of the input to the RBF must be less than or equal to the number of velocity modes.");
     M_Assert(dimInputRBF >= 0,
              "The dimension of the input to the RBF must be greater than or equal to zero.");
@@ -397,6 +401,7 @@ void UnsteadyBBTurb::loadOrCompute(Eigen::MatrixXd& matrix, const word& folder,
     if (ITHACAutilities::check_file(fileName))
     {
         ITHACAstream::ReadDenseMatrix(matrix, folder + "/", nameBase + "_" + suffix);
+        Info << "Loaded matrix " << nameBase << "_" << suffix << " from file." << nl << endl;
     }
     else
     {
@@ -446,7 +451,7 @@ void UnsteadyBBTurb::assembleCommonMatrices()
     {
         return diffusive_term(NUmodes, NSUPmodes);
     });
-    loadOrCompute(pCommonMatrices->BTurb, matrixFolder, "BT", suffix2, [this]()
+    loadOrCompute(pCommonMatrices->BTurb, matrixFolder, "BT", suffix1, [this]()
     {
         return BTturbulence(NUmodes, NSUPmodes);
     });
@@ -470,22 +475,22 @@ void UnsteadyBBTurb::assembleCommonMatrices()
     {
         return convective_term_tens(NUmodes, NPrghmodes, NSUPmodes);
     });
-    loadOrCompute(pCommonMatrices->CTurb1, matrixFolder, "CTurb1",
+    loadOrCompute(pCommonMatrices->CTurb1, matrixFolder, "CT1",
                   suffix6, [this]()
     {
         return turbulenceTensor1(NUmodes, NSUPmodes, NNutModes);
     });
-    loadOrCompute(pCommonMatrices->CTurb2, matrixFolder, "CTurb2",
+    loadOrCompute(pCommonMatrices->CTurb2, matrixFolder, "CT2",
                   suffix6, [this]()
     {
         return turbulenceTensor2(NUmodes, NSUPmodes, NNutModes);
     });
-    loadOrCompute(pCommonMatrices->AveCTurb1, matrixFolder, "AveCTurb1",
+    loadOrCompute(pCommonMatrices->AveCTurb1, matrixFolder, "CT1Ave",
                   suffix6, [this]()
     {
         return turbulenceAveTensor1(NUmodes, NSUPmodes);
     });
-    loadOrCompute(pCommonMatrices->AveCTurb2, matrixFolder, "AveCTurb2",
+    loadOrCompute(pCommonMatrices->AveCTurb2, matrixFolder, "CT2Ave",
                   suffix6, [this]()
     {
         return turbulenceAveTensor2(NUmodes, NSUPmodes);
@@ -770,13 +775,13 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
 
     if (bcMethod == "lift")
     {
-        coeffL2vel = ITHACAutilities::getCoeffs(Uomfield, Umodes,
+        coeffL2vel = ITHACAutilities::getCoeffs(Uomfield, L_U_SUPmodes,
                                                 inputModes); // Returns a [modes x snapshots]
         skipRBFIndex = liftfield.size();
     }
     else
     {
-        coeffL2vel = ITHACAutilities::getCoeffs(Ufield, Umodes,
+        coeffL2vel = ITHACAutilities::getCoeffs(Ufield, L_U_SUPmodes,
                                                 inputModes); // Returns a [modes x snapshots]
     }
 
@@ -825,8 +830,8 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
         Eigen::VectorXd y = velDerCoeff[1].col(i);
         // rbfSplines[i]->optimizeShapeParameter(x, y, 5);
         rbfSplines[i]->fit(x, y);
-        Info << "###INTERP - Fitting ithacaInterpolator for mode " << i + 1 <<
-             " completed. Here's some informations:" << endl;
+        Info << "### INTERPOLATION - Fitting ithacaInterpolator for mode " << i + 1 <<
+             " completed. Here's some information:" << endl;
         rbfSplines[i]->printInfo();
     }
 }
@@ -1385,7 +1390,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTensor1(label NU, label NSUP,
     {
         ITHACAstream::SaveDenseTensor(ct1Tensor, "./ITHACAoutput/Matrices/",
                                       "CT1_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(
-                                          NSUP) + "_" + name(Nnut) + "_t");
+                                          NSUP) + "_" + name(Nnut));
         ITHACAstream::exportTensor(ct1Tensor, "CT1_tensor", "python",
                                    "./ITHACAoutput/Matrices/python/");
     }
@@ -1429,7 +1434,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceAveTensor1(label NU,
     if (Pstream::master())
     {
         ITHACAstream::SaveDenseTensor(ct1AveTensor, "./ITHACAoutput/Matrices/",
-                                      "CT1Ave_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP) + "_t");
+                                      "CT1Ave_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP));
         ITHACAstream::exportTensor(ct1AveTensor, "CT1_ave_tensor", "python",
                                    "./ITHACAoutput/Matrices/python/");
     }
@@ -1473,7 +1478,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTensor2(label NU, label NSUP,
     {
         ITHACAstream::SaveDenseTensor(ct2Tensor, "./ITHACAoutput/Matrices/",
                                       "CT2_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(
-                                          NSUP) + "_" + name(Nnut) + "_t");
+                                          NSUP) + "_" + name(Nnut));
         ITHACAstream::exportTensor(ct2Tensor, "CT2_tensor", "python",
                                    "./ITHACAoutput/Matrices/python/");
     }
@@ -1517,7 +1522,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceAveTensor2(label NU,
     if (Pstream::master())
     {
         ITHACAstream::SaveDenseTensor(ct2AveTensor, "./ITHACAoutput/Matrices/",
-                                      "CT2Ave_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP) + "_t");
+                                      "CT2Ave_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP));
         ITHACAstream::exportTensor(ct2AveTensor, "CT2_ave_tensor", "python",
                                    "./ITHACAoutput/Matrices/python/");
     }
@@ -2402,7 +2407,9 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
 {
     // The test functions are computed using QR factorization of the modes. The B matrix is a (Nmodes x NBC) matrix, where each mode is evaluated on a point of the boundary
     const label nBC = inletIndex.rows();
-    const label nUTest = NUmodes - nBC;
+    const label totalUmodes = NUmodes + NSUPmodes;
+    const label nUTest = totalUmodes - nBC;
+
     GunzburgerBCMatrixVelocity.resize(NUmodes, nBC);
     const label nBCT = inletIndexT.rows();
     const label nTTest = NTmodes - nBCT;
@@ -2424,11 +2431,11 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
         label BCind = inletIndex(j, 0);
         label BCcomp = inletIndex(j, 1);
 
-        for (label i = 0; i < NUmodes; i++)
+        for (label i = 0; i < totalUmodes; i++)
         {
             scalar avg = gSum(
-                             Umodes[i].boundaryField()[BCind].component(BCcomp) *
-                             Umodes[i].mesh().magSf().boundaryField()[BCind]
+                             L_U_SUPmodes[i].boundaryField()[BCind].component(BCcomp) *
+                             L_U_SUPmodes[i].mesh().magSf().boundaryField()[BCind]
                          ) / areaU[j];
             GunzburgerBCMatrixVelocity(i, j) = avg;
         }
@@ -2437,8 +2444,8 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
     // Now, we want to determine the linear combination psi_l of the POD basis that vanish on the boundary
     // We use the property that the last (NUmodes-NBC) columns of the complete Q matrix form a nullspace of B
     Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(GunzburgerBCMatrixVelocity);
-    Eigen::MatrixXd Q = qr.householderQ() * Eigen::MatrixXd::Identity(NUmodes,
-        NUmodes);
+    Eigen::MatrixXd Q = qr.householderQ() * Eigen::MatrixXd::Identity(totalUmodes,
+        totalUmodes);
     Eigen::MatrixXd psiCoeffs = Q.rightCols(nUTest);
     testFunctionsU.setSize(nUTest);
 
@@ -2447,9 +2454,9 @@ void UnsteadyBBTurb::computeTestFunctionsBC()
         testFunctionsU.set(i, volVectorField::New("testFunctionU" + name(i),
             Umodes[0].mesh(), dimensionedVector(Umodes[0].dimensions(), vector(0, 0, 0))));
 
-        for (label j = 0; j < NUmodes; j++)
+        for (label j = 0; j < totalUmodes; j++)
         {
-            testFunctionsU[i] += psiCoeffs(j, i) * Umodes[j];
+            testFunctionsU[i] += psiCoeffs(j, i) * L_U_SUPmodes[j];
         }
 
         for (label j = 0; j < nBC; j++)

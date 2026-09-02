@@ -79,6 +79,7 @@ struct InterpolationSettings
     int firstRBFIndex = 0;
     bool skipLift = true;
     bool derivative = false;
+    int dimInputRBF = 0;
 };
 
 struct NumberOfModes
@@ -105,6 +106,7 @@ class ReducedUnsteadyBBTurb : public reducedUnsteadyNS
 {
         friend class ReducedUnsteadyBBTurbSystem;
         friend class SystemPPEGunzburger;
+        friend class SystemSupremizerGunzburger;
     private:
         // General settings
         ROMSettings romSettings_;
@@ -130,6 +132,9 @@ class ReducedUnsteadyBBTurb : public reducedUnsteadyNS
         /// Initial eddy viscosity reduced coefficients - parametrized part
         Eigen::VectorXd nutAvgCurrentCoeffs_;
 
+        /// Scaling vector to handle normalization
+        Eigen::VectorXd scalingVector_;
+
         /// Velocity POD eigenvalues
         Eigen::VectorXd uEigenvalues_;
 
@@ -154,12 +159,22 @@ class ReducedUnsteadyBBTurb : public reducedUnsteadyNS
         /// Pointer to the ODE solver to be used
         std::unique_ptr<ODESolver> odeSolver_;
 
-        /// @brief    Inverse Distance Weighting function to interpolate the averaged eddy viscosity coefficients
-        ///           IDW in this case is a misnomer, as the implementation is specific for a vector of 0s except for the i-th component
-        /// @param[in]  input_parameters   The vector of the online parameter
+        /// @brief    Initializes the settings attributes
         ///
-        Eigen::VectorXd interpolateIDW(const Eigen::VectorXd& input_parameters);
+        void initializeSettings();
+        
+        /// @brief    Initializes the ODE systems
+        ///
+        void initializeODESystem();
 
+        /// @brief    Initialize the ODE solver
+        ///
+        void initializeODESolver();
+
+        /// @brief    Initializes the normalization with eigenvalues
+        ///
+        void initializeEigenvalues();
+        
         /// @brief    Collect relevant matrices
         void collectMatrices();
 
@@ -168,9 +183,15 @@ class ReducedUnsteadyBBTurb : public reducedUnsteadyNS
 
         /// @brief    Does the nut interpolation
         void interpolateNutCoeffs();
-
+        
         /// @brief    Reads the market vectors from disk and fills the eigenvalues vectors
         void readEigenvalues();
+
+        /// @brief    Inverse Distance Weighting function to interpolate the averaged eddy viscosity coefficients
+        ///           IDW in this case is a misnomer, as the implementation is specific for a vector of 0s except for the i-th component
+        /// @param[in]  input_parameters   The vector of the online parameter
+        ///
+        Eigen::VectorXd interpolateIDW(const Eigen::VectorXd& input_parameters);
 
     public:
         // Constructors
