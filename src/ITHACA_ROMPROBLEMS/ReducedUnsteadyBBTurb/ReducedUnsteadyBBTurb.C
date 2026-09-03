@@ -82,9 +82,9 @@ void ReducedUnsteadyBBTurb::initializeSettings()
         problem->ITHACAdict->lookupOrDefault<int>("firstRBFIndex", 0),
         problem->dimA,
         problem->ITHACAdict->lookupOrDefault<bool>("derivativeInRBF", false),
-        problem->ITHACAdict->lookupOrDefault<label>("dimInputRBF", 0)
+        problem->ITHACAdict->lookupOrDefault<label>("dimInputRBF", 0),
+        problem->mu.cols()
     };
-    
 }
 
 void ReducedUnsteadyBBTurb::initializeODESystem()
@@ -240,15 +240,8 @@ void ReducedUnsteadyBBTurb::interpolateNutCoeffs()
         Eigen::VectorXd velocity_derivative;
         velocity_derivative = odeSolver_->getLatestDerivative(velocity_coeffs);
         Eigen::VectorXd inputRBF(velocity_coeffs.size() + velocity_derivative.size());
-        if (romSettings_.normalizeWithEigenvalues)
-        {
-          for (int i = 0; i < inputRBFSize; i++)
-          {
-            // We need to scale the velocity coefficients back to the original scale before passing them to the RBF interpolation
-            velocity_coeffs(i) *= std::sqrt(uEigenvalues_(i));
-            velocity_derivative(i) *= std::sqrt(uEigenvalues_(i));
-          }
-        }
+        velocity_coeffs = velocity_coeffs.cwiseProduct(scalingVector_.head(inputRBFSize));
+        velocity_derivative = velocity_derivative.cwiseProduct(scalingVector_.head(inputRBFSize));
         inputRBF << velocity_coeffs, velocity_derivative;
 
         for (int j = 0; j < expressionModes_.nut; j++)
@@ -258,14 +251,7 @@ void ReducedUnsteadyBBTurb::interpolateNutCoeffs()
     }
     else
     {
-      if (romSettings_.normalizeWithEigenvalues)
-      {
-        // We need to scale the velocity coefficients back to the original scale before passing them to the RBF interpolation
-        for (int i = 0; i < inputRBFSize; i++)
-        {
-            velocity_coeffs(i) *= std::sqrt(uEigenvalues_(i));
-        }
-      }
+        velocity_coeffs = velocity_coeffs.cwiseProduct(scalingVector_.head(inputRBFSize));
         for (int j = 0; j < expressionModes_.nut; j++)
         {
             nutCurrentCoeffs_(j) = problem->rbfSplines[j]->predict(velocity_coeffs);
@@ -286,61 +272,69 @@ void ReducedUnsteadyBBTurb::readEigenvalues()
     //
     // We ignore the first two lines and read the first n lines, where n is the number of modes for each variable.
     // Velocity - file named: Eigenvalues_U
-    std::ifstream uFile("ITHACAoutput/POD/Eigenvalues_U");
-    M_Assert(uFile.is_open(),
-             "Could not open file ITHACAoutput/POD/Eigenvalues_U. Please make sure the file exists and is readable.");
-    std::string line;
-    std::getline(uFile, line); // Ignore first line
-    std::getline(uFile, line); // Ignore second line
-    uEigenvalues_.resize(expressionModes_.velocity);
-
-    for (int i = 0; i < expressionModes_.velocity; i++)
+    if (Pstream::master())
     {
-        std::getline(uFile, line);
-        uEigenvalues_(i) = std::stod(line);
+      std::ifstream uFile("ITHACAoutput/POD/Eigenvalues_U");
+      M_Assert(uFile.is_open(),
+              "Could not open file ITHACAoutput/POD/Eigenvalues_U. Please make sure the file exists and is readable.");
+      std::string line;
+      std::getline(uFile, line); // Ignore first line
+      std::getline(uFile, line); // Ignore second line
+      uEigenvalues_.resize(expressionModes_.velocity);
+
+      for (int i = 0; i < expressionModes_.velocity; i++)
+      {
+          std::getline(uFile, line);
+          uEigenvalues_(i) = std::stod(line);
+      }
+
+      std::ifstream pFile("ITHACAoutput/POD/Eigenvalues_p_rgh");
+      M_Assert(pFile.is_open(),
+              "Could not open file ITHACAoutput/POD/Eigenvalues_p_rgh. Please make sure the file exists and is readable.");
+      std::getline(pFile, line); // Ignore first line
+      std::getline(pFile, line); // Ignore second line
+      pEigenvalues_.resize(expressionModes_.pressure);
+
+      for (int i = 0; i < expressionModes_.pressure; i++)
+      {
+          std::getline(pFile, line);
+          pEigenvalues_(i) = std::stod(line);
+      }
+
+      std::ifstream tFile("ITHACAoutput/POD/Eigenvalues_T");
+      M_Assert(tFile.is_open(),
+              "Could not open file ITHACAoutput/POD/Eigenvalues_T. Please make sure the file exists and is readable.");
+      std::getline(tFile, line); // Ignore first line
+      std::getline(tFile, line); // Ignore second line
+      tEigenvalues_.resize(expressionModes_.temperature);
+
+      for (int i = 0; i < expressionModes_.temperature; i++)
+      {
+          std::getline(tFile, line);
+          tEigenvalues_(i) = std::stod(line);
+      }
+
+      std::ifstream nutFile("ITHACAoutput/POD/Eigenvalues_fluctNut");
+      M_Assert(nutFile.is_open(),
+              "Could not open file ITHACAoutput/POD/Eigenvalues_fluctNut. Please make sure the file exists and is readable.");
+      std::getline(nutFile, line); // Ignore first line
+      std::getline(nutFile, line); // Ignore second line
+      nutEigenvalues_.resize(expressionModes_.nut);
+
+      for (int i = 0; i < expressionModes_.nut; i++)
+      {
+          std::getline(nutFile, line);
+          nutEigenvalues_(i) = std::stod(line);
+      }
     }
 
-    // Pressure - file named: Eigenvalues_p_rgh
-    std::ifstream pFile("ITHACAoutput/POD/Eigenvalues_p_rgh");
-    M_Assert(pFile.is_open(),
-             "Could not open file ITHACAoutput/POD/Eigenvalues_p_rgh. Please make sure the file exists and is readable.");
-    std::getline(pFile, line); // Ignore first line
-    std::getline(pFile, line); // Ignore second line
-    pEigenvalues_.resize(expressionModes_.pressure);
-
-    for (int i = 0; i < expressionModes_.pressure; i++)
+    if (Pstream::parRun())
     {
-        std::getline(pFile, line);
-        pEigenvalues_(i) = std::stod(line);
-    }
-
-    // Temperature - file named: Eigenvalues_T
-    std::ifstream tFile("ITHACAoutput/POD/Eigenvalues_T");
-    M_Assert(tFile.is_open(),
-             "Could not open file ITHACAoutput/POD/Eigenvalues_T. Please make sure the file exists and is readable.");
-    std::getline(tFile, line); // Ignore first line
-    std::getline(tFile, line); // Ignore second line
-    tEigenvalues_.resize(expressionModes_.temperature);
-
-    for (int i = 0; i < expressionModes_.temperature; i++)
-    {
-        std::getline(tFile, line);
-        tEigenvalues_(i) = std::stod(line);
-    }
-
-    // Fluctnut - file named: Eigenvalues_fluctNut
-    std::ifstream nutFile("ITHACAoutput/POD/Eigenvalues_fluctNut");
-    M_Assert(nutFile.is_open(),
-             "Could not open file ITHACAoutput/POD/Eigenvalues_fluctNut. Please make sure the file exists and is readable.");
-    std::getline(nutFile, line); // Ignore first line
-    std::getline(nutFile, line); // Ignore second line
-    nutEigenvalues_.resize(expressionModes_.nut);
-
-    for (int i = 0; i < expressionModes_.nut; i++)
-    {
-        std::getline(nutFile, line);
-        nutEigenvalues_(i) = std::stod(line);
-    }
+        reduce(uEigenvalues_, sumOp<Eigen::VectorXd>());
+        reduce(pEigenvalues_, sumOp<Eigen::VectorXd>());
+        reduce(tEigenvalues_, sumOp<Eigen::VectorXd>());
+        reduce(nutEigenvalues_, sumOp<Eigen::VectorXd>());
+    }    
 
     Info << "### EIGS - Velocity eigenvalues: " << uEigenvalues_.transpose() <<
          endl;
@@ -372,7 +366,7 @@ void ReducedUnsteadyBBTurb::solveOnline(
     nutAvgCurrentCoeffs_ = interpolateIDW(
       boundaryConditions_.getCurrentBCs().head(2)
     );
-    y = y.array() / scalingVector_.array();
+    y = y.cwiseQuotient(scalingVector_);
     onlineSolution.resize(
       timeManager.getNumberOfStepsToSave(), 
       y.size() + 1
@@ -480,11 +474,16 @@ void ReducedUnsteadyBBTurb::reconstructSolution(TimeManager& time_manager,
         }
     }
 
-    uRecFields = problem->L_U_SUPmodes.reconstruct(("uRec", problem->L_U_SUPmodes[0]), CoeffU, "uRec");
-    TRecFields = problem->L_Tmodes.reconstruct(("TRec", problem->L_Tmodes[0]), CoeffT, "TRec");
-    prghRecFields = problem->P_rghmodes.reconstruct(("prghRec", problem->P_rghmodes[0]), CoeffPrgh, "prghRec");
-    nutFluctRecFields = problem->nutmodes.reconstruct(("nutFluctRec", problem->nutmodes[0]), CoeffNut,
-        "nutFluctRec");
+    volVectorField uRec(problem->L_U_SUPmodes[0]);
+    volScalarField TRec(problem->L_Tmodes[0]);
+    volScalarField prghRec(problem->P_rghmodes[0]);
+    volScalarField nutFluctRec(problem->nutmodes[0]);
+
+    uRecFields = problem->L_U_SUPmodes.reconstruct(uRec, CoeffU, "uRec");
+    TRecFields = problem->L_Tmodes.reconstruct(TRec, CoeffT, "TRec");
+    prghRecFields = problem->P_rghmodes.reconstruct(prghRec, CoeffPrgh, "prghRec");
+    nutFluctRecFields = problem->nutmodes.reconstruct(
+        nutFluctRec, CoeffNut, "nutFluctRec");
 
     // Reconstruct the averaged eddy viscosity field as a linear combination
     volScalarField nutAvg(
@@ -542,36 +541,44 @@ void ReducedUnsteadyBBTurb::saveCoefficients(word folder, word modeIdentifier)
 Eigen::VectorXd ReducedUnsteadyBBTurb::interpolateIDW(const Eigen::VectorXd&
         input_parameters)
 {
-    // The MatrixXd of offline parameters is stored in problem->mu.
-    label nOfflineSamples = problem->mu.cols();
-    Eigen::VectorXd interpolatedNutCoeffs(nOfflineSamples);
-    Eigen::VectorXd weights(nOfflineSamples);
+    const label n_samples = interpolationSettings_.avgTermOfflineSamples;
+    Eigen::VectorXd weights(n_samples);
 
-    for (label i = 0; i < nOfflineSamples; i++)
+    for (label i = 0; i < n_samples; i++)
     {
-        weights(i) = 1.0 / ((input_parameters - problem->mu.col(
-                                 i)).norm() + 1e-10); // Add a small value to avoid division by zero
+        weights(i) = 1.0 / ((input_parameters - problem->mu.col(i)).norm() + 1e-10);
     }
 
-    double weightSum = weights.sum();
-
-    for (label j = 0; j < nOfflineSamples; j++)
+    const double weightSum = weights.sum();
+    if (weightSum > 1e-10)
     {
-        Eigen::VectorXd nutCoeffsAtJ(nOfflineSamples);
-        nutCoeffsAtJ.setZero();
-        nutCoeffsAtJ[j] = 1.0;
-        interpolatedNutCoeffs(j) = weights.dot(nutCoeffsAtJ) / weightSum;
+        weights /= weightSum;
+    }
+    else
+    {
+        weights.setConstant(1.0 / n_samples);
     }
 
-    Info << "The interpolated eddy viscosity coefficients are: " <<
-         interpolatedNutCoeffs << endl;
+    // Try with a diagonal matrix with ones
+    const Eigen::MatrixXd nutAvgCoeffs = Eigen::MatrixXd::Identity(n_samples, n_samples);
+
+    Eigen::VectorXd interpolatedNutCoeffs = nutAvgCoeffs * weights;
+
+    for (int j = 0; j < interpolatedNutCoeffs.size(); j++)
+    {
+        if (std::abs(interpolatedNutCoeffs(j)) < 1e-6)
+        {
+            interpolatedNutCoeffs(j) = 0.0;
+        }
+    }
+    Info << "### DEBUG --- Interpolated nut coefficients: " << interpolatedNutCoeffs.transpose() << endl;
     return interpolatedNutCoeffs;
 }
 
 // * * * * * * * * *  Validation and setup helpers  * * * * * * * * //
 void ReducedUnsteadyBBTurb::inf_sup_constant()
 {
-    double a;
+    double a{0.0};
     Eigen::VectorXd sup(expressionModes_.velocity);
     Eigen::VectorXd inf(expressionModes_.pressure);
 
@@ -587,10 +594,6 @@ void ReducedUnsteadyBBTurb::inf_sup_constant()
 
         inf(i) = sup.maxCoeff();
     }
-    if (Pstream::ParRun())
-    {
-        reduce(inf, maxOp<Eigen::VectorXd>());
-    }
     a = inf.minCoeff();
     Info << "### STABILITY: The inf-sup constant is: " << a << endl;
 }
@@ -605,8 +608,6 @@ void ReducedUnsteadyBBTurb::setFluidProperties(scalar nu, scalar Pr,
 
 void ReducedUnsteadyBBTurb::reset()
 {
-    online_solution.clear();
-
     onlineSolution.setZero();
     nutCoeffMat.setZero();
     
@@ -614,4 +615,5 @@ void ReducedUnsteadyBBTurb::reset()
     TRecFields.clear();
     nutFluctRecFields.clear();
     nutRecFields.clear();
+    prghRecFields.clear();
 }

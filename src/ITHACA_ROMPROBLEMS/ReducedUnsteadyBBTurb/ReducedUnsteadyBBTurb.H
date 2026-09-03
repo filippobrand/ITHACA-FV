@@ -80,6 +80,7 @@ struct InterpolationSettings
     bool skipLift = true;
     bool derivative = false;
     int dimInputRBF = 0;
+    int avgTermOfflineSamples = 0;
 };
 
 struct NumberOfModes

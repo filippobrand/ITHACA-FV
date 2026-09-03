@@ -23,14 +23,12 @@ void SystemPPEGunzburger::evaluateResidual(
     const int tPress = rom.testModes_.pressure;
     const int tTemp = rom.testModes_.temperature;
 
-    // Extract and scale state vectors avoiding unnecessary copies where possible
-    Eigen::VectorXd a_tmp = state.head(nVel).cwiseQuotient(rom.scalingVector_.head(nVel));
-    Eigen::VectorXd b_tmp = state.segment(nVel, nPress).cwiseQuotient(rom.scalingVector_.segment(nVel, nPress));
-    Eigen::VectorXd c_tmp = state.tail(nTemp).cwiseQuotient(rom.scalingVector_.tail(nTemp));
-
-    Eigen::VectorXd a_dot = state_dot.head(nVel).cwiseQuotient(rom.scalingVector_.head(nVel));
-    Eigen::VectorXd c_dot = state_dot.tail(nTemp).cwiseQuotient(rom.scalingVector_.tail(nTemp));
-
+    // Extract and de-normalize the state and its time derivative
+    const Eigen::VectorXd a_tmp = state.head(nVel).cwiseProduct(rom.scalingVector_.head(nVel));
+    const Eigen::VectorXd a_dot = state_dot.head(nVel).cwiseProduct(rom.scalingVector_.head(nVel));
+    const Eigen::VectorXd b_tmp = state.segment(nVel, nPress).cwiseProduct(rom.scalingVector_.segment(nVel, nPress));
+    const Eigen::VectorXd c_tmp = state.tail(nTemp).cwiseProduct(rom.scalingVector_.tail(nTemp));
+    const Eigen::VectorXd c_dot = state_dot.tail(nTemp).cwiseProduct(rom.scalingVector_.tail(nTemp));
     
     // Momentum equation terms
     const Eigen::VectorXd M11 = commonMat_.BTotal * a_tmp *
@@ -122,17 +120,20 @@ void SystemSupremizerGunzburger::evaluateResidual(
     double t) const
 {
     residual.setZero(state.size());
-    Eigen::VectorXd a_tmp = state.head(rom.expressionModes_.velocity);
-    Eigen::VectorXd b_tmp = state.segment(rom.expressionModes_.velocity, rom.expressionModes_.pressure);
-    Eigen::VectorXd c_tmp = state.tail(rom.expressionModes_.temperature);
-    Eigen::VectorXd a_dot = state_dot.head(rom.expressionModes_.velocity);
-    Eigen::VectorXd c_dot = state_dot.tail(rom.expressionModes_.temperature);
+    // Cache dimensions for clarity and safety
+    const int nVel = rom.expressionModes_.velocity;
+    const int nPress = rom.expressionModes_.pressure;
+    const int nTemp = rom.expressionModes_.temperature;
+    // Test modes
+    const int tVel = rom.testModes_.velocity;
+    const int tPress = rom.testModes_.pressure;
+    const int tTemp = rom.testModes_.temperature;
 
-    a_tmp = a_tmp.cwiseQuotient(rom.scalingVector_.head(rom.expressionModes_.velocity));
-    b_tmp = b_tmp.cwiseQuotient(rom.scalingVector_.segment(rom.expressionModes_.velocity, rom.expressionModes_.pressure));
-    c_tmp = c_tmp.cwiseQuotient(rom.scalingVector_.tail(rom.expressionModes_.temperature));
-    a_dot = a_dot.cwiseQuotient(rom.scalingVector_.head(rom.expressionModes_.velocity));
-    c_dot = c_dot.cwiseQuotient(rom.scalingVector_.tail(rom.expressionModes_.temperature));
+    const Eigen::VectorXd a_tmp = state.head(nVel).cwiseProduct(rom.scalingVector_.head(nVel));
+    const Eigen::VectorXd a_dot = state_dot.head(nVel).cwiseProduct(rom.scalingVector_.head(nVel));
+    const Eigen::VectorXd b_tmp = state.segment(nVel, nPress).cwiseProduct(rom.scalingVector_.segment(nVel, nPress));
+    const Eigen::VectorXd c_tmp = state.tail(nTemp).cwiseProduct(rom.scalingVector_.tail(nTemp));
+    const Eigen::VectorXd c_dot = state_dot.tail(nTemp).cwiseProduct(rom.scalingVector_.tail(nTemp));
     
     // Momentum equation terms
     const Eigen::VectorXd M11 = commonMat_.BTotal * a_tmp *
