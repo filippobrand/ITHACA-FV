@@ -141,7 +141,9 @@ void BDF2Solver::solveStep(Eigen::VectorXd& y, double t, double dt,
         first_step_solver.solve(y_current);
         y_older = y_old;
         y_old = y_current;
-        functor.y_old = &y_older;
+        functor.y_old = &y_old;
+        functor.y_older = &y_older;
+        functor.t_current = t;
         functor.dt = dt;
         y = y_current;
         hasPreviousSteps = true;

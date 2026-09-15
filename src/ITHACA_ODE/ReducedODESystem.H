@@ -158,8 +158,7 @@ class ImplicitEulerSolver : public ODESolver
         ImplicitEulerSolver(const ReducedODESystem& system, int N): functor(system, N),
             solver(functor), y_old(Eigen::VectorXd::Zero(N)) { }
 
-        Eigen::VectorXd
-        y_old; // This is stored so that old state can be accessed to compute derivatives
+        Eigen::VectorXd y_old; // Stored so that old state can be accessed to compute derivatives
 
         void solveStep(Eigen::VectorXd& y, double t, double dt,
                        bool print_residual = false) override;
@@ -210,6 +209,10 @@ class BDF2Solver : public ODESolver
             y_old.setZero();
             y_older.setZero();
             y_current.setZero();
+
+            functor.y_old = nullptr;
+            functor.y_older = nullptr;
+            first_step_functor.y_old = nullptr;
         }
 };
 
