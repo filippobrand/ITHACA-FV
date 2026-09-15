@@ -471,9 +471,9 @@ void UnsteadyBBTurb::assembleCommonMatrices()
     {
         return diffusiveTermTemperature(NUmodes, NTmodes, NSUPmodes);
     });
-    loadOrCompute(pCommonMatrices->C, matrixFolder, "C", suffix2, [this]()
+    loadOrCompute(pCommonMatrices->C, matrixFolder, "C", suffix1, [this]()
     {
-        return convective_term_tens(NUmodes, NPrghmodes, NSUPmodes);
+        return convective_term_tens(NUmodes, NSUPmodes);
     });
     loadOrCompute(pCommonMatrices->CTurb1, matrixFolder, "CT1",
                   suffix6, [this]()
@@ -808,9 +808,9 @@ void UnsteadyBBTurb::offlineRBFInterpolation()
     if (Pstream::master())
     {
         ITHACAutilities::createSymLink("./ITHACAoutput/Debug");
-        ITHACAstream::exportMatrix(velDerCoeff[0], "A_RBF", "python",
+        ITHACAstream::exportMatrix(velDerCoeff[0], "A_RBF", "numpy",
                                    "./ITHACAoutput/Debug/");
-        ITHACAstream::exportMatrix(velDerCoeff[1], "G_RBF", "python",
+        ITHACAstream::exportMatrix(velDerCoeff[1], "G_RBF", "numpy",
                                    "./ITHACAoutput/Debug/");
     }
 
@@ -897,9 +897,9 @@ List<Eigen::MatrixXd> UnsteadyBBTurb::velDerivativeCoeff(
 
 void UnsteadyBBTurb::splitEddyViscositySnapshots()
 {
-    label nSamples = timeSnapshots.size();
+    const label nSamples = timeSnapshots.size();
     avgNutfield.setSize(nSamples);
-    label totalSnapshots = Nutfield.size();
+    const label totalSnapshots = Nutfield.size();
     fluctNutfield.setSize(totalSnapshots);
     label globalIndex = 0;
     label flatIndex = 0;
@@ -976,7 +976,7 @@ Eigen::MatrixXd UnsteadyBBTurb::mass_term(label NUmodes,
     {
         ITHACAstream::SaveDenseMatrix(M_matrix, "./ITHACAoutput/Matrices/",
                                       "M_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NSUPmodes));
-        ITHACAstream::exportMatrix(M_matrix, "M_matrix", "python",
+        ITHACAstream::exportMatrix(M_matrix, "M_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1017,7 +1017,7 @@ Eigen::MatrixXd UnsteadyBBTurb::diffusive_term(label NUmodes,
              B_matrix.rows() << " x " << B_matrix.cols() << endl;
         ITHACAstream::SaveDenseMatrix(B_matrix, "./ITHACAoutput/Matrices/",
                                       "B_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(NSUPmodes));
-        ITHACAstream::exportMatrix(B_matrix, "B_matrix", "python",
+        ITHACAstream::exportMatrix(B_matrix, "B_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1056,7 +1056,7 @@ Eigen::MatrixXd UnsteadyBBTurb::pressureGradientTerm(label NU,
         ITHACAstream::SaveDenseMatrix(K_matrix, "./ITHACAoutput/Matrices/",
                                       "K_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP) + "_" + name(
                                           NPrgh));
-        ITHACAstream::exportMatrix(K_matrix, "K_matrix", "python",
+        ITHACAstream::exportMatrix(K_matrix, "K_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1097,7 +1097,7 @@ Eigen::MatrixXd UnsteadyBBTurb::diffusiveTermTemperature(label NU,
         // Export the matrix
         ITHACAstream::SaveDenseMatrix(Y_matrix, "./ITHACAoutput/Matrices/",
                                       "Y_" + name(liftfieldT.size()) + "_" + name(NT));
-        ITHACAstream::exportMatrix(Y_matrix, "Y_matrix", "python",
+        ITHACAstream::exportMatrix(Y_matrix, "Y_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1136,7 +1136,7 @@ Eigen::MatrixXd UnsteadyBBTurb::divergenceTerm(label NU, label NPrgh,
         ITHACAstream::SaveDenseMatrix(P_matrix, "./ITHACAoutput/Matrices/",
                                       "P_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP) + "_" + name(
                                           NPrgh));
-        ITHACAstream::exportMatrix(P_matrix, "P_matrix", "python",
+        ITHACAstream::exportMatrix(P_matrix, "P_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1181,7 +1181,7 @@ Eigen::MatrixXd UnsteadyBBTurb::buoyancyTerm(label NU, label NT,
         ITHACAstream::SaveDenseMatrix(H_matrix, "./ITHACAoutput/Matrices/",
                                       "H_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP) + "_" + name(
                                           liftfieldT.size()) + "_" + name(NT));
-        ITHACAstream::exportMatrix(H_matrix, "H_matrix", "python",
+        ITHACAstream::exportMatrix(H_matrix, "H_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1213,7 +1213,7 @@ Eigen::MatrixXd UnsteadyBBTurb::massTermTemperature(label NT)
     {
         ITHACAstream::SaveDenseMatrix(W_matrix, "./ITHACAoutput/Matrices/",
                                       "W_" + name(liftfieldT.size()) + "_" + name(NT));
-        ITHACAstream::exportMatrix(W_matrix, "W_matrix", "python",
+        ITHACAstream::exportMatrix(W_matrix, "W_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1251,7 +1251,7 @@ Eigen::MatrixXd UnsteadyBBTurb::BTturbulence(label NU, label NSUP)
     {
         ITHACAstream::SaveDenseMatrix(btMatrix, "./ITHACAoutput/Matrices/",
                                       "BT_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP));
-        ITHACAstream::exportMatrix(btMatrix, "BT_matrix", "python",
+        ITHACAstream::exportMatrix(btMatrix, "BT_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1260,8 +1260,7 @@ Eigen::MatrixXd UnsteadyBBTurb::BTturbulence(label NU, label NSUP)
     return btMatrix;
 }
 
-Eigen::Tensor<double, 3> UnsteadyBBTurb::convective_term_tens(label NUmodes,
-        label NPmodes, label NSUPmodes)
+Eigen::Tensor<double, 3> UnsteadyBBTurb::convective_term_tens(label NUmodes, label NSUPmodes)
 {
     label Csize = NUmodes + NSUPmodes + liftfield.size();
     label testFunctionSize = testFunctionsU.size();
@@ -1300,7 +1299,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::convective_term_tens(label NUmodes,
         ITHACAstream::SaveDenseTensor(C_tensor, "./ITHACAoutput/Matrices/",
                                       "C_" + name(liftfield.size()) + "_" + name(NUmodes) + "_" + name(
                                           NSUPmodes) + "_t");
-        ITHACAstream::exportTensor(C_tensor, "C_tensor", "python",
+        ITHACAstream::exportTensor(C_tensor, "C_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1347,7 +1346,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::temperatureTurbulenceTensor(label NT,
     {
         ITHACAstream::SaveDenseTensor(YT_tensor, "./ITHACAoutput/Matrices/",
                                       "YT_" + name(liftfield.size()) + "_" + name(NT) + "_" + name(Nnut) + "_t");
-        ITHACAstream::exportTensor(YT_tensor, "YT_tensor", "python",
+        ITHACAstream::exportTensor(YT_tensor, "YT_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1391,7 +1390,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTensor1(label NU, label NSUP,
         ITHACAstream::SaveDenseTensor(ct1Tensor, "./ITHACAoutput/Matrices/",
                                       "CT1_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(
                                           NSUP) + "_" + name(Nnut));
-        ITHACAstream::exportTensor(ct1Tensor, "CT1_tensor", "python",
+        ITHACAstream::exportTensor(ct1Tensor, "CT1_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1435,7 +1434,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceAveTensor1(label NU,
     {
         ITHACAstream::SaveDenseTensor(ct1AveTensor, "./ITHACAoutput/Matrices/",
                                       "CT1Ave_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP));
-        ITHACAstream::exportTensor(ct1AveTensor, "CT1_ave_tensor", "python",
+        ITHACAstream::exportTensor(ct1AveTensor, "CT1_ave_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1479,7 +1478,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTensor2(label NU, label NSUP,
         ITHACAstream::SaveDenseTensor(ct2Tensor, "./ITHACAoutput/Matrices/",
                                       "CT2_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(
                                           NSUP) + "_" + name(Nnut));
-        ITHACAstream::exportTensor(ct2Tensor, "CT2_tensor", "python",
+        ITHACAstream::exportTensor(ct2Tensor, "CT2_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1523,7 +1522,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceAveTensor2(label NU,
     {
         ITHACAstream::SaveDenseTensor(ct2AveTensor, "./ITHACAoutput/Matrices/",
                                       "CT2Ave_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NSUP));
-        ITHACAstream::exportTensor(ct2AveTensor, "CT2_ave_tensor", "python",
+        ITHACAstream::exportTensor(ct2AveTensor, "CT2_ave_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1567,7 +1566,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulenceTemperatureAveTensor(
     {
         ITHACAstream::SaveDenseTensor(YTAveTensor, "./ITHACAoutput/Matrices/",
                                       "YT_ave_" + name(liftfieldT.size()) + "_" + name(NT) + "_t");
-        ITHACAstream::exportTensor(YTAveTensor, "YT_ave_tensor", "python",
+        ITHACAstream::exportTensor(YTAveTensor, "YT_ave_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1614,7 +1613,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::convectiveTensorTemperature(label NU,
         ITHACAstream::SaveDenseTensor(Q_tensor, "./ITHACAoutput/Matrices/",
                                       "Q_" + name(liftfield.size()) + "_" + name(NU) + "_" +
                                       name(NSUP) + "_" + name(liftfieldT.size()) + "_" + name(NT) + "_t");
-        ITHACAstream::exportTensor(Q_tensor, "Q_tensor", "python",
+        ITHACAstream::exportTensor(Q_tensor, "Q_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1658,7 +1657,7 @@ Eigen::MatrixXd UnsteadyBBTurb::laplacianPPE(label NPrgh)
     {
         ITHACAstream::SaveDenseMatrix(D_matrix, "./ITHACAoutput/Matrices/",
                                       "D_" + name(NPrghmodes));
-        ITHACAstream::exportMatrix(D_matrix, "D_matrix", "python",
+        ITHACAstream::exportMatrix(D_matrix, "D_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1714,7 +1713,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::divMomentum(label NU, label NPrgh)
         // Export the tensor
         ITHACAstream::SaveDenseTensor(gTensor, "./ITHACAoutput/Matrices/",
                                       "G_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NPrgh) + "_t");
-        ITHACAstream::exportTensor(gTensor, "G_tensor", "python",
+        ITHACAstream::exportTensor(gTensor, "G_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1767,7 +1766,7 @@ Eigen::MatrixXd UnsteadyBBTurb::buoyancyTermPPE(label NPrgh, label NT)
     {
         ITHACAstream::SaveDenseMatrix(HP_matrix, "./ITHACAoutput/Matrices/",
                                       "HP_" + name(NPrgh) + "_" + name(liftfieldT.size()) + "_" + name(NT));
-        ITHACAstream::exportMatrix(HP_matrix, "HP_matrix", "python",
+        ITHACAstream::exportMatrix(HP_matrix, "HP_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1814,7 +1813,7 @@ Eigen::MatrixXd UnsteadyBBTurb::BC1PPE(label NU, label NPrgh)
     {
         ITHACAstream::SaveDenseMatrix(BC1_matrix, "./ITHACAoutput/Matrices/",
                                       "BC1_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NPrgh));
-        ITHACAstream::exportMatrix(BC1_matrix, "BC1_matrix", "python",
+        ITHACAstream::exportMatrix(BC1_matrix, "BC1_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1865,7 +1864,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::BC2PPE(label NU, label NPrgh)
         // Export the tensor
         ITHACAstream::SaveDenseTensor(bc2Tensor, "./ITHACAoutput/Matrices/",
                                       "BC2_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NPrgh) + "_t");
-        ITHACAstream::exportTensor(bc2Tensor, "BC2_tensor", "python",
+        ITHACAstream::exportTensor(bc2Tensor, "BC2_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1910,7 +1909,7 @@ Eigen::MatrixXd UnsteadyBBTurb::BC3PPE(label NU, label NPrgh)
     {
         ITHACAstream::SaveDenseMatrix(BC3_matrix, "./ITHACAoutput/Matrices/",
                                       "BC3_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NPrgh));
-        ITHACAstream::exportMatrix(BC3_matrix, "BC3_matrix", "python",
+        ITHACAstream::exportMatrix(BC3_matrix, "BC3_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -1955,7 +1954,7 @@ Eigen::MatrixXd UnsteadyBBTurb::BC4PPE(label NU, label NPrgh)
     {
         ITHACAstream::SaveDenseMatrix(BC4_matrix, "./ITHACAoutput/Matrices/",
                                       "BC4_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(NPrgh));
-        ITHACAstream::exportMatrix(BC4_matrix, "BC4_matrix", "python",
+        ITHACAstream::exportMatrix(BC4_matrix, "BC4_matrix", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -2005,7 +2004,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPEAveTensor1(label NU,
             "./ITHACAoutput/Matrices/",
             "ct1PPEAve_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(
                 NPrgh) + "_t");
-        ITHACAstream::exportTensor(ct1PPEAveTensor, "ct1PPEAve_tensor", "python",
+        ITHACAstream::exportTensor(ct1PPEAveTensor, "ct1PPEAve_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -2056,7 +2055,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPETensor1(label NU,
             "./ITHACAoutput/Matrices/",
             "ct1PPEFluct_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(
                 NPrgh) + "_t");
-        ITHACAstream::exportTensor(ct1PPEFluctTensor, "ct1PPEFluct_tensor", "python",
+        ITHACAstream::exportTensor(ct1PPEFluctTensor, "ct1PPEFluct_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -2107,7 +2106,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPEAveTensor2(label NU,
             "./ITHACAoutput/Matrices/",
             "ct2PPEAve_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(
                 NPrgh) + "_t");
-        ITHACAstream::exportTensor(ct2PPEAveTensor, "ct2PPEAve_tensor", "python",
+        ITHACAstream::exportTensor(ct2PPEAveTensor, "ct2PPEAve_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -2158,7 +2157,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::turbulencePPETensor2(label NU,
             "./ITHACAoutput/Matrices/",
             "ct2PPEFluct_" + name(liftfield.size()) + "_" + name(NU) + "_" + name(
                 NPrgh) + "_t");
-        ITHACAstream::exportTensor(ct2PPEFluctTensor, "ct2PPEFluct_tensor", "python",
+        ITHACAstream::exportTensor(ct2PPEFluctTensor, "ct2PPEFluct_tensor", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -2195,7 +2194,7 @@ Eigen::MatrixXd UnsteadyBBTurb::bcTemperatureVec(const label NT)
     {
         ITHACAstream::SaveDenseMatrix(bcTempVec, "./ITHACAoutput/Matrices/",
                                       "bcTempVec_" + name(NT));
-        ITHACAstream::exportMatrix(bcTempVec, "bcTempVec", "python",
+        ITHACAstream::exportMatrix(bcTempVec, "bcTempVec", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 
@@ -2232,7 +2231,7 @@ Eigen::Tensor<double, 3> UnsteadyBBTurb::bcTemperatureMat(const label NT)
     {
         ITHACAstream::SaveDenseTensor(bcTempMat, "./ITHACAoutput/Matrices/",
                                       "bcTempMat_" + name(NT));
-        ITHACAstream::exportTensor(bcTempMat, "bcTempMat", "python",
+        ITHACAstream::exportTensor(bcTempMat, "bcTempMat", "numpy",
                                    "./ITHACAoutput/Matrices/python/");
     }
 

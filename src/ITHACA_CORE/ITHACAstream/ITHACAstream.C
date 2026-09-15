@@ -59,7 +59,7 @@ void exportMatrix(Eigen::Matrix < T, -1, dim > & matrix,
     std::string message = "The extension \"" +  type +
                           "\" was not implemented. Check the list of possible extensions.";
     M_Assert(type == "python" || type == "matlab"
-             || type == "eigen", message.c_str()
+             || type == "eigen" || type == "numpy", message.c_str()
             );
     mkDir(folder);
     word est;
@@ -144,7 +144,16 @@ void exportMatrix(Eigen::Matrix < T, -1, dim > & matrix,
 
         ofs.close();
     }
-}
+
+    if (type == "numpy")
+    {
+        est = ".npy";
+        cnpy::npy_save(folder + "/" + Name + "_mat" + est, matrix.data(),
+                       {static_cast<size_t>(matrix.rows()),
+                        static_cast<size_t>(matrix.cols())},
+                       "w");
+    }
+  }
 
 template void exportMatrix(Eigen::Matrix < double, -1,
                            -1 > & matrix, word Name, word type,
@@ -176,7 +185,7 @@ void exportMatrix(List <Eigen::MatrixXd>& matrix, word Name,
     std::string message = "The extension \"" +  type +
                           "\" was not implemented. Check the list of possible extensions.";
     M_Assert(type == "python" || type == "matlab"
-             || type == "eigen", message.c_str()
+             || type == "eigen" || type == "numpy", message.c_str()
             );
     mkDir(folder);
     word est;
@@ -250,6 +259,14 @@ void exportMatrix(List <Eigen::MatrixXd>& matrix, word Name,
             exportMatrix(matrix[i], Namei, "eigen", folder);
         }
     }
+    else if (type == "numpy")
+    {
+        for (int i = 0; i < matrix.size(); i++)
+        {
+            word Namei = Name + name(i);
+            exportMatrix(matrix[i], Namei, "numpy", folder);
+        }
+    }
 }
 
 void exportVector(Eigen::VectorXd& vector,
@@ -267,7 +284,7 @@ void exportTensor(Eigen::Tensor<T, 3> tensor, word Name,
     std::string message = "The extension \"" +  type +
                           "\" was not implemented. Check the list of possible extensions.";
     M_Assert(type == "python" || type == "matlab"
-             || type == "eigen", message.c_str()
+             || type == "eigen" || type == "numpy", message.c_str()
             );
     mkDir(folder);
     word est;
@@ -352,6 +369,21 @@ void exportTensor(Eigen::Tensor<T, 3> tensor, word Name,
             word Namei = Name + name(i);
             exportMatrix(matrixAux, Namei, "eigen", folder);
         }
+    }
+    else if (type == "numpy")
+    {
+        // Export as a single file, using the cnpy library to save the tensor as a .npy file
+        cnpy::npy_save(folder + "/" + Name + "_tens.npy", tensor.data(),
+                       {static_cast<size_t>(tensor.dimension(0)),
+                        static_cast<size_t>(tensor.dimension(1)),
+                        static_cast<size_t>(tensor.dimension(2))},
+                        "w");
+        // for (int i = 0; i < tensor.dimension(0); i++)
+        // {
+        //     Eigen::Matrix < T, -1, -1 > matrixAux = Eigen::SliceFromTensor(tensor, 0, i);
+        //     word Namei = Name + name(i);
+        //     exportMatrix(matrixAux, Namei, "numpy", folder);
+        // }
     }
 }
 

@@ -429,11 +429,9 @@ class UnsteadyBBTurb : public UnsteadyBB
         /// @brief      Computes the convective tensor in the momentum eqaution
         ///
         /// @param[in]  NUmodes    The number of velocity modes.
-        /// @param[in]  NPmodes    The number of pressure modes.
         /// @param[in]  NSUPmodes  The number of supremizer modes.
         ///
-        Eigen::Tensor<double, 3> convective_term_tens(label NUmodes,
-                label NPmodes, label NSUPmodes);
+        Eigen::Tensor<double, 3> convective_term_tens(label NUmodes, label NSUPmodes);
 
         //--------------------------------------------------------------------------
         /// @brief      S added tensor for the thermal turbulence treatement
