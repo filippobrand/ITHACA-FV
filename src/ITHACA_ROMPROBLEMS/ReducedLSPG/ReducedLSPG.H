@@ -67,6 +67,7 @@ class ReducedLSPG
     ///- Arglist
     autoPtr<argList> _args;
 
+  protected:
     ///- OpenFOAM time object 
     autoPtr<Foam::Time> _runTime;
 
@@ -78,6 +79,20 @@ class ReducedLSPG
 
     ///- fvOptions object
     autoPtr<fv::options> _fvOptions;
+
+    ///- Pointer to the MRF zone list
+    autoPtr<IOMRFZoneList> _MRF;
+
+    // *** Time step management - These are called by openfoam Time object *** //
+    //- Whether to adjust the time step based on the Courant number (or custom criteria?)
+    bool adjustTimeStep;
+
+    //- Maximum Courant number allowed
+    scalar maxCo;
+
+    //- Maximum time step allowed
+    scalar maxDeltaT;
+
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

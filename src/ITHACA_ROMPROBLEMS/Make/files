@@ -1,4 +1,6 @@
 ReducedProblem/ReducedProblem.C
+ReducedLSPG/ReducedLSPG.C
+ReducedLSPGUnsteadyBBTurb/ReducedLSPGUnsteadyBBTurb.C
 ReducedUnsteadyNS/ReducedUnsteadyNS.C
 ReducedUnsteadyBB/ReducedUnsteadyBB.C
 ReducedUnsteadyBBTurb/ReducedUnsteadyBBTurb.C

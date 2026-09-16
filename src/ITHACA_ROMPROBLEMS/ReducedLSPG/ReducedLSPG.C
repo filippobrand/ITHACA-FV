@@ -12,6 +12,8 @@ ReducedLSPG::ReducedLSPG(int argc, char* argv[])
   argList& args = _args();
   #include "createTime.H"
   #include "createMesh.H"
+  _MRF = autoPtr<IOMRFZoneList>(
+           new IOMRFZoneList(mesh));
   _pimple = autoPtr<pimpleControl>(
                 new pimpleControl(
                     mesh));
