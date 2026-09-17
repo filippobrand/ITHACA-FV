@@ -78,11 +78,6 @@ class UnsteadyBBTurb : public UnsteadyBB
         volScalarModes testFunctionsT;
 
         //--------------------------------------------------------------------------
-        /// @brief     Method to correctly prepare the modes (supremizer and lifting if necessary), be it PPE, Supremizer or VMB
-        ///
-        void prepareModes();
-
-        //--------------------------------------------------------------------------
         /// @brief     Helper to load from disk or compute a matrix
         ///
         /// @param matrix    Matrix to be loaded or computed
@@ -281,6 +276,11 @@ class UnsteadyBBTurb : public UnsteadyBB
 
         /// boolean flag for time-dependent BCs
         bool timeDependentBC = false;
+        
+        //--------------------------------------------------------------------------
+        /// @brief     Method to correctly prepare the modes (supremizer and lifting if necessary), be it PPE, Supremizer or VMB
+        ///
+        void prepareModes();
 
         //--------------------------------------------------------------------------
         /// @brief   Solves the CFD problem for parameters mu_now. Differently
