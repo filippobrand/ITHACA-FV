@@ -43,33 +43,11 @@ SourceFiles
 #include "turbulentTransportModel.H"
 // #include "IOmanip.H"
 #include "ReducedLSPG.H"
-#include "IOmanip.H"
+#include "Modes.H"
 #include "UnsteadyBBTurb.H"
 #include "BoundaryConditions.H"
 #include <Eigen/Dense>
 #include <memory>
-
-
-struct ROMSettings
-{
-    word method = "LSPG"; // Strategy. In this class we only implement LSPG
-    word bcMethod = "Lift"; // Boundary condition method 
-    bool hasMonitors = false; // Whether we have non-state quantities to monitor (like drag, lift, etc.)
-    bool timeDependentBC = false; // Whether the boundary conditions are time-dependent
-    bool normalizeWithEigenvalues = false; // Whether to normalize the modes coefficients with their eigenvalues
-    int N_BC = 0; // Number of parametric velocity boundary conditions
-    int N_BC_t = 0; // Number of parametric temperature boundary conditions
-    word solverODE = "Euler"; // ODE solver
-};
-
-struct PenaltySettings // Settings to be used when the penalty method is used to impose the boundary conditions
-{
-    bool optimizePenaltyFactor = false;
-    int nTimestepsPenaltyAdapt = 0;
-    int penaltyMaxIter = 0;
-    float penaltyTolU = 1e-3;
-    float penaltyTolT = 1e-2;
-};
 
 struct InterpolationSettings
 {
@@ -88,11 +66,10 @@ struct NumberOfModes
     int nut = 0;
 };
 
-struct FluidProperties
+struct GaussNewtonSettings
 {
-    scalar nu = 0;
-    scalar Pr = 0;
-    scalar Pr_t = 0;
+    int maxIter = 10;
+    float tol = 1e-6;
 };
 
 /// Class where a reduced problem for the <b> unsteady, turbulent, buoyant Navier-stokes </b> problem is implemented.
@@ -117,19 +94,45 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     void solveOnline(const Eigen::MatrixXd& vel_now_BC, const Eigen::MatrixXd& temp_now_BC, int startSnap);
 
   private:
+    //- Assembles the residual vector
+    Eigen::VectorXd assembleResidual(const Eigen::VectorXd& state, const Time& runTime);
+
+    //- Assembles the residual vector starting from the equations
+    void stackResiduals(
+      const fvVectorMatrix& UEqn,
+      const fvScalarMatrix& TEqn,
+      const fvScalarMatrix& pEqn,
+      Eigen::VectorXd& residual_);
+
     //- Reconstructs the reduced solution fields from the currentState_ vector
-    void reconstructReducedFields();
-    
-    //- Assembles the residual
-    void stackResiduals(const Field<vector>& Ru, const Field<scalar>& RT, const Field<scalar>& Rp, Eigen::VectorXd& residual);
+    void reconstructReducedFields(
+      const Eigen::VectorXd& state,
+      volVectorField& velocity_field,
+      volScalarField& pressure_field,
+      volScalarField& temperature_field);
+
+    //- Assemble the Jacobian matrix
+    Eigen::MatrixXd assembleJacobian(
+      const Eigen::VectorXd& state,
+      const Eigen::VectorXd& residual,
+      const Time& runTime);
+  
+    //- Interpolates the turbulent eddy viscosity coefficients from the RBF interpolation to the current state
+    void interpolateNutCoeffs(
+      volScalarField& nut_field,
+      volScalarModes& nut_modes,
+      const Eigen::VectorXd& state);
+
+    //- Inverse Distance Weighting interpolation of the input parameters to get the current state vector
+    Eigen::VectorXd interpolateIDW(const Eigen::VectorXd& input_parameters);
+
+    ///- Method to copy the average nut fields from the FOM mesh to the ROM mesh
+    void copyNutAvgFieldsToROMMesh();
+
+    ///- Reads eigenvalues and fills the eigenvalues_ vector
+    void readEigenvalues();
 
   private:
-    ///- General ROM settings
-    ROMSettings romSettings_;
-
-    ///- Fluid properties for the reduced problem
-    FluidProperties fluidProperties_;
-
     ///- Interpolation settings
     InterpolationSettings interpolationSettings_;
 
@@ -141,6 +144,12 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
 
     ///- Current state vector
     Eigen::VectorXd currentState_;
+
+    ///- Current nut coefficients vector (fluctuating part)
+    Eigen::VectorXd currentNutCoeffs_;
+
+    ///- Current nut coefficients vector (averaged part)
+    Eigen::VectorXd currentNutAvgCoeffs_;
 
     ///- Pointer to the FOM problem object
     UnsteadyBBTurb* problem_;
@@ -214,6 +223,13 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     
     ///- Reference value for pressure
     scalar pRefValue;
+
+    ///- Pointer list of average nut fields 
+    PtrList<volScalarField> avgNutFields_;
+
+    ///- Modes eigenvalues, to be used for normalization of the modes coefficients
+    Eigen::VectorXd eigenvalues_;
+
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
