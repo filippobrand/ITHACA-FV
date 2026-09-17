@@ -45,6 +45,7 @@ fvScalarMatrix p_rghEqn
 (
     fvm::laplacian(rAUf, p_rgh) == fvc::div(phiHbyA)
 );
+p_rghEqn.setReference(pRefCell, getRefCellValue(p_rgh, pRefCell));
 
 // #include "continuityErrs.H"
 p = p_rgh + rhok * gh;
