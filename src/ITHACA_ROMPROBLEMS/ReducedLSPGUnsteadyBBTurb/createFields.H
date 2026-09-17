@@ -236,20 +236,8 @@ _p = autoPtr<volScalarField>(
              p_rgh + rhok * gh));
 volScalarField& p = _p();
 
-// Temperature equation source term
-// _Sourceterm = autoPtr<volScalarField>(
-//     new volScalarField(
-//         IOobject(
-//             "Sourceterm",
-//             _runTime->timeName(),
-//             _mesh,
-//             IOobject::MUST_READ,
-//             IOobject::AUTO_WRITE),
-//         _mesh));
-// volScalarField& Sourceterm = _Sourceterm();
-
-label pRefCell = 0;
-scalar pRefValue = 0.0;
+pRefCell = 0;
+pRefValue = 0.0;
 
 pimpleControl& pimple = _pimple();
 
