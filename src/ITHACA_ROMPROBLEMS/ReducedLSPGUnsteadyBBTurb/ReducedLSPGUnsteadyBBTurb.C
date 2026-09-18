@@ -13,6 +13,10 @@ ReducedLSPGUnsteadyBBTurb::ReducedLSPGUnsteadyBBTurb(UnsteadyBBTurb& problem, in
       problem.ITHACAdict->lookupOrDefault<label>("dimInputRBF", 0),
       problem.mu.cols()
   };
+  romSettings_ = ROMSettings
+  {
+      problem.ITHACAdict->lookupOrDefault<word>("bcMethod", "lift")
+  };
   // Create the number of modes object
   numberOfModes_ = NumberOfModes
   {
@@ -42,16 +46,14 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(const Eigen::MatrixXd& vel_now_BC,
                                              const Eigen::MatrixXd& temp_now_BC, 
                                              int startSnap)
 {
-  // The boundaryConditions_ object does not directly interact with the ROM,
-  // except for the initialization of the reduced coeff. It simply stores the BCs values as a function of time
-  // and can be interrogated to get the values at a given time
-  boundaryConditions_ = BoundaryConditions{vel_now_BC, temp_now_BC, "linear"};
-  boundaryConditions_.initializeReducedCoeffs(startSnap, currentState_, problem_,
-    numberOfModes_.velocity, numberOfModes_.pressure, numberOfModes_.temperature
-  );
+  /* The boundaryConditions_ object does not directly interact with the ROM,
+  except for the initialization of the reduced coeff. It simply stores the BCs 
+  values as a function of time  and can be interrogated to get the values at a given time */
+  initializePODCoeffsFromFields();
   currentNutCoeffs_ = ITHACAutilities::getCoeffs(
     problem_->fluctNutfield[startSnap], problem_->nutmodes
   );
+  boundaryConditions_ = BoundaryConditions{vel_now_BC, temp_now_BC, "linear"};
   currentNutAvgCoeffs_ = interpolateIDW(
     boundaryConditions_.getCurrentBCs().head(2)
   );
@@ -108,7 +110,6 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(const Eigen::MatrixXd& vel_now_BC,
       }
     }
     Info << "Final residual norm: " << assembleResidual(currentState_, runTime).norm() << endl;
-    Info << "Current state vector: " << currentState_.transpose() << endl;
     runTime.write();
   }
 }
@@ -175,6 +176,19 @@ void ReducedLSPGUnsteadyBBTurb::reconstructReducedFields(
   velocity_field = problem_->L_U_SUPmodes.reconstruct(velocity_field, state.head(numberOfModes_.velocity), "U");
   pressure_field = problem_->P_rghmodes.reconstruct(pressure_field, state.segment(numberOfModes_.velocity, numberOfModes_.pressure), "p_rgh");
   temperature_field = problem_->L_Tmodes.reconstruct(temperature_field, state.tail(numberOfModes_.temperature), "T");
+
+  // If using lift method for BCs, we need to add the lift fields to the reconstructed fields
+  if (romSettings_.bcMethod == "lift")
+  {
+    for (int i = 0; i < problem_->liftfield.size(); i++)
+    {
+      velocity_field += problem_->liftfield[i] * boundaryConditions_.getCurrentBCs()(i);
+    }
+    for (int i = 0; i < problem_->liftfieldT.size(); i++)
+    {
+      temperature_field += problem_->liftfieldT[i] * boundaryConditions_.getCurrentBCs()(i + problem_->liftfield.size());
+    }
+  }
 }
 
 Eigen::MatrixXd ReducedLSPGUnsteadyBBTurb::assembleJacobian(
@@ -399,4 +413,29 @@ void ReducedLSPGUnsteadyBBTurb::readEigenvalues()
     eigenvalues_ = Eigen::VectorXd::Zero(
         numberOfModes_.velocity + numberOfModes_.pressure + numberOfModes_.temperature);
     eigenvalues_ << uEigenvalues_, pEigenvalues_, tEigenvalues_;
+}
+
+void ReducedLSPGUnsteadyBBTurb::initializePODCoeffsFromFields()
+{
+    // This method reads the initial condition from disk and projects it onto the POD modes to get the initial coefficients for the reduced problem
+    volVectorField& U = _U();
+    volScalarField& p_rgh = _p_rgh();
+    volScalarField& T = _T();
+
+    // If using lift method for BCs, we need to subtract the lift fields from the initial condition before projecting onto the POD modes
+    if (romSettings_.bcMethod == "lift")
+    {
+        for (int i = 0; i < problem_->liftfield.size(); i++)
+        {
+          U -= problem_->liftfield[i];
+        }
+        for (int i = 0; i < problem_->liftfieldT.size(); i++)
+        {
+          T -= problem_->liftfieldT[i];
+        }
+    }
+
+    currentState_.head(numberOfModes_.velocity) = ITHACAutilities::getCoeffs(U, problem_->L_U_SUPmodes);
+    currentState_.segment(numberOfModes_.velocity, numberOfModes_.pressure) = ITHACAutilities::getCoeffs(p_rgh, problem_->P_rghmodes);
+    currentState_.tail(numberOfModes_.temperature) = ITHACAutilities::getCoeffs(T, problem_->L_Tmodes);
 }

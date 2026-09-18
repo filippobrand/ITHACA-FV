@@ -61,7 +61,10 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
     _pimple = autoPtr<pimpleControl>(
                   new pimpleControl(
                       mesh));
+    pimpleControl& pimple = _pimple();
 #include "createFields.H"
+_MRF = autoPtr<IOMRFZoneList>(
+           new IOMRFZoneList(mesh));
 #include "createFvOptions.H"
     ITHACAdict = new IOdictionary(
         IOobject(
@@ -84,9 +87,6 @@ UnsteadyBBTurb::UnsteadyBBTurb(int argc, char* argv[])
              || bcMethod == "Gunzburger",
                          "The BC method must be set to lift, penalty or Gunzburger in ITHACAdict");
     turbulence->validate();
-    offline = ITHACAutilities::check_off();
-    podex = ITHACAutilities::check_pod();
-    supex = ITHACAutilities::check_sup();
     viscDict = ITHACAdict->subDict("viscDict");
     NUmodes = ITHACAdict->lookupOrDefault<label>("NmodesUproj", 10);
     NTmodes = ITHACAdict->lookupOrDefault<label>("NmodesTproj", 5);
@@ -129,7 +129,7 @@ void UnsteadyBBTurb::truthSolve(const List<scalar> mu_now, label nSample)
     Time& runTime = _runTime();
     fvMesh& mesh = _mesh();
     Info << "Created mesh and runTime references." << nl << endl;
-#include "initContinuityErrs.H"
+    #include "initContinuityErrs.H"
     fv::options& fvOptions = _fvOptions();
     singlePhaseTransportModel& laminarTransport = _laminarTransport();
     volScalarField& p = _p();

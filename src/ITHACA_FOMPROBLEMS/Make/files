@@ -7,6 +7,7 @@ SteadyNSTurbIntrusive/SteadyNSTurbIntrusive.C
 unsteadyNS/unsteadyNS.C
 UnsteadyBB/UnsteadyBB.C
 UnsteadyBBTurb/UnsteadyBBTurb.C
+UnsteadyBBTurb/LSPGUnsteadyBBTurb.C
 UnsteadyNSTurb/UnsteadyNSTurb.C
 UnsteadyNSTurb/TurbDiffusionHyperreduction.C
 UnsteadyNSTurbIntrusive/UnsteadyNSTurbIntrusive.C
@@ -27,5 +28,7 @@ CompressibleUnSteadyNSRhoPimple/CompressibleUnSteadyRhoPimple.C
 ScalarTransport/ScalarTransport.C
 MyIcoSolver/MyIcoSolver.C
 sequentialIHTP/sequentialIHTP.C
+LSPGProblem/LSPGProblem.C
+
 
 LIB = $(FOAM_USER_LIBBIN)/libITHACA_FOMPROBLEMS

@@ -33,7 +33,7 @@ ITHACAsensitivity/FiguresOfMerit/Ptot.C
 ITHACAsensitivity/FiguresOfMerit/Ptot_time.C
 ITHACAsensitivity/FiguresOfMerit/Tm_time.C
 ITHACAregularization/ITHACAregularization.C
-
+ITHACAcontext/ITHACAcontext.C
 
 
 LIB = $(FOAM_USER_LIBBIN)/libITHACA_CORE

@@ -19,4 +19,3 @@ ReducedLSPG::ReducedLSPG(int argc, char* argv[])
                     mesh));
   #include "createFvOptions.H"
 }
-

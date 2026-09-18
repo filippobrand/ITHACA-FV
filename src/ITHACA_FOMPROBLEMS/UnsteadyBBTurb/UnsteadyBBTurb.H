@@ -24,7 +24,7 @@ License
 Class
     UnsteadyBBTurb
 Description
-    Reduction class for a Stationary Navier-Stokes problem.
+    Full order unsteady Boussinesq problem with turbulence model and preparation of the reduced matrices for the online solve.
 SourceFiles
     UnsteadyBBTurb.C
 \*---------------------------------------------------------------------------*/
@@ -52,7 +52,7 @@ SourceFiles
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 /*---------------------------------------------------------------------------*\
-                        Class SteadyBB Declaration
+                        Class UnsteadyBBTurb Declaration
 \*---------------------------------------------------------------------------*/
 
 /// Implementation of a parametrized full order <b> unsteady Boussinesq problem </b> and preparation of the the reduced matrices for the online solve.
@@ -244,20 +244,8 @@ class UnsteadyBBTurb : public UnsteadyBB
         /// Shared pointer to the PPE matrices
         std::shared_ptr<PPEMatrices> pPPEMatrices;
 
-        /// Eddy viscosity field
-        autoPtr<volScalarField> _nut;
-
         /// Eddy viscosity for the Spalart-Allmaras turbulence model
         autoPtr<volScalarField> _nuTilda;
-
-        /// Turbulent Prandtl number
-        autoPtr<dimensionedScalar> _Prt;
-
-        /// Prandtl number
-        autoPtr<dimensionedScalar> _Pr;
-
-        /// Turbulent thermal diffusivity
-        autoPtr<volScalarField> _alphat;
 
         /// List of pointers for the online validation of the eddy viscosity solution
         PtrList<volScalarField> nutfield_on;

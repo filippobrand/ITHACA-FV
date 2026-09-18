@@ -49,6 +49,11 @@ SourceFiles
 #include <Eigen/Dense>
 #include <memory>
 
+struct ROMSettings
+{
+    word bcMethod = "lift";
+};
+
 struct InterpolationSettings
 {
     int firstRBFIndex = 0;
@@ -132,7 +137,14 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     ///- Reads eigenvalues and fills the eigenvalues_ vector
     void readEigenvalues();
 
+    ///- Method to initializa the POD coefficients by reconstructing fields at a selected time
+    /// The method reads the fields from disk and projects them onto the modes to get the initial coefficients
+    void initializePODCoeffsFromFields();
+
   private:
+    ///- Settings for the ROM
+    ROMSettings romSettings_;
+
     ///- Interpolation settings
     InterpolationSettings interpolationSettings_;
 

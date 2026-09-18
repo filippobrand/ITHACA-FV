@@ -252,7 +252,7 @@ volScalarField& p = _p();
 pRefCell = 0;
 pRefValue = 0.0;
 
-pimpleControl& pimple = _pimple();
+// pimpleControl& pimple = _pimple();
 
 setRefCell(
     p,
@@ -271,5 +271,3 @@ if (p_rgh.needReference())
 
 mesh.setFluxRequired(p_rgh.name());
 
-_MRF = autoPtr<IOMRFZoneList>(
-           new IOMRFZoneList(mesh));
