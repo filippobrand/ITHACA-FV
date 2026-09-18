@@ -40,6 +40,7 @@
 #include <cmath>
 #include "ITHACAPOD.H"
 #include "pisoControl.H"
+#include "simpleControl.H"
 
 // * * * * * * * * * * * * * * * Constructors * * * * * * * * * * * * * * * * //
 LSPGUnsteadyBBTurb::LSPGUnsteadyBBTurb(std::shared_ptr<ITHACAcontext> context)
@@ -576,10 +577,28 @@ void LSPGUnsteadyBBTurb::computePOD(label nModesU, label nModesPrgh, label nMode
     nModesNut = NNutModes;
   }
   Info << "### MESSAGE - Computing POD modes for velocity, pressure, temperature and eddy viscosity." << endl;
-  ITHACAPOD::getModes(Ufield, Umodes, _U().name(), podex, 0, 0, nModesU, true);
-  ITHACAPOD::getModes(Prghfield, Prghmodes, _p_rgh().name(), podex, 0, 0, nModesPrgh, false);
-  ITHACAPOD::getModes(Tfield, Tmodes, _T().name(), podex, 0, 0, nModesT, true);
-  ITHACAPOD::getModes(fluctNutfield, nutmodes, fluctNutfield[0].name(), podex, 0, 0, nModesNut, true);
+  if (bcMethod == "lift")
+  {
+    ITHACAPOD::getModes(Uomfield, Umodes, _U().name(), podex, 0, 0, nModesU, true);
+    ITHACAPOD::getModes(Prghfield, Prghmodes, _p_rgh().name(), podex, 0, 0, nModesPrgh, false);
+    ITHACAPOD::getModes(Tomfield, Tmodes, _T().name(), podex, 0, 0, nModesT, true);
+    ITHACAPOD::getModes(fluctNutfield, nutmodes, fluctNutfield[0].name(), podex, 0, 0, nModesNut, true);
+  }
+  else
+  {
+    ITHACAPOD::getModes(Ufield, Umodes, _U().name(), podex, 0, 0, nModesU, true);
+    ITHACAPOD::getModes(Prghfield, Prghmodes, _p_rgh().name(), podex, 0, 0, nModesPrgh, false);
+    ITHACAPOD::getModes(Tfield, Tmodes, _T().name(), podex, 0, 0, nModesT, true);
+    ITHACAPOD::getModes(fluctNutfield, nutmodes, fluctNutfield[0].name(), podex, 0, 0, nModesNut, true);
+  }
+}
+
+void LSPGUnsteadyBBTurb::setupLift()
+{
+  liftSolve();
+  liftSolveT();
+  computeLift(Ufield, liftfield, Uomfield);
+  computeLiftT(Tfield, liftfieldT, Tomfield);
 }
 
 void LSPGUnsteadyBBTurb::liftSolve()
@@ -589,23 +608,19 @@ void LSPGUnsteadyBBTurb::liftSolve()
         Time& runTime = this->runTime();
         fvMesh& mesh = this->mesh();
         IOMRFZoneList& MRF = this->MRF();
-        pisoControl potentialFlow(mesh, "potentialFlow");
-
+        
         surfaceScalarField& phi = _phi();
-        volScalarField p = _p_rgh();
-        volVectorField U = _U();
-
+        pisoControl potentialFlow(mesh, "potentialFlow");
+        volVectorField& U = _U();
+        volScalarField& UliftBC = _UliftBC();
         label BCind = inletIndex(k, 0);
         volVectorField Ulift("Ulift" + name(k), U);
-
         instantList Times = runTime.times();
         runTime.setTime(Times[1], 1);
-
         Info << "Solving a lifting Problem" << endl;
-
         Vector<double> v1(0, 0, 0);
-        Vector<double> v0(0, 0, 0);
         v1[inletIndex(k, 1)] = 1;
+        Vector<double> v0(0, 0, 0);
 
         for (label j = 0; j < U.boundaryField().size(); j++)
         {
@@ -626,7 +641,6 @@ void LSPGUnsteadyBBTurb::liftSolve()
         }
 
         Info << "Constructing velocity potential field Phi\n" << endl;
-        wordList PhiBoundaryTypes(mesh.boundaryMesh().size(), "zeroGradient");
         volScalarField Phi
         (
             IOobject
@@ -639,10 +653,10 @@ void LSPGUnsteadyBBTurb::liftSolve()
             ),
             mesh,
             dimensionedScalar("Phi", dimLength * dimVelocity, 0),
-            PhiBoundaryTypes
+            UliftBC.boundaryField().types()
         );
         label PhiRefCell = 0;
-        scalar PhiRefValue = 0;
+        scalar PhiRefValue = 0.0;
         setRefCell
         (
             Phi,
@@ -653,7 +667,7 @@ void LSPGUnsteadyBBTurb::liftSolve()
         mesh.setFluxRequired(Phi.name());
         runTime.functionObjects().start();
         MRF.makeRelative(phi);
-        adjustPhi(phi, Ulift, p);
+        adjustPhi(phi, Ulift, UliftBC);
 
         while (potentialFlow.correctNonOrthogonal())
         {
@@ -684,5 +698,67 @@ void LSPGUnsteadyBBTurb::liftSolve()
              << endl;
         Ulift.write();
         liftfield.append(Ulift.clone());
+    }
+}
+
+void LSPGUnsteadyBBTurb::liftSolveT()
+{
+    for (label k = 0; k < inletIndexT.rows(); k++)
+    {
+        Time& runTime = this->runTime();
+        fvMesh& mesh = this->mesh();
+
+        volScalarField& T = _T();
+        volVectorField& U = _U();
+        surfaceScalarField& phi = _phi();
+        phi = linearInterpolate(U) & mesh.Sf();
+        simpleControl simple(mesh);
+        volScalarField& alphat = _alphat();
+
+        dimensionedScalar& Pr = _Pr();
+        dimensionedScalar& Prt = _Prt();
+        label BCind = inletIndexT(k, 0);
+        volScalarField Tlift("Tlift" + name(k), T);
+        instantList Times = runTime.times();
+        runTime.setTime(Times[1], 1);
+        Info << "Solving a lifting Problem" << endl;
+        scalar t1 = 1;
+        scalar t0 = 0;
+        alphat = turbulence->nut() / Prt;
+        alphat.correctBoundaryConditions();
+        volScalarField alphaEff("alphaEff", turbulence->nu() / Pr + alphat);
+
+        for (label j = 0; j < T.boundaryField().size(); j++)
+        {
+            if (j == BCind)
+            {
+                assignBC(Tlift, j, t1);
+                assignIF(Tlift, t0);
+            }
+            else if (T.boundaryField()[BCind].type() == "fixedValue")
+            {
+                assignBC(Tlift, j, t0);
+                assignIF(Tlift, t0);
+            }
+            else
+            {
+            }
+        }
+
+        while (simple.correctNonOrthogonal())
+        {
+            fvScalarMatrix TEqn
+            (
+                fvm::div(phi, Tlift)
+                - fvm::laplacian(alphaEff, Tlift)
+            );
+            TEqn.solve();
+            Info << "ExecutionTime = " << runTime.elapsedCpuTime() << " s"
+                 << "  ClockTime = " << runTime.elapsedClockTime() << " s"
+                 << nl << endl;
+        }
+
+        Tlift.write();
+        liftfieldT.append(Tlift.clone());
     }
 }

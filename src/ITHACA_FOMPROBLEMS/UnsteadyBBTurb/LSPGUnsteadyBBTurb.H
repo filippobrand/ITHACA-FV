@@ -131,19 +131,30 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         void computePOD(label nModesU = 0, label nModesPrgh = 0, label nModesT = 0, label nModesNut = 0);
 
         //--------------------------------------------------------------------------
+        /// @brief      Complete set up of the lift approach
+        ///
+        void setupLift();
+
+        
+      private:
+        ///- Reads the dictionary ITHACAdict and sets the relevant parameters
+        void readITHACAdict();
+        
+        //--------------------------------------------------------------------------
+        /// @brief      Centers the snapshots before POD
+        void removeMean();
+        
+        //--------------------------------------------------------------------------
         /// @brief      Solves the lift problem for the velocity
         ///
         void liftSolve();
 
-    private:
-        ///- Reads the dictionary ITHACAdict and sets the relevant parameters
-        void readITHACAdict();
-
         //--------------------------------------------------------------------------
-        /// @brief      Centers the snapshots before POD
-        void removeMean();
+        /// @brief      Solves the lift problem for the temperature
+        ///
+        void liftSolveT();
 
-    protected:
+      protected:
         //- Number of velocity modes
         label NUmodes;
 
