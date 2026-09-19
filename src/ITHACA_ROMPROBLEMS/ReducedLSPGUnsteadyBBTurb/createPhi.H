@@ -42,12 +42,12 @@ _phi = autoPtr<surfaceScalarField>
                IOobject
                (
                    "phi",
-                   _runTime->timeName(),
-                   _mesh,
+                   runTime.timeName(),
+                   mesh,
                    IOobject::READ_IF_PRESENT,
                    IOobject::AUTO_WRITE
                ),
-               linearInterpolate(U) & _mesh->Sf()
+               linearInterpolate(U) & mesh.Sf()
            )
        );
 surfaceScalarField& phi = _phi();

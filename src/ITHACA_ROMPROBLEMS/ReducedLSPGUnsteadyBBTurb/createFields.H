@@ -32,8 +32,8 @@ Info << "Reading thermophysical properties\n" << endl;
 IOdictionary transportProperties(
     IOobject(
         "transportProperties",
-        _runTime->constant(),
-        _mesh,
+        runTime.constant(),
+        mesh,
         IOobject::MUST_READ_IF_MODIFIED,
         IOobject::NO_WRITE));
 
@@ -49,23 +49,23 @@ dimensionedScalar& nu = _nu();
 _nut = autoPtr<volScalarField>(
            new volScalarField(
                IOobject(
-                   "nut",
-                   _runTime->timeName(),
-                   _mesh,
+                   "nut_r",
+                   runTime.timeName(),
+                   mesh,
                    IOobject::MUST_READ,
                    IOobject::AUTO_WRITE),
-               _mesh));
+               mesh));
 volScalarField& nut = _nut();
 
 _UliftBC = autoPtr<volScalarField>(
                new volScalarField(
                    IOobject(
                        "UliftBC",
-                       _runTime->timeName(),
-                       _mesh,
+                       runTime.timeName(),
+                       mesh,
                        IOobject::MUST_READ,
-                       IOobject::AUTO_WRITE),
-                   _mesh));
+                       IOobject::NO_WRITE),
+                   mesh));
 volScalarField& UliftBC = _UliftBC();
 
 // Laminar Prandtl number
@@ -132,9 +132,9 @@ _gh = autoPtr<volScalarField>(
           new volScalarField(
               IOobject(
                   "gh",
-                  _runTime->timeName(),
-                  _mesh),
-              (g & _mesh->C()) - ghRef));
+                  runTime.timeName(),
+                  mesh),
+              (g & mesh.C()) - ghRef));
 volScalarField& gh = _gh();
 
 Info << "Reading field ghf\n"
@@ -143,9 +143,9 @@ _ghf = autoPtr<surfaceScalarField>(
            new surfaceScalarField(
                IOobject(
                    "ghf",
-                   _runTime->timeName(),
-                   _mesh),
-               (g & _mesh->Cf()) - ghRef));
+                   runTime.timeName(),
+                   mesh),
+               (g & mesh.Cf()) - ghRef));
 surfaceScalarField& ghf = _ghf();
 
 // Reading fields
@@ -154,12 +154,12 @@ Info << "Reading field T\n"
 _T = autoPtr<volScalarField>(
          new volScalarField(
              IOobject(
-                 "T",
-                 _runTime->timeName(),
-                 _mesh,
+                 "T_r",
+                 runTime.timeName(),
+                 mesh,
                  IOobject::MUST_READ,
                  IOobject::AUTO_WRITE),
-             _mesh));
+             mesh));
 volScalarField& T = _T();
 
 Info << "Reading field p_rgh\n"
@@ -167,12 +167,12 @@ Info << "Reading field p_rgh\n"
 _p_rgh = autoPtr<volScalarField>(
              new volScalarField(
                  IOobject(
-                     "p_rgh",
-                     _runTime->timeName(),
-                     _mesh,
+                     "p_rgh_r",
+                     runTime.timeName(),
+                     mesh,
                      IOobject::MUST_READ,
                      IOobject::AUTO_WRITE),
-                 _mesh));
+                 mesh));
 volScalarField& p_rgh = _p_rgh();
 
 Info << "Reading field U\n"
@@ -180,12 +180,12 @@ Info << "Reading field U\n"
 _U = autoPtr<volVectorField>(
          new volVectorField(
              IOobject(
-                 "U",
-                 _runTime->timeName(),
-                 _mesh,
+                 "U_r",
+                 runTime.timeName(),
+                 mesh,
                  IOobject::MUST_READ,
                  IOobject::AUTO_WRITE),
-             _mesh));
+             mesh));
 volVectorField& U = _U();
 
 #include "createPhi.H"
@@ -194,18 +194,20 @@ _laminarTransport = autoPtr<singlePhaseTransportModel>(
                         new singlePhaseTransportModel(U, phi));
 singlePhaseTransportModel& laminarTransport = _laminarTransport();
 
-Info << "Creating turbulence model\n"
-     << endl;
-turbulence = autoPtr<incompressible::turbulenceModel>(
-                 incompressible::turbulenceModel::New(U, phi, laminarTransport));
+// turbulence = autoPtr<incompressible::turbulenceModel>(
+//                  incompressible::turbulenceModel::New(U, phi, laminarTransport));
+turbulence = autoPtr<RBFTurbulence>
+(
+    new RBFTurbulence(nut, nu)
+);
 
 // Kinematic density for buoyancy force
 _rhok = autoPtr<volScalarField>(
             new volScalarField(
                 IOobject(
                     "rhok",
-                    _runTime->timeName(),
-                    _mesh),
+                    runTime.timeName(),
+                    mesh),
                 1.0 - beta * (T - TRef)));
 volScalarField& rhok = _rhok();
 
@@ -216,11 +218,11 @@ _alphat = autoPtr<volScalarField>(
               new volScalarField(
                   IOobject(
                       "alphat",
-                      _runTime->timeName(),
-                      _mesh,
+                      runTime.timeName(),
+                      mesh,
                       IOobject::MUST_READ,
                       IOobject::AUTO_WRITE),
-                  _mesh));
+                  mesh));
 volScalarField& alphat = _alphat();
 
 Info << "Reading field p\n"
@@ -229,8 +231,8 @@ _p = autoPtr<volScalarField>(
          new volScalarField(
              IOobject(
                  "p",
-                 _runTime->timeName(),
-                 _mesh,
+                 runTime.timeName(),
+                 mesh,
                  IOobject::NO_READ,
                  IOobject::AUTO_WRITE),
              p_rgh + rhok * gh));
@@ -238,8 +240,6 @@ volScalarField& p = _p();
 
 pRefCell = 0;
 pRefValue = 0.0;
-
-pimpleControl& pimple = _pimple();
 
 setRefCell(
     p,
@@ -256,7 +256,6 @@ if (p_rgh.needReference())
              pRefValue - getRefCellValue(p, pRefCell));
 }
 
-_mesh->setFluxRequired(p_rgh.name());
-turbulence->validate();
+mesh.setFluxRequired(p_rgh.name());
 
 Info << "Finished the creation of the fields for the LSPG ROM.\n" << endl;

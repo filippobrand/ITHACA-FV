@@ -154,7 +154,7 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         ///
         void liftSolveT();
 
-      protected:
+      public:
         //- Number of velocity modes
         label NUmodes;
 
@@ -248,12 +248,6 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
 
         ///- Whether we mean-center
         bool centerSnapshots;
-        
-        // Dimension of the interpolation matrix A
-        label dimA;
-
-        // Dimension of the input to the RBF. To be used if you don't want to use all the velocity coefficients to the RBF
-        label dimInputRBF;
 
         /// adjustTimeStep
         bool adjustTimeStep;
@@ -321,6 +315,12 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
 
         /// Interpolators for nut coefficient interpolation
         std::vector<std::shared_ptr<ithacaInterpolator>> rbfSplines;
+
+        // Dimension of the interpolation matrix A
+        label dimA;
+
+        // Dimension of the input to the RBF. To be used if you don't want to use all the velocity coefficients to the RBF
+        label dimInputRBF;
 
 };
 

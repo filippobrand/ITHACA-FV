@@ -599,6 +599,10 @@ void LSPGUnsteadyBBTurb::setupLift()
   liftSolveT();
   computeLift(Ufield, liftfield, Uomfield);
   computeLiftT(Tfield, liftfieldT, Tomfield);
+  ITHACAstream::exportFields(liftfield, "./ITHACAoutput/Lift", "ULift");
+  ITHACAstream::exportFields(liftfieldT, "./ITHACAoutput/Lift", "TLift");
+  // ITHACAstream::exportFields(Uomfield, "./ITHACAoutput/Lift", "U_om");
+  // ITHACAstream::exportFields(Tomfield, "./ITHACAoutput/Lift", "T_om");
 }
 
 void LSPGUnsteadyBBTurb::liftSolve()

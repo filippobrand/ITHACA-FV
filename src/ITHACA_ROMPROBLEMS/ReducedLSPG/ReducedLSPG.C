@@ -1,21 +1,15 @@
 #include "ReducedLSPG.H"
 
-ReducedLSPG::ReducedLSPG(int argc, char* argv[])
+ReducedLSPG::ReducedLSPG(std::shared_ptr<ITHACAcontext> context)
+: context_(std::move(context))
+  // adjustTimeStep(context_->args().lookupOrDefault<bool>("adjustTimeStep", true)),
+  // maxCo(context_->args().lookupOrDefault<scalar>("maxCo", 0.5)),
+  // maxDeltaT(context_->args().lookupOrDefault<scalar>("maxDeltaT", 1))
 {
-  _args = autoPtr<argList>(
-                new argList(argc, argv));
-
-  if (!_args->checkRootCase())
+  if (!context_)
   {
-      Foam::FatalError.exit();
+    FatalErrorInFunction
+      << "Context pointer is null. Please provide a valid ITHACAcontext object."
+      << exit(FatalError);
   }
-  argList& args = _args();
-  #include "createTime.H"
-  #include "createMesh.H"
-  _MRF = autoPtr<IOMRFZoneList>(
-           new IOMRFZoneList(mesh));
-  _pimple = autoPtr<pimpleControl>(
-                new pimpleControl(
-                    mesh));
-  #include "createFvOptions.H"
 }

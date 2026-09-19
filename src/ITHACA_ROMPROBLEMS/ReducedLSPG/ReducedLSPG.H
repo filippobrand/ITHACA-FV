@@ -40,6 +40,8 @@ SourceFiles
 #include "fvCFD.H"
 #include "pimpleControl.H"
 #include "fvOptions.H"
+#include "ITHACAcontext.H"
+#include <memory>
 
 /*
 Base class for the Reduced Least-Squares Petrov-Galerkin (LSPG) problem
@@ -53,30 +55,44 @@ class ReducedLSPG
     ReducedLSPG() = delete;
     
     //- Constructor that takes, other than the FOM, argc and argv
-    ReducedLSPG(int argc, char* argv[]);
+    explicit ReducedLSPG(std::shared_ptr<ITHACAcontext> context);
 
     //- Default destructor
     virtual ~ReducedLSPG() = default;
 
-  private:
-    ///- Arglist
-    autoPtr<argList> _args;
-
   protected:
-    ///- OpenFOAM time object 
-    autoPtr<Foam::Time> _runTime;
+    //- Shared pointer to the ITHACAcontext object, which contains the mesh, time, fvOptions, and other necessary objects for the FOM problem.
+    std::shared_ptr<ITHACAcontext> context_;
 
-    ///- OpenFOAM mesh object
-    autoPtr<Foam::fvMesh> _mesh;
+    argList& args() const
+    {
+        return context_->args();
+    }
+    
+    fvMesh& mesh() const
+    {
+        return context_->mesh();
+    }
 
-    ///- Pimple control object for the reduced problem
-    autoPtr<pimpleControl> _pimple;
+    Time& runTime() const
+    {
+        return context_->runTime();
+    }
 
-    ///- fvOptions object
-    autoPtr<fv::options> _fvOptions;
+    pimpleControl& pimple() const
+    {
+        return context_->pimple();
+    }
 
-    ///- Pointer to the MRF zone list
-    autoPtr<IOMRFZoneList> _MRF;
+    fv::options& fvOptions() const
+    {
+        return context_->fvOptions();
+    }
+
+    IOMRFZoneList& MRF() const
+    {
+        return context_->MRF();
+    }
 
     // *** Time step management - These are called by openfoam Time object *** //
     //- Whether to adjust the time step based on the Courant number (or custom criteria?)

@@ -41,11 +41,13 @@ SourceFiles
 #include "fvCFD.H"
 #include "singlePhaseTransportModel.H"
 #include "turbulentTransportModel.H"
-// #include "IOmanip.H"
+#include "ITHACAcontext.H"
+#include "ithacaInterpolator.H"
+#include "LSPGUnsteadyBBTurb.H"
 #include "ReducedLSPG.H"
 #include "Modes.H"
-#include "UnsteadyBBTurb.H"
 #include "BoundaryConditions.H"
+#include "RBFTurbulence.H"
 #include <Eigen/Dense>
 #include <memory>
 
@@ -87,7 +89,8 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     ReducedLSPGUnsteadyBBTurb() = delete;
     
     //- Constructor that takes, other than the FOM, argc and argv
-    ReducedLSPGUnsteadyBBTurb(UnsteadyBBTurb& problem, int argc, char* argv[]);
+    ReducedLSPGUnsteadyBBTurb(std::shared_ptr<ITHACAcontext> context,
+      const LSPGUnsteadyBBTurb& problem);
 
     //- Default destructor
     virtual ~ReducedLSPGUnsteadyBBTurb() = default;
@@ -99,6 +102,10 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     void solveOnline(const Eigen::MatrixXd& vel_now_BC, const Eigen::MatrixXd& temp_now_BC, int startSnap);
 
   private:
+    /// @brief Captures the relevant FOM data and stores it internally
+    /// ideally the FOM could then be destroyed and the ROM would still work. This is still wip
+    void captureFOMData(const LSPGUnsteadyBBTurb& problem);
+
     //- Assembles the residual vector
     Eigen::VectorXd assembleResidual(const Eigen::VectorXd& state, const Time& runTime);
 
@@ -131,9 +138,6 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     //- Inverse Distance Weighting interpolation of the input parameters to get the current state vector
     Eigen::VectorXd interpolateIDW(const Eigen::VectorXd& input_parameters);
 
-    ///- Method to copy the average nut fields from the FOM mesh to the ROM mesh
-    void copyNutAvgFieldsToROMMesh();
-
     ///- Reads eigenvalues and fills the eigenvalues_ vector
     void readEigenvalues();
 
@@ -142,6 +146,42 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     void initializePODCoeffsFromFields();
 
   private:
+    //- Parameters for the offline solution
+    Eigen::MatrixXd mu_;
+
+    //- Inlet Patch indices for velocity lifting
+    Eigen::MatrixXi inletIndex_;
+
+    //- Inlet Patch indices for temperature lifting
+    Eigen::MatrixXi inletIndexT_;
+
+    //- RBF for the interpolation
+    std::vector<std::shared_ptr<ithacaInterpolator>> rbfSplines_;
+
+    //- Velocity modes
+    volVectorModes Umodes_;
+
+    //- Velocity lifting function
+    PtrList<volVectorField> liftFields_;
+
+    //- Pressure modes
+    volScalarModes Prghmodes_;
+    
+    //- Temperature modes
+    volScalarModes Tmodes_;
+
+    //- Temperature lifting function
+    PtrList<volScalarField> liftFieldsT_;
+
+    //- Eddy viscosity modes
+    volScalarModes Nutmodes_;
+
+    //- Fluctuating eddy viscosity fields
+    PtrList<volScalarField> nutFields_;
+
+    //- Averaged eddy viscosity fields
+    PtrList<volScalarField> avgNutFields_;
+
     ///- Settings for the ROM
     ROMSettings romSettings_;
 
@@ -162,9 +202,6 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
 
     ///- Current nut coefficients vector (averaged part)
     Eigen::VectorXd currentNutAvgCoeffs_;
-
-    ///- Pointer to the FOM problem object
-    UnsteadyBBTurb* problem_;
 
     // *** Fields - Used in the creation of the residual for the LSPG. *** //
     ///- Pointer to the kinematic viscosity field
@@ -219,7 +256,8 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     autoPtr<singlePhaseTransportModel> _laminarTransport;
 
     ///- Turbulent transport pointer
-    autoPtr<incompressible::turbulenceModel> turbulence; // For conformity, can we rename this to _...?
+    // autoPtr<incompressible::turbulenceModel> turbulence; // For conformity, can we rename this to _...?
+    autoPtr<RBFTurbulence> turbulence;
 
     ///- Pointer to kinematic density
     autoPtr<volScalarField> _rhok;
@@ -235,9 +273,6 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     
     ///- Reference value for pressure
     scalar pRefValue;
-
-    ///- Pointer list of average nut fields 
-    PtrList<volScalarField> avgNutFields_;
 
     ///- Modes eigenvalues, to be used for normalization of the modes coefficients
     Eigen::VectorXd eigenvalues_;
