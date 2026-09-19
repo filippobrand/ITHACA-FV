@@ -192,6 +192,16 @@ Eigen::VectorXd Foam2Eigen::field2Eigen(const
     return out;
 }
 
+template <> // Template for surfaceScalarField
+Eigen::VectorXd Foam2Eigen::field2Eigen(const
+                                        DimensionedField<scalar, Foam::surfaceMesh>& field)
+{
+    Eigen::VectorXd out = Eigen::Map<Eigen::MatrixXd>(const_cast<double*>(&
+                          (field[0])),
+                          field.size(), 1);
+    return out;
+}
+
 template <template <class> class PatchField, class GeoMesh>
 List<Eigen::VectorXd> Foam2Eigen::field2EigenBC(
     GeometricField<tensor, PatchField, GeoMesh>& field)

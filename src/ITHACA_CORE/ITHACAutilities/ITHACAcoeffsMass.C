@@ -313,16 +313,24 @@ template<class Type, template<class> class PatchField, class GeoMesh>
 Eigen::VectorXd getMassMatrixFV(
     GeometricField<Type, PatchField, GeoMesh>& snapshot)
 {
-    constexpr bool check_vol = std::is_same<volMesh, GeoMesh>::value
-                               || std::is_same<surfaceMesh, GeoMesh>::value;
+    constexpr bool check_vol = std::is_same<volMesh, GeoMesh>::value;
+                              //  || std::is_same<surfaceMesh, GeoMesh>::value;
 
-    if constexpr(check_vol)
+    if constexpr(std::is_same<volMesh, GeoMesh>::value)
     {
         Eigen::MatrixXd snapEigen = Foam2Eigen::field2Eigen(snapshot);
         label dim = std::nearbyint(snapEigen.rows() / (snapshot.mesh().V()).size());
         Eigen::VectorXd volumes = Foam2Eigen::field2Eigen(snapshot.mesh().V());
         Eigen::VectorXd vol3 = EigenFunctions::repeatElements(volumes, dim);
         return vol3;
+    }
+    else if constexpr(std::is_same<surfaceMesh, GeoMesh>::value)
+    {
+        Eigen::MatrixXd snapEigen = Foam2Eigen::field2Eigen(snapshot);
+        label dim = std::nearbyint(snapEigen.rows() / (snapshot.mesh().magSf()).size());
+        Eigen::VectorXd areas = Foam2Eigen::field2Eigen(snapshot.mesh().magSf());
+        Eigen::VectorXd area3 = EigenFunctions::repeatElements(areas, dim);
+        return area3;
     }
     else if constexpr(std::is_same<pointMesh, GeoMesh>::value)
     {
@@ -341,9 +349,10 @@ template Eigen::VectorXd getMassMatrixFV(
     GeometricField<vector, fvPatchField, volMesh>& snapshot);
 template Eigen::VectorXd getMassMatrixFV(
     GeometricField<vector, pointPatchField, pointMesh>& snapshot);
-
 template Eigen::VectorXd getMassMatrixFV(
     GeometricField<tensor, fvPatchField, volMesh>& snapshot);
+template Eigen::VectorXd getMassMatrixFV(
+    GeometricField<scalar, fvsPatchField, surfaceMesh>& snapshot);
 
 template<class Type, template<class> class PatchField, class GeoMesh>
 Eigen::VectorXd getCoeffs(GeometricField<Type, PatchField, GeoMesh>&
