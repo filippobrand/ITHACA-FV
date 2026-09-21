@@ -135,6 +135,12 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         ///
         void setupLift();
 
+        //--------------------------------------------------------------------------
+        /// @brief      Switch off the AUTO_WRITE options so that successive ROM runs
+        /// do not write U, and other fields. (They write U_r, ...)
+        ///
+        void switchOffAutoWrite();
+
         
       private:
         ///- Reads the dictionary ITHACAdict and sets the relevant parameters
@@ -153,6 +159,24 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         /// @brief      Solves the lift problem for the temperature
         ///
         void liftSolveT();
+
+        //--------------------------------------------------------------------------
+        /// @brief      Homogenizes the snapshots for flux
+        ///
+        void homogenizePhi(
+          const PtrList<surfaceScalarField>& phifields,
+          const PtrList<surfaceScalarField>& phifieldsLift,
+          PtrList<surfaceScalarField>& phifieldsHomogenized);
+
+        //--------------------------------------------------------------------------
+        /// @brief      Computes the phi modes with the same linear combination of the velocity modes
+        ///
+        void getPhiModes(
+          volVectorModes& Umodes,
+          PtrList<volVectorField>& Uomfield,
+          surfaceScalarModes& Phimodes,
+          PtrList<surfaceScalarField>& Phiomfield
+        );
 
       public:
         //- Number of velocity modes
@@ -199,6 +223,12 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         
         ///- Pointer to the turbulent viscosity field
         autoPtr<volScalarField> _nut;
+
+        ///- Pointer to the turbulent kinetic energy field
+        autoPtr<volScalarField> _k;
+
+        ///- Pointer to the turbulent omega field
+        autoPtr<volScalarField> _omega;
         
         ///- Pointer to the kinematic viscosity field
         autoPtr<dimensionedScalar> _nu;
@@ -268,8 +298,17 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         //- Homogenized velocity snapshots
         PtrList<volVectorField> Uomfield;
 
+        //- Flux field
+        PtrList<surfaceScalarField> Phifield;
+
+        //- Flux homogenized field
+        PtrList<surfaceScalarField> Phiomfield;
+
         //- Lift fields for velocity
         PtrList<volVectorField> liftfield;
+
+        //- Lift homogenized fields for phi
+        PtrList<surfaceScalarField> liftfieldphi;
 
         //- Pressure snapshots
         PtrList<volScalarField> Prghfield;
@@ -286,8 +325,17 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         /// Snapshots for eddy viscosity
         PtrList<volScalarField> Nutfield;
 
+        /// Snapshots for turbulent kinetic energy
+        PtrList<volScalarField> kfield;
+
+        /// Snapshots for omega
+        PtrList<volScalarField> omegafield;
+
         //- Velocity POD modes
         volVectorModes Umodes;
+
+        //- Flux POD modes
+        surfaceScalarModes Phimodes;
 
         //- Pressure POD modes
         volScalarModes Prghmodes;
@@ -297,6 +345,12 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
 
         //- Eddy viscosity POD modes
         volScalarModes nutmodes;
+
+        //- Kinetic energy POD modes
+        volScalarModes kmodes;
+
+        //- Omega POD modes
+        volScalarModes omegamodes;
 
         // Snapshot average of velocity
         autoPtr<volVectorField> UavgPtr;

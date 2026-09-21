@@ -481,7 +481,7 @@ void ReducedUnsteadyBBTurb::reconstructSolution(TimeManager& time_manager,
 
     uRecFields = problem->L_U_SUPmodes.reconstruct(uRec, CoeffU, "uRec");
     TRecFields = problem->L_Tmodes.reconstruct(TRec, CoeffT, "TRec");
-    prghRecFields = problem->P_rghmodes.reconstruct(prghRec, CoeffPrgh, "prghRec");
+    prghRecFields = problem->P_rghmodes.reconstruct(prghRec, CoeffPrgh, "prghRec", false);
     nutFluctRecFields = problem->nutmodes.reconstruct(
         nutFluctRec, CoeffNut, "nutFluctRec");
 

@@ -79,6 +79,19 @@ struct GaussNewtonSettings
     float tol = 1e-6;
 };
 
+/*
+Child class, specific residual instance for the unsteady, turbulent, buoyant Navier-stokes equations
+*/
+// class ResidualLSPGUnsteadyBBTurb : public ResidualLSPG
+// {
+//   public:
+//     ResidualLSPGUnsteadyBBTurb() = delete;
+//     explicit ResidualLSPGUnsteadyBBTurb(const int size) : ResidualLSPG(size) {}
+
+//   private:
+    
+// }
+
 /// Class where a reduced problem for the <b> unsteady, turbulent, buoyant Navier-stokes </b> problem is implemented.
 /** In this class are implemented the methods to solve a reduced version of the unsteady, turbulent, buoyant Navier-stokes equations. This class must be used together with the FOM class */
 class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
@@ -99,7 +112,7 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     void setTime(const scalar startTime, const scalar endTime, const scalar deltaT);
 
     //- Given the boundary conditions and a timeManager, solves the reduced problem
-    void solveOnline(const Eigen::MatrixXd& vel_now_BC, const Eigen::MatrixXd& temp_now_BC, int startSnap);
+    void solveOnline(const Eigen::MatrixXd& vel_now_BC, const Eigen::MatrixXd& temp_now_BC);
 
   private:
     /// @brief Captures the relevant FOM data and stores it internally
@@ -107,7 +120,7 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     void captureFOMData(const LSPGUnsteadyBBTurb& problem);
 
     //- Assembles the residual vector
-    Eigen::VectorXd assembleResidual(const Eigen::VectorXd& state, const Time& runTime);
+    Eigen::VectorXd assembleResidual(const Eigen::VectorXd& state, const Time& runTime, bool correctBCs = true);
 
     //- Assembles the residual vector starting from the equations
     void stackResiduals(
@@ -121,7 +134,9 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
       const Eigen::VectorXd& state,
       volVectorField& velocity_field,
       volScalarField& pressure_field,
-      volScalarField& temperature_field);
+      volScalarField& temperature_field,
+      surfaceScalarField& phi_field,
+      bool correctBCs = true);
 
     //- Assemble the Jacobian matrix
     Eigen::MatrixXd assembleJacobian(
@@ -161,8 +176,14 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     //- Velocity modes
     volVectorModes Umodes_;
 
+    //- Phimodes
+    surfaceScalarModes Phimodes_;
+
     //- Velocity lifting function
     PtrList<volVectorField> liftFields_;
+
+    //- Phi lifting function
+    PtrList<surfaceScalarField> liftFieldsPhi_;
 
     //- Pressure modes
     volScalarModes Prghmodes_;
@@ -175,6 +196,12 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
 
     //- Eddy viscosity modes
     volScalarModes Nutmodes_;
+
+    //- Turbulent kinetic energy modes
+    volScalarModes kModes_;
+
+    //- Turbulent omega modes
+    volScalarModes omegaModes_;
 
     //- Fluctuating eddy viscosity fields
     PtrList<volScalarField> nutFields_;
@@ -277,6 +304,8 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     ///- Modes eigenvalues, to be used for normalization of the modes coefficients
     Eigen::VectorXd eigenvalues_;
 
+    ///- Initial residual vector, to be used for normalization of the residuals
+    Eigen::VectorXd initialResidual_;
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

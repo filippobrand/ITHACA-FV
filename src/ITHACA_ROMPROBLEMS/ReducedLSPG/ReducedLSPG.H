@@ -41,7 +41,41 @@ SourceFiles
 #include "pimpleControl.H"
 #include "fvOptions.H"
 #include "ITHACAcontext.H"
+#include <Eigen/Dense>
 #include <memory>
+
+/*
+Class implementation for a residual object, used to fill, print, manipulate the residual in the FOM
+*/
+class ResidualLSPG
+{
+   public:
+     //- No default constructor
+      ResidualLSPG() = delete;
+
+      //- Constructor that takes the size of the residual vector
+      explicit ResidualLSPG(const int size)
+      : current_residual_(Eigen::VectorXd::Zero(size))
+      {}
+
+      virtual ~ResidualLSPG() = default;
+
+      //- Set the residual to zero
+      void setZero()
+      {
+          current_residual_.setZero();
+      }
+
+      //- Norm the residual
+      double norm() const
+      {
+          return current_residual_.norm();
+      }
+
+   private:
+      //- Current residual vector, stored as an Eigen vector
+      Eigen::VectorXd current_residual_;
+};
 
 /*
 Base class for the Reduced Least-Squares Petrov-Galerkin (LSPG) problem
@@ -63,6 +97,8 @@ class ReducedLSPG
   protected:
     //- Shared pointer to the ITHACAcontext object, which contains the mesh, time, fvOptions, and other necessary objects for the FOM problem.
     std::shared_ptr<ITHACAcontext> context_;
+
+    
 
     argList& args() const
     {

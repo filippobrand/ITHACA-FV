@@ -54,6 +54,24 @@ LSPGUnsteadyBBTurb::LSPGUnsteadyBBTurb(std::shared_ptr<ITHACAcontext> context)
   offline = ITHACAutilities::check_off();
   podex = ITHACAutilities::check_pod();
   readITHACAdict();
+  _k = autoPtr<volScalarField>(
+           new volScalarField(
+               IOobject(
+                   "k",
+                   runTime.timeName(),
+                   mesh,
+                   IOobject::MUST_READ,
+                   IOobject::AUTO_WRITE),
+               mesh));
+  _omega = autoPtr<volScalarField>(
+               new volScalarField(
+                   IOobject(
+                       "omega",
+                       runTime.timeName(),
+                       mesh,
+                       IOobject::MUST_READ,
+                       IOobject::AUTO_WRITE),
+                   mesh));
 }
 
 void LSPGUnsteadyBBTurb::readITHACAdict()
@@ -115,6 +133,8 @@ void LSPGUnsteadyBBTurb::truthSolve(const List<scalar> mu_now, label nSample)
     volScalarField& p_rgh = _p_rgh();
     volScalarField& T = _T();
     volScalarField& nut = _nut();
+    volScalarField& k = _k();
+    volScalarField& omega = _omega();
     volScalarField& alphat = _alphat();
     volScalarField& rhok = _rhok();
     volScalarField& gh = _gh();
@@ -171,19 +191,27 @@ void LSPGUnsteadyBBTurb::truthSolve(const List<scalar> mu_now, label nSample)
         if (checkWrite(runTime))
         {
             nut = turbulence->nut();
+            k = turbulence->k();
+            omega = turbulence->omega();
             ITHACAstream::exportSolution(U, name(counter), "./ITHACAoutput/Offline/");
+            ITHACAstream::exportSolution(phi, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(p, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(p_rgh, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(T, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(nut, name(counter), "./ITHACAoutput/Offline/");
+            ITHACAstream::exportSolution(k, name(counter), "./ITHACAoutput/Offline/");
+            ITHACAstream::exportSolution(omega, name(counter), "./ITHACAoutput/Offline/");
             std::ofstream of("./ITHACAoutput/Offline/" + name(counter) + "/" +
                              runTime.timeName());
             timeSnapshots[nSample](stepCounter) = runTime.value();
             stepCounter++;
             Ufield.append(U.clone());
+            Phifield.append(phi.clone());
             Prghfield.append(p_rgh.clone());
             Tfield.append(T.clone());
             Nutfield.append(nut.clone());
+            kfield.append(k.clone());
+            omegafield.append(omega.clone());
             nextWrite += writeEvery;
             writeMu(mu_now);
             counter++;
@@ -208,6 +236,8 @@ void LSPGUnsteadyBBTurb::truthSolve(fileName folder)
     volScalarField& p_rgh = _p_rgh();
     volScalarField& T = _T();
     volScalarField& nut = _nut();
+    volScalarField& k = _k();
+    volScalarField& omega = _omega();
     volScalarField& alphat = _alphat();
     volScalarField& rhok = _rhok();
     volScalarField& gh = _gh();
@@ -257,16 +287,22 @@ void LSPGUnsteadyBBTurb::truthSolve(fileName folder)
         if (checkWrite(runTime))
         {
             nut = turbulence->nut();
+            k = turbulence->k();
+            omega = turbulence->omega();
             ITHACAstream::exportSolution(U, name(counter), folder);
             ITHACAstream::exportSolution(p, name(counter), folder);
             ITHACAstream::exportSolution(p_rgh, name(counter), folder);
             ITHACAstream::exportSolution(T, name(counter), folder);
             ITHACAstream::exportSolution(nut, name(counter), folder);
+            ITHACAstream::exportSolution(k, name(counter), folder);
+            ITHACAstream::exportSolution(omega, name(counter), folder);
             std::ofstream of(folder + "/" + name(counter) + "/" + runTime.timeName());
             Ufield.append(U.clone());
             Prghfield.append(p_rgh.clone());
             Tfield.append(T.clone());
             Nutfield.append(nut.clone());
+            kfield.append(k.clone());
+            omegafield.append(omega.clone());
             nextWrite += writeEvery;
             counter++;
         }
@@ -556,6 +592,9 @@ void LSPGUnsteadyBBTurb::resizeModes()
     Tmodes.resize(NTmodes);
     nutmodes.resize(NNutModes);
     Prghmodes.resize(NPrghmodes);
+    Phimodes.resize(NUmodes);
+    omegamodes.resize(NNutModes);
+    kmodes.resize(NNutModes);
 }
 
 void LSPGUnsteadyBBTurb::computePOD(label nModesU, label nModesPrgh, label nModesT, label nModesNut)
@@ -580,17 +619,20 @@ void LSPGUnsteadyBBTurb::computePOD(label nModesU, label nModesPrgh, label nMode
   if (bcMethod == "lift")
   {
     ITHACAPOD::getModes(Uomfield, Umodes, _U().name(), podex, 0, 0, nModesU, true);
-    ITHACAPOD::getModes(Prghfield, Prghmodes, _p_rgh().name(), podex, 0, 0, nModesPrgh, false);
     ITHACAPOD::getModes(Tomfield, Tmodes, _T().name(), podex, 0, 0, nModesT, true);
-    ITHACAPOD::getModes(fluctNutfield, nutmodes, fluctNutfield[0].name(), podex, 0, 0, nModesNut, true);
+    // ITHACAPOD::getModes(Phiomfield, Phimodes, _phi().name(), podex, 0, 0, nModesU, true);
   }
   else
   {
     ITHACAPOD::getModes(Ufield, Umodes, _U().name(), podex, 0, 0, nModesU, true);
-    ITHACAPOD::getModes(Prghfield, Prghmodes, _p_rgh().name(), podex, 0, 0, nModesPrgh, false);
     ITHACAPOD::getModes(Tfield, Tmodes, _T().name(), podex, 0, 0, nModesT, true);
-    ITHACAPOD::getModes(fluctNutfield, nutmodes, fluctNutfield[0].name(), podex, 0, 0, nModesNut, true);
+    // ITHACAPOD::getModes(Phifield, Phimodes, _phi().name(), podex, 0, 0, nModesU, true);
   }
+  ITHACAPOD::getModes(omegafield, omegamodes, "omega", podex, 0, 0, nModesNut, false);
+  ITHACAPOD::getModes(kfield, kmodes, "k", podex, 0, 0, nModesNut, false);
+  ITHACAPOD::getModes(Prghfield, Prghmodes, _p_rgh().name(), podex, 0, 0, nModesPrgh, false);
+  ITHACAPOD::getModes(fluctNutfield, nutmodes, fluctNutfield[0].name(), podex, 0, 0, nModesNut, true);
+  getPhiModes(Umodes, Uomfield, Phimodes, Phiomfield);
 }
 
 void LSPGUnsteadyBBTurb::setupLift()
@@ -599,10 +641,79 @@ void LSPGUnsteadyBBTurb::setupLift()
   liftSolveT();
   computeLift(Ufield, liftfield, Uomfield);
   computeLiftT(Tfield, liftfieldT, Tomfield);
+  homogenizePhi(Phifield, liftfieldphi, Phiomfield);
+
   ITHACAstream::exportFields(liftfield, "./ITHACAoutput/Lift", "ULift");
   ITHACAstream::exportFields(liftfieldT, "./ITHACAoutput/Lift", "TLift");
-  // ITHACAstream::exportFields(Uomfield, "./ITHACAoutput/Lift", "U_om");
-  // ITHACAstream::exportFields(Tomfield, "./ITHACAoutput/Lift", "T_om");
+
+  // ITHACAstream::exportFields(Phiomfield, "./ITHACAoutput/HomogeneousSnapshots", "Phi_om");
+  // ITHACAstream::exportFields(Uomfield, "./ITHACAoutput/HomogeneousSnapshots", "U_om");
+  // ITHACAstream::exportFields(Tomfield, "./ITHACAoutput/HomogeneousSnapshots", "T_om");
+}
+
+void LSPGUnsteadyBBTurb::homogenizePhi(
+  const PtrList<surfaceScalarField>& phifields,
+  const PtrList<surfaceScalarField>& phifieldsLift,
+  PtrList<surfaceScalarField>& phifieldsHomogenized)
+{
+  scalar phi_bc = 0.0;
+  scalar phi_bc_lift = 0.0;
+  scalar patch_area = 0.0;
+
+  const auto surface_areas = phifields[0].mesh().magSf().boundaryField();
+
+  for (label i = 0; i < inletIndex.rows(); i++)
+  {
+    label patchID = inletIndex(i, 0);
+    patch_area = gSum(surface_areas[patchID]);
+    phi_bc_lift = gSum(phifieldsLift[i].boundaryField()[patchID]) / patch_area;
+    Info << "### Homogenization of phi for patch " << patchID << " with area " << patch_area << " and phi_bc_lift " << phi_bc_lift << endl;
+  
+    for (label j = 0; j < phifields.size(); j++)
+    {
+      if (i == 0)
+      {
+        phi_bc = gSum(phifields[j].boundaryField()[patchID]) / patch_area;
+        surfaceScalarField tempPhi("phi", phifields[j] - phifieldsLift[i] * phi_bc / phi_bc_lift);
+        phifieldsHomogenized.append(tempPhi.clone());
+      }
+      else
+      {
+        phi_bc = gSum(phifields[j].boundaryField()[patchID]) / patch_area;
+        surfaceScalarField tempPhi("phi", phifieldsHomogenized[j] - phifieldsLift[i] * phi_bc / phi_bc_lift);
+        phifieldsHomogenized.set(j, tempPhi.clone());
+      }
+    }
+  }
+}
+
+void LSPGUnsteadyBBTurb::getPhiModes(
+  volVectorModes& Umodes,
+  PtrList<volVectorField>& Uomfield,
+  surfaceScalarModes& Phimodes,
+  PtrList<surfaceScalarField>& Phiomfield
+)
+{
+  Info << "### MESSAGE - Computing phi modes from velocity modes." << endl;
+  Phimodes.setSize(Umodes.size());
+  // The phi modes are computed directly from the velocity modes, to avoid differences due to inner products
+  // Φ_i = Σₙ W^U_ni · phi_hom^n
+  Eigen::MatrixXd WU = ITHACAutilities::getCoeffs(Uomfield, Umodes).transpose();
+  for (label i = 0; i < WU.cols(); i++)
+  {
+    WU.col(i) /= WU.col(i).squaredNorm();
+  }
+  
+  for (label i = 0; i < Umodes.size(); i++)
+  {
+    surfaceScalarField phiMode("PhiMode", 0*Phiomfield[0]);
+    for (label n = 0; n < Uomfield.size(); n++)
+    {
+      phiMode += WU(n, i) * Phiomfield[n];
+    }
+    Phimodes.set(i, phiMode.clone());
+  }
+  ITHACAstream::exportFields(Phimodes, "./ITHACAoutput/POD", "PhiMode");
 }
 
 void LSPGUnsteadyBBTurb::liftSolve()
@@ -702,6 +813,7 @@ void LSPGUnsteadyBBTurb::liftSolve()
              << endl;
         Ulift.write();
         liftfield.append(Ulift.clone());
+        liftfieldphi.append(phi.clone());
     }
 }
 
@@ -765,4 +877,15 @@ void LSPGUnsteadyBBTurb::liftSolveT()
         Tlift.write();
         liftfieldT.append(Tlift.clone());
     }
+}
+
+
+void LSPGUnsteadyBBTurb::switchOffAutoWrite()
+{
+  Time& runTime = this->runTime();
+  _U->writeOpt(IOobject::NO_WRITE);
+  _T->writeOpt(IOobject::NO_WRITE);
+  _p_rgh->writeOpt(IOobject::NO_WRITE);
+  _nut->writeOpt(IOobject::NO_WRITE);
+  _alphat->writeOpt(IOobject::NO_WRITE);
 }

@@ -23,9 +23,7 @@ ReducedLSPGUnsteadyBBTurb::ReducedLSPGUnsteadyBBTurb(
     numberOfModes_.pressure + 
     numberOfModes_.temperature
   );
-
   currentNutCoeffs_ = Eigen::VectorXd::Zero(numberOfModes_.nut);
-
   readEigenvalues();
 }
 
@@ -46,7 +44,6 @@ void ReducedLSPGUnsteadyBBTurb::captureFOMData(
   {
       problem.ITHACAdict->lookupOrDefault<word>("bcMethod", "lift")
   };
-  // Create the number of modes object
   numberOfModes_ = NumberOfModes
   {
     problem.ITHACAdict->lookupOrDefault<label>("NmodesUproj", 0),
@@ -60,12 +57,14 @@ void ReducedLSPGUnsteadyBBTurb::captureFOMData(
 
   // I don't think here we are actually safe from deleting the FOM, check later
   Umodes_ = problem.Umodes;
+  Phimodes_ = problem.Phimodes;
   Prghmodes_ = problem.Prghmodes;
   Tmodes_ = problem.Tmodes;
   Nutmodes_ = problem.nutmodes;
 
   liftFields_ = problem.liftfield;
   liftFieldsT_ = problem.liftfieldT;
+  liftFieldsPhi_ = problem.liftfieldphi;
 
   nutFields_ = problem.fluctNutfield;
   avgNutFields_ = problem.avgNutfield;
@@ -88,8 +87,7 @@ void ReducedLSPGUnsteadyBBTurb::setTime(
 
 void ReducedLSPGUnsteadyBBTurb::solveOnline(
   const Eigen::MatrixXd& vel_now_BC,
-  const Eigen::MatrixXd& temp_now_BC,
-  int startSnap)
+  const Eigen::MatrixXd& temp_now_BC)
 {
   volVectorField& U = _U();
   volScalarField& T = _T();
@@ -100,25 +98,20 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
   except for the initialization of the reduced coeff. It simply stores the BCs 
   values as a function of time  and can be interrogated to get the values at a given time */  
   boundaryConditions_ = BoundaryConditions{vel_now_BC, temp_now_BC, "linear"};
-  
-  initializePODCoeffsFromFields();
-  currentNutCoeffs_ = ITHACAutilities::getCoeffs(
-    nutFields_[startSnap], Nutmodes_
-  );
-  currentNutAvgCoeffs_ = interpolateIDW(
-    boundaryConditions_.getCurrentBCs().head(2)
-  );
-
   GaussNewtonSettings gaussnewton_settings = GaussNewtonSettings
   {
     5,
-    1e-4
+    5e-4
   }; 
   
   Time& runTime = this->runTime();
   fvMesh& mesh = this->mesh();
-  // Maybe here we need: #include "initContinuityErrs.H" --- Check later
+  // Maybe here we need: #include "initContinuityErrs.H" - Check later
   #include "readTimeControls.H"
+  
+  initializePODCoeffsFromFields(); // Here we cannot correct the BCs for pRgh
+  Eigen::VectorXd initial_residual = assembleResidual(currentState_, runTime, false); // Here we cannot correct the BCs for pRgh
+  double initial_residual_norm = initial_residual.norm();
   while (runTime.run())
   {
     runTime++;
@@ -140,7 +133,7 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
 
       // Backtracking line search
       double alpha = 1.0;
-      const int maxLineSearch = 5;
+      const int maxLineSearch = 4;
       bool accepted = false;
       for (int m = 0; m < maxLineSearch; m++)
       {
@@ -156,17 +149,20 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
       }
       if (!accepted)
       {
-          Info << "Line search failed to reduce residual at GN iter " << gnIter
+        currentState_ += alpha * dq;
+        Info << "Line search failed to reduce residual at GN iter " << gnIter
               << " — accepting smallest trial step anyway" << endl;
-          currentState_ += alpha * dq;   // last (smallest) alpha tried
       }
     }
-    Info << "Final residual norm: " << assembleResidual(currentState_, runTime).norm() << endl;
+    Info << " -Final residual norm: " << assembleResidual(currentState_, runTime).norm() << endl;
     runTime.write();
   }
 }
 
-Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::assembleResidual(const Eigen::VectorXd& state, const Time& runTime)
+Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::assembleResidual(
+  const Eigen::VectorXd& state,
+  const Time& runTime,
+  bool correctBCs)
 {
   fvMesh& mesh = this->mesh();
   fv::options& fvOptions = this->fvOptions();
@@ -189,30 +185,24 @@ Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::assembleResidual(const Eigen::VectorX
   dimensionedScalar& Pr = _Pr();
   dimensionedScalar& Prt = _Prt();
 
-  reconstructReducedFields(state, U, p_rgh, T);
-  phi = fvc::flux(U);
+  reconstructReducedFields(state, U, p_rgh, T, phi, correctBCs);
+  // Info << "max|div(phi)| = " << max(mag(fvc::div(phi))).value() << endl;
+  
   interpolateNutCoeffs(nut, Nutmodes_, state);
   volScalarField nuEff("nuEffROM", _nu() + nut);
 
-  rhok = 1.0 - beta * (T - TRef);
-
-  // #include "UEqn.H"
-  // #include "TEqn.H"
-  // #include "pEqn.H"
+  // rhok = 1.0 - beta * (T - TRef);
   MRF.correctBoundaryVelocity(U);
-  tmp<volTensorField> devGradU(dev2(Foam::T(fvc::grad(U))));
   fvVectorMatrix UEqn
   (
       fvm::ddt(U) + fvm::div(phi, U)
       + MRF.DDt(U)
       // + turbulence->divDevReff(U) // Since we are using a custom turbulence, we have to express this fully
-      + fvc::div(nuEff * devGradU)
+      - fvc::div(nuEff*dev2(Foam::T(fvc::grad(U)))) - fvm::laplacian(nuEff, U)
       ==
       fvOptions(U)
   );
   fvOptions.constrain(UEqn);
-
-  // alphat = turbulence->nut() / Prt;
   alphat = nut / Prt;
   alphat.correctBoundaryConditions();
   volScalarField alphaEff("alphaEff", _nu() / Pr + alphat);
@@ -244,8 +234,13 @@ Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::assembleResidual(const Eigen::VectorX
   (
       fvm::laplacian(rAUf, p_rgh) == fvc::div(phiHbyA)
   );
-  p_rghEqn.setReference(pRefCell, getRefCellValue(p_rgh, pRefCell));
-  p = p_rgh + rhok * gh;
+  if (p_rgh.needReference())
+  {
+    Info << "p_rghEqn: reference cell required" << endl;
+    const scalar pRefRgh = pRefValue -rhok[pRefCell] * gh[pRefCell];
+    p_rghEqn.setReference(pRefCell, pRefRgh);
+  }
+  // p = p_rgh + rhok * gh; // This is not needed
   
   volVectorField Usrc = -fvc::reconstruct
   (
@@ -269,51 +264,65 @@ void ReducedLSPGUnsteadyBBTurb::stackResiduals(
   const fvScalarMatrix& pEqn,
   Eigen::VectorXd& residual_)
 {
-  Field<vector> Ru = UEqn.residual();
-  Field<scalar> RT = TEqn.residual();
-  Field<scalar> Rp = pEqn.residual();
+  const Field<vector> Ru = UEqn.residual();
+  const Field<scalar> RT = TEqn.residual();
+  const Field<scalar> Rp = pEqn.residual();
+
+  // const scalarField sqrtV(Foam::sqrt(mesh().V().field()));
+  // Ru /= sqrtV;
+  // RT /= sqrtV;
+  // Rp /= sqrtV;
 
   Eigen::VectorXd Ru_eigen = Foam2Eigen::field2Eigen(Ru);
   Eigen::VectorXd RT_eigen = Foam2Eigen::field2Eigen(RT);
   Eigen::VectorXd Rp_eigen = Foam2Eigen::field2Eigen(Rp);
-  
-  residual_ << Ru_eigen, Rp_eigen, RT_eigen;
+
+  residual_ << 100*Ru_eigen, Rp_eigen, RT_eigen;
 }
 
 void ReducedLSPGUnsteadyBBTurb::reconstructReducedFields(
   const Eigen::VectorXd& state,
   volVectorField& velocity_field, 
   volScalarField& pressure_field,
-  volScalarField& temperature_field)
+  volScalarField& temperature_field,
+  surfaceScalarField& phi_field,
+  bool correctBCs)
 {
   velocity_field = Umodes_.reconstruct(velocity_field, state.head(numberOfModes_.velocity), "U_r");
-  pressure_field = Prghmodes_.reconstruct(pressure_field, state.segment(numberOfModes_.velocity, numberOfModes_.pressure), "p_rgh_r");
+  phi_field = Phimodes_.reconstruct(phi_field, state.head(numberOfModes_.velocity), "phi_r");
   temperature_field = Tmodes_.reconstruct(temperature_field, state.tail(numberOfModes_.temperature), "T_r");
 
-  // If using lift method for BCs, we need to add the lift fields to the reconstructed fields
   if (romSettings_.bcMethod == "lift")
   {
-    for (int i = 0; i < liftFields_.size(); i++)
+    const Eigen::VectorXd& bcs = boundaryConditions_.getCurrentBCs();
+    for (label i = 0; i < inletIndex_.rows(); ++i)
     {
-      velocity_field += liftFields_[i] * boundaryConditions_.getCurrentBCs()(i);
+      const label patchID = inletIndex_(i, 0);
+      const label cmpt = inletIndex_(i, 1);
+      vector velBC = {0.0, 0.0, 0.0};
+      velBC[cmpt] = bcs(i);
+      ITHACAutilities::assignBC(velocity_field, patchID, velBC);
+      velocity_field += liftFields_[i] * bcs(i);
+      phi_field += liftFieldsPhi_[i] * bcs(i);
     }
-    for (int i = 0; i < liftFieldsT_.size(); i++)
+    for (label i = 0; i < inletIndexT_.rows(); ++i)
     {
+      label patchID = inletIndexT_(i, 0);
+      ITHACAutilities::assignBC(temperature_field, patchID, boundaryConditions_.getCurrentBCs()(i + liftFields_.size()));
       temperature_field += liftFieldsT_[i] * boundaryConditions_.getCurrentBCs()(i + liftFields_.size());
     }
   }
-  for (label i = 0; i < inletIndex_.rows(); ++i)
+  if (correctBCs) // On the first iteration, calling correctBoundaryConditions() raises the --> FOAM FATAL ERROR: updateCoeffs(const scalarField& snGradp) MUST be called before updateCoeffs() or evaluate() to set the boundary gradient.
   {
-    label patchID = inletIndex_(i, 0);
-    vector velBC = {boundaryConditions_.getCurrentBCs()(i), 0.0, 0.0};
-    ITHACAutilities::assignBC(velocity_field, patchID, velBC);
+    pressure_field = Prghmodes_.reconstruct(pressure_field, state.segment(numberOfModes_.velocity, numberOfModes_.pressure), "p_rgh_r", false);
+    pressure_field.correctBoundaryConditions();
   }
-  for (label i = 0; i < inletIndexT_.size(); ++i)
+  else
   {
-    label patchID = inletIndexT_(i, 0);
-    ITHACAutilities::assignBC(temperature_field, patchID, boundaryConditions_.getCurrentBCs()(i + liftFields_.size()));
+    pressure_field = Prghmodes_.reconstruct(pressure_field, state.segment(numberOfModes_.velocity, numberOfModes_.pressure), "p_rgh_r", false);
   }
 }
+
 
 Eigen::MatrixXd ReducedLSPGUnsteadyBBTurb::assembleJacobian(
   const Eigen::VectorXd& state,
@@ -322,27 +331,28 @@ Eigen::MatrixXd ReducedLSPGUnsteadyBBTurb::assembleJacobian(
 {
   int n = state.size();
   Eigen::MatrixXd J = Eigen::MatrixXd::Zero(residual.size(), n);
-  double eps = 1e-5;
-  double absoluteFloor_ = 1e-8; // To avoid division by zero in the finite difference approximation
+  double eps = 1e-6;
+  double absoluteFloor_ = 1e-8;
   
   for (int i = 0; i < n; i++)
   {
-    double h = std::sqrt(eps) * std::max({std::abs(state[i]), eigenvalues_(i), absoluteFloor_});
+    double h = std::sqrt(eps) * std::max({std::abs(state[i]), absoluteFloor_});
     Eigen::VectorXd state_plus = state;
     state_plus[i] += h;
     Eigen::VectorXd residual_plus = assembleResidual(state_plus, runTime);
-    J.col(i) = (residual_plus - residual) / h; // forward difference approximation - Maybe use central
+    J.col(i) = (residual_plus - residual) / h;
   }
   return J;
 }
 
+
 void ReducedLSPGUnsteadyBBTurb::interpolateNutCoeffs(volScalarField& nut_field, volScalarModes& nut_modes, const Eigen::VectorXd& state)
 {
-  // const label inputRBFSize = interpolationSettings_.dimInputRBF;
   const label inputRBFSize =
     interpolationSettings_.dimInputRBF > 0
   ? interpolationSettings_.dimInputRBF
   : numberOfModes_.velocity;
+
   Eigen::VectorXd velocity_coeffs = state.head(inputRBFSize);
   if (interpolationSettings_.derivative)
   {
@@ -360,7 +370,9 @@ void ReducedLSPGUnsteadyBBTurb::interpolateNutCoeffs(volScalarField& nut_field, 
   {
       nut_field += currentNutAvgCoeffs_(k) * avgNutFields_[k];
   }
+  nut_field.correctBoundaryConditions();
 }
+
 
 Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::interpolateIDW(const Eigen::VectorXd&
         input_parameters)
@@ -383,19 +395,14 @@ Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::interpolateIDW(const Eigen::VectorXd&
         weights.setConstant(1.0 / n_samples);
     }
 
-    // Try with a diagonal matrix with ones
-    const Eigen::MatrixXd nutAvgCoeffs = Eigen::MatrixXd::Identity(n_samples, n_samples);
-
-    Eigen::VectorXd interpolatedNutCoeffs = nutAvgCoeffs * weights;
-
-    for (int j = 0; j < interpolatedNutCoeffs.size(); j++)
+    for (int j = 0; j < weights.size(); j++)
     {
-        if (std::abs(interpolatedNutCoeffs(j)) < 1e-6)
+        if (std::abs(weights(j)) < 1e-6)
         {
-            interpolatedNutCoeffs(j) = 0.0;
+            weights(j) = 0.0;
         }
     }
-    return interpolatedNutCoeffs;
+    return weights;
 }
 
 
@@ -473,22 +480,20 @@ void ReducedLSPGUnsteadyBBTurb::readEigenvalues()
     Info << "### EIGS - Velocity eigenvalues: " << uEigenvalues_.transpose() << nl
          << "### EIGS - Pressure eigenvalues: " << pEigenvalues_.transpose() << nl
          << "### EIGS - Temperature eigenvalues: " << tEigenvalues_.transpose() << nl
-        << "### EIGS - FluctNut eigenvalues: " << nutEigenvalues_.transpose() << endl;
+         << "### EIGS - FluctNut eigenvalues: " << nutEigenvalues_.transpose() << endl;
         
     eigenvalues_ = Eigen::VectorXd::Zero(
         numberOfModes_.velocity + numberOfModes_.pressure + numberOfModes_.temperature);
     eigenvalues_ << uEigenvalues_, pEigenvalues_, tEigenvalues_;
 }
 
+
 void ReducedLSPGUnsteadyBBTurb::initializePODCoeffsFromFields()
 {
-    // This method reads the initial condition from disk and projects it onto the POD modes to get the initial coefficients for the reduced problem
     volVectorField& U = _U();
     volScalarField& p_rgh = _p_rgh();
     volScalarField& T = _T();
-
-    // If using lift method for BCs, we need to subtract the lift fields
-    // from the initial condition before projecting onto the POD modes
+    surfaceScalarField& phi = _phi();
     if (romSettings_.bcMethod == "lift")
     {
         for (int i = 0; i < liftFields_.size(); i++)
@@ -500,8 +505,10 @@ void ReducedLSPGUnsteadyBBTurb::initializePODCoeffsFromFields()
           T -= boundaryConditions_.getCurrentBCs()(i + liftFields_.size()) * liftFieldsT_[i];
         }
     }
-
     currentState_.head(numberOfModes_.velocity) = ITHACAutilities::getCoeffs(U, Umodes_);
     currentState_.segment(numberOfModes_.velocity, numberOfModes_.pressure) = ITHACAutilities::getCoeffs(p_rgh, Prghmodes_);
     currentState_.tail(numberOfModes_.temperature) = ITHACAutilities::getCoeffs(T, Tmodes_);
+    currentNutCoeffs_ = ITHACAutilities::getCoeffs(nutFields_[0], Nutmodes_);
+    currentNutAvgCoeffs_ = interpolateIDW(boundaryConditions_.getCurrentBCs().head(2));
+    reconstructReducedFields(currentState_, U, p_rgh, T, phi, false);
 }

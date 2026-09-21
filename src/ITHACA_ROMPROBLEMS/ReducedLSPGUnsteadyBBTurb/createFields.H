@@ -257,5 +257,3 @@ if (p_rgh.needReference())
 }
 
 mesh.setFluxRequired(p_rgh.name());
-
-Info << "Finished the creation of the fields for the LSPG ROM.\n" << endl;

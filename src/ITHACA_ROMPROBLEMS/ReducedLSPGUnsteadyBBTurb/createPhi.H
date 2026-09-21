@@ -41,7 +41,7 @@ _phi = autoPtr<surfaceScalarField>
            (
                IOobject
                (
-                   "phi",
+                   "phi_r",
                    runTime.timeName(),
                    mesh,
                    IOobject::READ_IF_PRESENT,
