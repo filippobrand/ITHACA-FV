@@ -183,7 +183,7 @@ class Modes : public PtrList<GeometricField<Type, PatchField, GeoMesh >>
         ///
         GeometricField<Type, PatchField, GeoMesh> reconstruct(
             GeometricField<Type, PatchField, GeoMesh>& inputField, Eigen::MatrixXd Coeff,
-            word Name);
+            word Name, bool correctBCs = true);
 
         //----------------------------------------------------------------------
         /// @brief      Function to reconstruct a list of fields starting from a list of
@@ -200,7 +200,7 @@ class Modes : public PtrList<GeometricField<Type, PatchField, GeoMesh >>
         PtrList<GeometricField<Type, PatchField, GeoMesh >> reconstruct(
             GeometricField<Type, PatchField, GeoMesh>& inputField,
             List < Eigen::MatrixXd> Coeff,
-            word Name);
+            word Name, bool correctBCs = true);
 
         //----------------------------------------------------------------------
         /// @brief      Function to project a list of fields into the modes manifold
