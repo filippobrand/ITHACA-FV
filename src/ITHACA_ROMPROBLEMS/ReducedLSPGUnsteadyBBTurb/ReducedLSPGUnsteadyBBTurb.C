@@ -7,8 +7,7 @@ ReducedLSPGUnsteadyBBTurb::ReducedLSPGUnsteadyBBTurb(
   std::shared_ptr<ITHACAcontext> context,
   const LSPGUnsteadyBBTurb& problem
 )
-: ReducedLSPG(std::move(context)),
-  _U(problem._U)
+: ReducedLSPG(std::move(context))
 {
   captureFOMData(problem);
 
@@ -30,7 +29,7 @@ ReducedLSPGUnsteadyBBTurb::ReducedLSPGUnsteadyBBTurb(
   residualWorkspace_ = BlockResidual
   {
     {
-      {"U_r", 3*nCells, 100.0},
+      {"U_r", 3*nCells, 1.0},
       {"p_rgh_r", nCells, 1.0},
       {"T_r", nCells, 1.0}
     }
@@ -103,25 +102,15 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
   const Eigen::MatrixXd& vel_now_BC,
   const Eigen::MatrixXd& temp_now_BC)
 {
-  volVectorField& U = _U();
-  volScalarField& T = _T();
-  volScalarField& p_rgh = _p_rgh();
-  volScalarField& nut = _nut();
-
-  boundaryConditions_ = BoundaryConditions{vel_now_BC, temp_now_BC, "linear"};
-  GaussNewtonSettings gn_settings = GaussNewtonSettings
-  {
-    5,
-    5e-4
-  }; 
-  
   Time& runTime = this->runTime();
-  fvMesh& mesh = this->mesh();
+  boundaryConditions_ = BoundaryConditions{vel_now_BC, temp_now_BC, "linear"};
+  GaussNewtonSettings gn_settings = GaussNewtonSettings{5, 1e-2, 5e-4};
   // Maybe here we need: #include "initContinuityErrs.H" - Check later
   #include "readTimeControls.H"
   
   initializePODCoeffsFromFields(); // Here we cannot correct the BCs for pRgh
   assembleResidual(currentState_, runTime, false); // Here we cannot correct the BCs for pRgh
+  residualWorkspace_.calibrateWeights(1e-8);
 
   auto start = std::chrono::high_resolution_clock::now();
   while (runTime.run())
@@ -129,6 +118,7 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
     runTime++;
     Info << "Time = " << runTime.time().value() << nl << endl;
     boundaryConditions_.updateTimeDependentBC(runTime.time().value());
+    double old_res_norm = GREAT;
     for (int gnIter = 0; gnIter < gn_settings.maxIter; gnIter++)
     {
       Eigen::VectorXd residual = assembleResidual(currentState_, runTime);
@@ -138,6 +128,15 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
           Info << "Gauss-Newton converged at iteration " << gnIter << endl;
           break;
       }
+      else if (std::abs(residualNorm - old_res_norm) < gn_settings.stagnationTol * old_res_norm)
+      {
+          Info << "Gauss-Newton stagnated at iteration " << gnIter << nl
+               << "  - Old residual norm " << old_res_norm << nl
+               << "  - New residual norm " << residualNorm << nl;
+          break;
+      }
+
+      old_res_norm = residualNorm;
 
       Eigen::MatrixXd jacobian = assembleJacobian(currentState_, residual, runTime);
       Eigen::VectorXd dq = jacobian.colPivHouseholderQr().solve(-residual);

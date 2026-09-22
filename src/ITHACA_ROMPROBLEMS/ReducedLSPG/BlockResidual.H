@@ -92,6 +92,9 @@ class BlockResidual
     void setBlockWeight(int block_index, double weight);
 
     int numBlocks() const;
+
+    /// @brief Calibrates the weights as 1/||block||
+    void calibrateWeights(double minRelative=1e-8);
     // Hyper-reduction will go here
 
   private:

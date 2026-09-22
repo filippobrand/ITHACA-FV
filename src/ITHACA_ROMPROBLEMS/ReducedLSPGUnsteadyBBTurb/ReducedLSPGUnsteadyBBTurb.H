@@ -75,8 +75,9 @@ struct NumberOfModes
 
 struct GaussNewtonSettings
 {
-    int maxIter = 10;
-    float tol = 1e-6;
+    int maxIter = 5;
+    float tol = 1e-2;
+    float stagnationTol = 1e-3;
 };
 
 

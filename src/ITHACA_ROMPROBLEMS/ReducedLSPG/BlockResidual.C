@@ -81,6 +81,41 @@ int BlockResidual::numBlocks() const
     return static_cast<int>(blocks_.size());
 }
 
+void BlockResidual::calibrateWeights(double minRelative)
+{
+  const std::size_t nBlocks = blocks_.size();
+  std::vector<double> norms(nBlocks);
+  double maxNorm = 0.0;
+
+  for (std::size_t i = 0; i < nBlocks; ++i)
+  {
+    const Block& block = blocks_[i];
+    double sq = 0.0;
+    if (block.size > 0)
+    {
+      const auto seg = raw_.segment(block.offset, block.size);
+      sq = (block.rowWeights.size() > 0)
+        ? (block.rowWeights.array() * seg.array()).square().sum()
+        : seg.squaredNorm();
+    }
+    norms[i] = std::sqrt(sq); // Watch out parallelization here
+    maxNorm = std::max(maxNorm, norms[i]);
+  }
+
+  if (!(maxNorm > 0.0) || !std::isfinite(maxNorm))
+  {
+    return;
+  }
+
+  const double floorValue = minRelative * maxNorm;
+  for (std::size_t i = 0; i < nBlocks; ++i)
+  {
+    blocks_[i].weight = 1.0 / std::max(norms[i], floorValue);
+  }
+
+  isScaled_ = false;
+}
+
 void BlockResidual::applyScaling() const
 {
   if (isScaled_)
