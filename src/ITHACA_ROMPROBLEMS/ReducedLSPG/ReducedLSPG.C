@@ -13,3 +13,33 @@ ReducedLSPG::ReducedLSPG(std::shared_ptr<ITHACAcontext> context)
       << exit(FatalError);
   }
 }
+
+argList& ReducedLSPG::args() const
+{
+    return context_->args();
+}
+
+fvMesh& ReducedLSPG::mesh() const
+{
+    return context_->mesh();
+}
+
+Time& ReducedLSPG::runTime() const
+{
+    return context_->runTime();
+}
+
+pimpleControl& ReducedLSPG::pimple() const
+{
+    return context_->pimple();
+}
+
+fv::options& ReducedLSPG::fvOptions() const
+{
+    return context_->fvOptions();
+}
+
+IOMRFZoneList& ReducedLSPG::MRF() const
+{
+    return context_->MRF();
+}

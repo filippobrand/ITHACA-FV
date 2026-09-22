@@ -79,18 +79,6 @@ struct GaussNewtonSettings
     float tol = 1e-6;
 };
 
-/*
-Child class, specific residual instance for the unsteady, turbulent, buoyant Navier-stokes equations
-*/
-// class ResidualLSPGUnsteadyBBTurb : public ResidualLSPG
-// {
-//   public:
-//     ResidualLSPGUnsteadyBBTurb() = delete;
-//     explicit ResidualLSPGUnsteadyBBTurb(const int size) : ResidualLSPG(size) {}
-
-//   private:
-    
-// }
 
 /// Class where a reduced problem for the <b> unsteady, turbulent, buoyant Navier-stokes </b> problem is implemented.
 /** In this class are implemented the methods to solve a reduced version of the unsteady, turbulent, buoyant Navier-stokes equations. This class must be used together with the FOM class */
@@ -121,13 +109,6 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
 
     //- Assembles the residual vector
     Eigen::VectorXd assembleResidual(const Eigen::VectorXd& state, const Time& runTime, bool correctBCs = true);
-
-    //- Assembles the residual vector starting from the equations
-    void stackResiduals(
-      const fvVectorMatrix& UEqn,
-      const fvScalarMatrix& TEqn,
-      const fvScalarMatrix& pEqn,
-      Eigen::VectorXd& residual_);
 
     //- Reconstructs the reduced solution fields from the currentState_ vector
     void reconstructReducedFields(
@@ -304,8 +285,15 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     ///- Modes eigenvalues, to be used for normalization of the modes coefficients
     Eigen::VectorXd eigenvalues_;
 
-    ///- Initial residual vector, to be used for normalization of the residuals
-    Eigen::VectorXd initialResidual_;
+    ///- Workspace for the residual
+    BlockResidual residualWorkspace_;
+
+    ///- Block index for U
+    label iU_;
+
+    label iP_;
+
+    label iT_;
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

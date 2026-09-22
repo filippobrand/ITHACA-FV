@@ -25,6 +25,20 @@ ReducedLSPGUnsteadyBBTurb::ReducedLSPGUnsteadyBBTurb(
   );
   currentNutCoeffs_ = Eigen::VectorXd::Zero(numberOfModes_.nut);
   readEigenvalues();
+
+  const label nCells = mesh.nCells();
+  residualWorkspace_ = BlockResidual
+  {
+    {
+      {"U_r", 3*nCells, 100.0},
+      {"p_rgh_r", nCells, 1.0},
+      {"T_r", nCells, 1.0}
+    }
+  };
+
+  iU_ = residualWorkspace_.index("U_r");
+  iP_ = residualWorkspace_.index("p_rgh_r");
+  iT_ = residualWorkspace_.index("T_r");
 }
 
 void ReducedLSPGUnsteadyBBTurb::captureFOMData(
@@ -94,11 +108,8 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
   volScalarField& p_rgh = _p_rgh();
   volScalarField& nut = _nut();
 
-  /* The boundaryConditions_ object does not directly interact with the ROM,
-  except for the initialization of the reduced coeff. It simply stores the BCs 
-  values as a function of time  and can be interrogated to get the values at a given time */  
   boundaryConditions_ = BoundaryConditions{vel_now_BC, temp_now_BC, "linear"};
-  GaussNewtonSettings gaussnewton_settings = GaussNewtonSettings
+  GaussNewtonSettings gn_settings = GaussNewtonSettings
   {
     5,
     5e-4
@@ -110,21 +121,21 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
   #include "readTimeControls.H"
   
   initializePODCoeffsFromFields(); // Here we cannot correct the BCs for pRgh
-  Eigen::VectorXd initial_residual = assembleResidual(currentState_, runTime, false); // Here we cannot correct the BCs for pRgh
-  double initial_residual_norm = initial_residual.norm();
+  assembleResidual(currentState_, runTime, false); // Here we cannot correct the BCs for pRgh
+
+  auto start = std::chrono::high_resolution_clock::now();
   while (runTime.run())
   {
     runTime++;
-    Info << "Time = " << runTime.timeName() << nl << endl;
+    Info << "Time = " << runTime.time().value() << nl << endl;
     boundaryConditions_.updateTimeDependentBC(runTime.time().value());
-    for (int gnIter = 0; gnIter < gaussnewton_settings.maxIter; gnIter++)
+    for (int gnIter = 0; gnIter < gn_settings.maxIter; gnIter++)
     {
       Eigen::VectorXd residual = assembleResidual(currentState_, runTime);
-      double residualNorm = residual.norm();
-      if (residualNorm < gaussnewton_settings.tol)
+      const double residualNorm = residual.norm();
+      if (residualNorm < gn_settings.tol)
       {
-          Info << "Gauss-Newton converged at iteration " << gnIter
-              << " with residual norm " << residualNorm << endl;
+          Info << "Gauss-Newton converged at iteration " << gnIter << endl;
           break;
       }
 
@@ -151,12 +162,18 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
       {
         currentState_ += alpha * dq;
         Info << "Line search failed to reduce residual at GN iter " << gnIter
-              << " — accepting smallest trial step anyway" << endl;
+              << " — accepting smallest trial step anyway" << nl;
       }
     }
-    Info << " -Final residual norm: " << assembleResidual(currentState_, runTime).norm() << endl;
+    Info << "  - U residual norm " << residualWorkspace_.blockNorm(iU_) << nl
+         << "  - p_rgh residual norm " << residualWorkspace_.blockNorm(iP_) << nl
+         << "  - T residual norm " << residualWorkspace_.blockNorm(iT_) << endl;
+
     runTime.write();
   }
+  auto end = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+  Info << "Total computation time: " << duration.count() << " ms" << endl;
 }
 
 Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::assembleResidual(
@@ -190,8 +207,6 @@ Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::assembleResidual(
   
   interpolateNutCoeffs(nut, Nutmodes_, state);
   volScalarField nuEff("nuEffROM", _nu() + nut);
-
-  // rhok = 1.0 - beta * (T - TRef);
   MRF.correctBoundaryVelocity(U);
   fvVectorMatrix UEqn
   (
@@ -240,7 +255,6 @@ Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::assembleResidual(
     const scalar pRefRgh = pRefValue -rhok[pRefCell] * gh[pRefCell];
     p_rghEqn.setReference(pRefCell, pRefRgh);
   }
-  // p = p_rgh + rhok * gh; // This is not needed
   
   volVectorField Usrc = -fvc::reconstruct
   (
@@ -251,33 +265,15 @@ Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::assembleResidual(
   );
   UEqn -= Usrc;
   
-  Eigen::VectorXd residual = Eigen::VectorXd::Zero(
-    3 * U.internalField().size() + T.internalField().size() + p_rgh.internalField().size()
-  );
-  stackResiduals(UEqn, TEqn, p_rghEqn, residual);
-  return residual;
-}
-
-void ReducedLSPGUnsteadyBBTurb::stackResiduals(
-  const fvVectorMatrix& UEqn,
-  const fvScalarMatrix& TEqn,
-  const fvScalarMatrix& pEqn,
-  Eigen::VectorXd& residual_)
-{
   const Field<vector> Ru = UEqn.residual();
   const Field<scalar> RT = TEqn.residual();
-  const Field<scalar> Rp = pEqn.residual();
+  const Field<scalar> Rp = p_rghEqn.residual();
 
-  // const scalarField sqrtV(Foam::sqrt(mesh().V().field()));
-  // Ru /= sqrtV;
-  // RT /= sqrtV;
-  // Rp /= sqrtV;
+  residualWorkspace_.set(iU_, Foam2Eigen::field2Eigen(Ru));
+  residualWorkspace_.set(iP_, Foam2Eigen::field2Eigen(Rp));
+  residualWorkspace_.set(iT_, Foam2Eigen::field2Eigen(RT));
 
-  Eigen::VectorXd Ru_eigen = Foam2Eigen::field2Eigen(Ru);
-  Eigen::VectorXd RT_eigen = Foam2Eigen::field2Eigen(RT);
-  Eigen::VectorXd Rp_eigen = Foam2Eigen::field2Eigen(Rp);
-
-  residual_ << 100*Ru_eigen, Rp_eigen, RT_eigen;
+  return residualWorkspace_.vector();
 }
 
 void ReducedLSPGUnsteadyBBTurb::reconstructReducedFields(

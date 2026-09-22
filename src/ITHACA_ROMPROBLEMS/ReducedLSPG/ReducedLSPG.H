@@ -41,41 +41,9 @@ SourceFiles
 #include "pimpleControl.H"
 #include "fvOptions.H"
 #include "ITHACAcontext.H"
+#include "BlockResidual.H"
 #include <Eigen/Dense>
 #include <memory>
-
-/*
-Class implementation for a residual object, used to fill, print, manipulate the residual in the FOM
-*/
-class ResidualLSPG
-{
-   public:
-     //- No default constructor
-      ResidualLSPG() = delete;
-
-      //- Constructor that takes the size of the residual vector
-      explicit ResidualLSPG(const int size)
-      : current_residual_(Eigen::VectorXd::Zero(size))
-      {}
-
-      virtual ~ResidualLSPG() = default;
-
-      //- Set the residual to zero
-      void setZero()
-      {
-          current_residual_.setZero();
-      }
-
-      //- Norm the residual
-      double norm() const
-      {
-          return current_residual_.norm();
-      }
-
-   private:
-      //- Current residual vector, stored as an Eigen vector
-      Eigen::VectorXd current_residual_;
-};
 
 /*
 Base class for the Reduced Least-Squares Petrov-Galerkin (LSPG) problem
@@ -85,50 +53,45 @@ Detailed implementation, such as field creation, is left to the derived classes.
 class ReducedLSPG
 {
   public:
-    //- Empty constructor - Cannot be used to create an object of this class
+    /// @brief  Deleted default constructor
+    ///
+    /// @details This constructor is deleted to prevent the creation of an object of this class without a valid context.
     ReducedLSPG() = delete;
     
-    //- Constructor that takes, other than the FOM, argc and argv
+    /// @brief Constructor, takes a context object
+    /// @param context Shared pointer to the ITHACAcontext object, which contains the mesh, time, fvOptions, and other necessary objects for the FOM problem.
     explicit ReducedLSPG(std::shared_ptr<ITHACAcontext> context);
 
-    //- Default destructor
+    /// @brief Destructor
     virtual ~ReducedLSPG() = default;
 
   protected:
-    //- Shared pointer to the ITHACAcontext object, which contains the mesh, time, fvOptions, and other necessary objects for the FOM problem.
+    /// @brief Shared pointer to the ITHACAcontext object
     std::shared_ptr<ITHACAcontext> context_;
 
+    /// @brief Access to the argList object
+    /// @return Reference to the argList object
+    argList& args() const;
     
+    /// @brief Access to the fvMesh object
+    /// @return Reference to the fvMesh object
+    fvMesh& mesh() const;
 
-    argList& args() const
-    {
-        return context_->args();
-    }
-    
-    fvMesh& mesh() const
-    {
-        return context_->mesh();
-    }
+    /// @brief Access to the Time object
+    /// @return Reference to the Time object
+    Time& runTime() const;
 
-    Time& runTime() const
-    {
-        return context_->runTime();
-    }
+    /// @brief  Access to the pimpleControl object
+    /// @return Reference to the pimpleControl object 
+    pimpleControl& pimple() const;
 
-    pimpleControl& pimple() const
-    {
-        return context_->pimple();
-    }
+    /// @brief Access to the fvOptions object
+    /// @return Reference to the fvOptions object
+    fv::options& fvOptions() const;
 
-    fv::options& fvOptions() const
-    {
-        return context_->fvOptions();
-    }
-
-    IOMRFZoneList& MRF() const
-    {
-        return context_->MRF();
-    }
+    /// @brief Access to the MRF object
+    /// @return Reference to the MRF object
+    IOMRFZoneList& MRF() const;
 
     // *** Time step management - These are called by openfoam Time object *** //
     //- Whether to adjust the time step based on the Courant number (or custom criteria?)
