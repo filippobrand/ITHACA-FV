@@ -128,7 +128,7 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         //--------------------------------------------------------------------------
         /// @brief      Assembles the POD modes
         ///
-        void computePOD(label nModesU = 0, label nModesPrgh = 0, label nModesT = 0, label nModesNut = 0);
+        void computePOD();
 
         //--------------------------------------------------------------------------
         /// @brief      Complete set up of the lift approach
@@ -142,7 +142,7 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         void switchOffAutoWrite();
 
         
-      private:
+    private:
         ///- Reads the dictionary ITHACAdict and sets the relevant parameters
         void readITHACAdict();
         
@@ -178,103 +178,25 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
           PtrList<surfaceScalarField>& Phiomfield
         );
 
-      public:
+    private:
         //- Number of velocity modes
-        label NUmodes;
+        label NUmodes_;
 
         //- Number of pressure modes
-        label NPrghmodes;
+        label NPrghmodes_;
 
         //- Number of temperature modes
-        label NTmodes;
+        label NTmodes_;
 
         //- Number of eddy viscosity modes
-        label NNutModes;
-
-        ///- Laminar transport pointer
-        autoPtr<singlePhaseTransportModel> _laminarTransport;
-
-        ///- Turbulent transport pointer
-        autoPtr<incompressible::turbulenceModel> turbulence; // For conformity, can we rename this to _..., by changing the fields?
-
-        ///- Pointer to the reduced velocity field
-        autoPtr<volVectorField> _U;
-
-        ///- Pointer to the ULiftBC field
-        autoPtr<volScalarField> _UliftBC;
-        
-        ///- Pointer to the reduced face flux field
-        autoPtr<surfaceScalarField> _phi;
-        
-        ///- Pointer to the pressure field
-        autoPtr<volScalarField> _p;
-        
-        ///- Pointer to the reduced p_rgh
-        autoPtr<volScalarField> _p_rgh;
-        
-        ///- Pointer to the reduced temperature field
-        autoPtr<volScalarField> _T;
-        
-        ///- Pointer to kinematic density
-        autoPtr<volScalarField> _rhok;
-        
-        ///- Pointer to the kinematic turbulent thermal conductivity
-        autoPtr<volScalarField> _alphat;
-        
-        ///- Pointer to the turbulent viscosity field
-        autoPtr<volScalarField> _nut;
-
-        ///- Pointer to the turbulent kinetic energy field
-        autoPtr<volScalarField> _k;
-
-        ///- Pointer to the turbulent omega field
-        autoPtr<volScalarField> _omega;
-        
-        ///- Pointer to the kinematic viscosity field
-        autoPtr<dimensionedScalar> _nu;
-
-        ///- Pointer to the Prandtl number 
-        autoPtr<dimensionedScalar> _Pr;
-        
-        ///- Pointer to the turbulent Prandtl number
-        autoPtr<dimensionedScalar> _Prt;
-        
-        ///- Pointer to the thermal expansion coefficient
-        autoPtr<dimensionedScalar> _beta;
-        
-        ///- Pointer to the reference temperature
-        autoPtr<dimensionedScalar> _TRef;
-        
-        ///- Gravitational constant
-        autoPtr<dimensionedVector> _g;
-        
-        ///- Pointer to hRef
-        autoPtr<dimensionedScalar> _hRef;
-        
-        ///- Pointer ot ghRef
-        autoPtr<dimensionedScalar> _ghRef;
-        
-        ///- Pointer to field gh
-        autoPtr<volScalarField> _gh;
-        
-        ///- Pointer to field ghf
-        autoPtr<surfaceScalarField> _ghf;
+        label NNutModes_;
 
         ///- Reference cell for pressure
         label pRefCell;
         scalar pRefValue;
-
-        /// Dictionary to hold details about computing the nut
-        dictionary viscDict;
         
         /// Identifier for bcMethod, which can be "lift", "penalty" or "Gunzburger"
         word bcMethod;
-
-        /// boolean flag for time-dependent BCs
-        bool timeDependentBC = false;
-
-        ///- Whether derivatives are usedin the RBF interpolation
-        bool derivativeInRBF;
 
         ///- Whether we mean-center
         bool centerSnapshots;
@@ -287,10 +209,7 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
 
         /// maxDeltaT
         scalar maxDeltaT;
-
-        /// List of time snapshots for each parameter sample
-        List<Eigen::VectorXd> timeSnapshots;
-
+    
     public:
         //- Velocity snapshots
         PtrList<volVectorField> Ufield;
@@ -373,8 +292,78 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         // Dimension of the interpolation matrix A
         label dimA;
 
-        // Dimension of the input to the RBF. To be used if you don't want to use all the velocity coefficients to the RBF
-        label dimInputRBF;
+    public:
+        ///- Laminar transport pointer
+        autoPtr<singlePhaseTransportModel> _laminarTransport;
+
+        ///- Turbulent transport pointer
+        autoPtr<incompressible::turbulenceModel> turbulence; // For conformity, can we rename this to _..., by changing the fields?
+
+        ///- Pointer to the reduced velocity field
+        autoPtr<volVectorField> _U;
+
+        ///- Pointer to the ULiftBC field
+        autoPtr<volScalarField> _UliftBC;
+        
+        ///- Pointer to the reduced face flux field
+        autoPtr<surfaceScalarField> _phi;
+        
+        ///- Pointer to the pressure field
+        autoPtr<volScalarField> _p;
+        
+        ///- Pointer to the reduced p_rgh
+        autoPtr<volScalarField> _p_rgh;
+        
+        ///- Pointer to the reduced temperature field
+        autoPtr<volScalarField> _T;
+        
+        ///- Pointer to kinematic density
+        autoPtr<volScalarField> _rhok;
+        
+        ///- Pointer to the kinematic turbulent thermal conductivity
+        autoPtr<volScalarField> _alphat;
+        
+        ///- Pointer to the turbulent viscosity field
+        autoPtr<volScalarField> _nut;
+
+        ///- Pointer to the turbulent kinetic energy field
+        autoPtr<volScalarField> _k;
+
+        ///- Pointer to the turbulent omega field
+        autoPtr<volScalarField> _omega;
+        
+        ///- Pointer to the kinematic viscosity field
+        autoPtr<dimensionedScalar> _nu;
+
+        ///- Pointer to the Prandtl number 
+        autoPtr<dimensionedScalar> _Pr;
+        
+        ///- Pointer to the turbulent Prandtl number
+        autoPtr<dimensionedScalar> _Prt;
+        
+        ///- Pointer to the thermal expansion coefficient
+        autoPtr<dimensionedScalar> _beta;
+        
+        ///- Pointer to the reference temperature
+        autoPtr<dimensionedScalar> _TRef;
+        
+        ///- Gravitational constant
+        autoPtr<dimensionedVector> _g;
+        
+        ///- Pointer to hRef
+        autoPtr<dimensionedScalar> _hRef;
+        
+        ///- Pointer ot ghRef
+        autoPtr<dimensionedScalar> _ghRef;
+        
+        ///- Pointer to field gh
+        autoPtr<volScalarField> _gh;
+        
+        ///- Pointer to field ghf
+        autoPtr<surfaceScalarField> _ghf;
+
+        /// List of time snapshots for each parameter sample
+        List<Eigen::VectorXd> timeSnapshots;
 
 };
 

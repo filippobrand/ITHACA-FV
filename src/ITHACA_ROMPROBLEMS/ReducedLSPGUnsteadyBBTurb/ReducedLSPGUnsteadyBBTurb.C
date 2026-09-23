@@ -104,7 +104,7 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
 {
   Time& runTime = this->runTime();
   boundaryConditions_ = BoundaryConditions{vel_now_BC, temp_now_BC, "linear"};
-  GaussNewtonSettings gn_settings = GaussNewtonSettings{5, 1e-2, 5e-4};
+  GaussNewtonSettings gn_settings = GaussNewtonSettings{5, 1e-2, 5e-5};
   // Maybe here we need: #include "initContinuityErrs.H" - Check later
   #include "readTimeControls.H"
   

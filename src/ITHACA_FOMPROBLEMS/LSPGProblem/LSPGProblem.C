@@ -40,6 +40,15 @@ LSPGProblem::LSPGProblem(std::shared_ptr<ITHACAcontext> context)
 :
     context_(std::move(context))
 {
+    ITHACAdict = new IOdictionary(
+        IOobject(
+            "ITHACAdict",
+            runTime().system(),
+            mesh(),
+            IOobject::MUST_READ,
+            IOobject::NO_WRITE));
+    
+    ITHACAparameters::getInstance(mesh(), runTime());
 }
 
 LSPGProblem::LSPGProblem(int argc, char* argv[])

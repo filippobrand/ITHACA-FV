@@ -76,46 +76,22 @@ LSPGUnsteadyBBTurb::LSPGUnsteadyBBTurb(std::shared_ptr<ITHACAcontext> context)
 
 void LSPGUnsteadyBBTurb::readITHACAdict()
 {
-    Time& runTime = this->runTime();
-    fvMesh& mesh = this->mesh();
-    IOMRFZoneList& MRF = this->MRF();
-
-    ITHACAdict = new IOdictionary(
-        IOobject(
-            "ITHACAdict",
-            runTime.system(),
-            mesh,
-            IOobject::MUST_READ,
-            IOobject::NO_WRITE));
-    // Are these calls necessary? Some of these also present in the constructor of unsteadyNS. Check please.
     bcMethod = ITHACAdict->lookupOrDefault<word>("bcMethod", "None");
-    timeDependentBC = ITHACAdict->lookupOrDefault<bool>("timeDependentBC", false);
-    derivativeInRBF = ITHACAdict->lookupOrDefault<bool>("derivativeInRBF", false);
     centerSnapshots = ITHACAdict->lookupOrDefault<bool>("centerSnapshots", false);
         
-    M_Assert(bcMethod == "lift" || bcMethod == "penalty"
-             || bcMethod == "Gunzburger",
-                         "The BC method must be set to lift, penalty or Gunzburger in ITHACAdict");
-    viscDict = ITHACAdict->subDict("viscDict");
+    M_Assert(bcMethod == "lift" , "The BC method must be set to lift in ITHACAdict. Other methods are not implemented yet.");
     
-    NUmodes = ITHACAdict->lookupOrDefault<label>("NmodesUproj", 10);
-    NTmodes = ITHACAdict->lookupOrDefault<label>("NmodesTproj", 5);
-    NPrghmodes = ITHACAdict->lookupOrDefault<label>("NmodesPrghproj", 5);
-    NNutModes = ITHACAdict->lookupOrDefault<label>("NmodesNutproj", 5);
+    NUmodes_ = ITHACAdict->lookupOrDefault<label>("NmodesUproj", 10);
+    NTmodes_ = ITHACAdict->lookupOrDefault<label>("NmodesTproj", 5);
+    NPrghmodes_ = ITHACAdict->lookupOrDefault<label>("NmodesPrghproj", 5);
+    NNutModes_ = ITHACAdict->lookupOrDefault<label>("NmodesNutproj", 5);
 
-    dimInputRBF = ITHACAdict->lookupOrDefault<label>("dimInputRBF", 0);
-    M_Assert(dimInputRBF <= NUmodes ,
-             "The dimension of the input to the RBF must be less than or equal to the number of velocity modes.");
-    M_Assert(dimInputRBF >= 0,
-             "The dimension of the input to the RBF must be greater than or equal to zero.");
     Info << "### INFO ### " << nl
          << "BC method: " << bcMethod << nl
-         << "Time dependent BCs: " << timeDependentBC << nl
-         << "Derivative in RBF for nut interpolation: " << derivativeInRBF << nl
-         << "Number of velocity modes for projection: " << NUmodes << nl
-         << "Number of temperature modes for projection: " << NTmodes << nl
-         << "Number of pressure modes for projection: " << NPrghmodes << nl
-         << "Number of eddy viscosity modes for projection: " << NNutModes << endl;
+         << "Number of velocity modes for projection: " << NUmodes_ << nl
+         << "Number of temperature modes for projection: " << NTmodes_ << nl
+         << "Number of pressure modes for projection: " << NPrghmodes_ << nl
+         << "Number of eddy viscosity modes for projection: " << NNutModes_ << endl;
 }
 
 // * * * * * * * * * * * * * * Full Order Methods * * * * * * * * * * * * * * //
@@ -318,16 +294,24 @@ void LSPGUnsteadyBBTurb::removeMean()
 // * * * * * * * * * * * * * * RBF Prep Methods * * * * * * * * * * * * * * //
 void LSPGUnsteadyBBTurb::offlineRBFInterpolation()
 {
-    Eigen::MatrixXd weights;
-    Eigen::MatrixXd coeffL2nut = ITHACAutilities::getCoeffs(fluctNutfield, nutmodes,
-        NNutModes);
+    const Eigen::MatrixXd coeffL2nut = ITHACAutilities::getCoeffs(fluctNutfield, nutmodes,
+        NNutModes_);
     Eigen::MatrixXd coeffL2vel;
     coeffL2vel.resize(0, 0);
+
+    const label dimInputRBF = ITHACAdict->lookupOrDefault<label>("dimInputRBF", 0);
+    const bool derivativeInRBF = ITHACAdict->lookupOrDefault<bool>("derivativeInRBF", false);
+
+    M_Assert(dimInputRBF <= NUmodes_ ,
+             "The dimension of the input to the RBF must be less than or equal to the number of velocity modes.");
+    M_Assert(dimInputRBF >= 0,
+             "The dimension of the input to the RBF must be greater than or equal to zero.");
+    
     label inputModes = dimInputRBF;
 
     if (inputModes == 0)
     {
-        inputModes = NUmodes;
+        inputModes = NUmodes_;
     }
 
     if (bcMethod == "lift")
@@ -342,11 +326,11 @@ void LSPGUnsteadyBBTurb::offlineRBFInterpolation()
     }
 
     Info << "Shape of the L2 velocity coeff matrix: " << coeffL2vel.rows() << " x "
-         << coeffL2vel.cols() << endl;
-    Info << "Shape of the L2 eddy viscosity coeff matrix: " << coeffL2nut.rows() <<
+         << coeffL2vel.cols() << nl
+         << "Shape of the L2 eddy viscosity coeff matrix: " << coeffL2nut.rows() <<
             " x " << coeffL2nut.cols() << endl;
+            
     List<Eigen::MatrixXd> velDerCoeff(2);
-
     // Returns a list of two matrices: [0] = velocity derivative coeffs, [1] = eddy viscosity coeffs. Each matrix is [snapshots x coeffs]
     if (derivativeInRBF)
     {
@@ -376,14 +360,14 @@ void LSPGUnsteadyBBTurb::offlineRBFInterpolation()
              << endl;
     }
 
-    rbfSplines.resize(NNutModes);
+    rbfSplines.resize(NNutModes_);
     Eigen::MatrixXd x = velDerCoeff[0].transpose();
-
-    for (label i = 0; i < NNutModes; i++)
+    
+    const dictionary viscDict = ITHACAdict->subDict("viscDict");
+    for (label i = 0; i < NNutModes_; i++)
     {
-        // Create a RBF interpolator instance
         rbfSplines[i] = std::make_shared<ithacaInterpolator>(viscDict);
-        Eigen::VectorXd y = velDerCoeff[1].col(i);
+        const Eigen::VectorXd y = velDerCoeff[1].col(i);
         // rbfSplines[i]->optimizeShapeParameter(x, y, 5);
         rbfSplines[i]->fit(x, y);
         Info << "### INTERPOLATION - Fitting ithacaInterpolator for mode " << i + 1 <<
@@ -394,7 +378,7 @@ void LSPGUnsteadyBBTurb::offlineRBFInterpolation()
 
 List<Eigen::MatrixXd> LSPGUnsteadyBBTurb::velDerivativeCoeff(
     const Eigen::MatrixXd& A, const Eigen::MatrixXd& G,
-    const List<Eigen::VectorXd>& snapshotTimes)
+    const List<Eigen::VectorXd>& snapshotTimes) // LLM helped, check that this is decent code
 {
     const label velCoeffsNum = A.cols();
     const label parsSamplesNum = snapshotTimes.size();
@@ -588,45 +572,35 @@ void LSPGUnsteadyBBTurb::restart()
 
 void LSPGUnsteadyBBTurb::resizeModes()
 {
-    Umodes.resize(NUmodes);
-    Tmodes.resize(NTmodes);
-    nutmodes.resize(NNutModes);
-    Prghmodes.resize(NPrghmodes);
-    Phimodes.resize(NUmodes);
-    omegamodes.resize(NNutModes);
-    kmodes.resize(NNutModes);
+    Umodes.resize(NUmodes_);
+    Tmodes.resize(NTmodes_);
+    nutmodes.resize(NNutModes_);
+    Prghmodes.resize(NPrghmodes_);
+    Phimodes.resize(NUmodes_);
+    omegamodes.resize(NNutModes_);
+    kmodes.resize(NNutModes_);
 }
 
-void LSPGUnsteadyBBTurb::computePOD(label nModesU, label nModesPrgh, label nModesT, label nModesNut)
+void LSPGUnsteadyBBTurb::computePOD()
 {
-  if (nModesU == 0)
+  if (bcMethod == "lift")
   {
-    nModesU = NUmodes;
+    setupLift();
   }
-  if (nModesPrgh == 0)
-  {
-    nModesPrgh = NPrghmodes;
-  }
-  if (nModesT == 0)
-  {
-    nModesT = NTmodes;
-  }
-  if (nModesNut == 0)
-  {
-    nModesNut = NNutModes;
-  }
-  Info << "### MESSAGE - Computing POD modes for velocity, pressure, temperature and eddy viscosity." << endl;
+
+  int nModesU = ITHACAdict->lookupOrDefault<int>("NmodesUout", 0);
+  int nModesPrgh = ITHACAdict->lookupOrDefault<int>("NmodesPrghout", 0);
+  int nModesT = ITHACAdict->lookupOrDefault<int>("NmodesTout", 0);
+  int nModesNut = ITHACAdict->lookupOrDefault<int>("NmodesNutout", 0);
   if (bcMethod == "lift")
   {
     ITHACAPOD::getModes(Uomfield, Umodes, _U().name(), podex, 0, 0, nModesU, true);
     ITHACAPOD::getModes(Tomfield, Tmodes, _T().name(), podex, 0, 0, nModesT, true);
-    // ITHACAPOD::getModes(Phiomfield, Phimodes, _phi().name(), podex, 0, 0, nModesU, true);
   }
   else
   {
     ITHACAPOD::getModes(Ufield, Umodes, _U().name(), podex, 0, 0, nModesU, true);
     ITHACAPOD::getModes(Tfield, Tmodes, _T().name(), podex, 0, 0, nModesT, true);
-    // ITHACAPOD::getModes(Phifield, Phimodes, _phi().name(), podex, 0, 0, nModesU, true);
   }
   ITHACAPOD::getModes(omegafield, omegamodes, "omega", podex, 0, 0, nModesNut, false);
   ITHACAPOD::getModes(kfield, kmodes, "k", podex, 0, 0, nModesNut, false);
@@ -645,10 +619,6 @@ void LSPGUnsteadyBBTurb::setupLift()
 
   ITHACAstream::exportFields(liftfield, "./ITHACAoutput/Lift", "ULift");
   ITHACAstream::exportFields(liftfieldT, "./ITHACAoutput/Lift", "TLift");
-
-  // ITHACAstream::exportFields(Phiomfield, "./ITHACAoutput/HomogeneousSnapshots", "Phi_om");
-  // ITHACAstream::exportFields(Uomfield, "./ITHACAoutput/HomogeneousSnapshots", "U_om");
-  // ITHACAstream::exportFields(Tomfield, "./ITHACAoutput/HomogeneousSnapshots", "T_om");
 }
 
 void LSPGUnsteadyBBTurb::homogenizePhi(
@@ -697,7 +667,7 @@ void LSPGUnsteadyBBTurb::getPhiModes(
   Info << "### MESSAGE - Computing phi modes from velocity modes." << endl;
   Phimodes.setSize(Umodes.size());
   // The phi modes are computed directly from the velocity modes, to avoid differences due to inner products
-  // Φ_i = Σₙ W^U_ni · phi_hom^n
+  // Φ_i = Σₙ W^U_ni · phi_hom^n (lol LLM maths)
   Eigen::MatrixXd WU = ITHACAutilities::getCoeffs(Uomfield, Umodes).transpose();
   for (label i = 0; i < WU.cols(); i++)
   {
@@ -825,53 +795,55 @@ void LSPGUnsteadyBBTurb::liftSolveT()
         fvMesh& mesh = this->mesh();
 
         volScalarField& T = _T();
-        volVectorField& U = _U();
-        surfaceScalarField& phi = _phi();
-        phi = linearInterpolate(U) & mesh.Sf();
-        simpleControl simple(mesh);
-        volScalarField& alphat = _alphat();
-
-        dimensionedScalar& Pr = _Pr();
-        dimensionedScalar& Prt = _Prt();
         label BCind = inletIndexT(k, 0);
         volScalarField Tlift("Tlift" + name(k), T);
+
         instantList Times = runTime.times();
         runTime.setTime(Times[1], 1);
-        Info << "Solving a lifting Problem" << endl;
-        scalar t1 = 1;
-        scalar t0 = 0;
-        alphat = turbulence->nut() / Prt;
-        alphat.correctBoundaryConditions();
-        volScalarField alphaEff("alphaEff", turbulence->nu() / Pr + alphat);
+        Info << "Solving Temperature Lifting with Potential Flow Proxy for Inlet " << BCind << endl;
 
-        for (label j = 0; j < T.boundaryField().size(); j++)
+        // Build an advective proxy flux from potential velocity lifting field (Ulift[k])
+        volVectorField Uproxy = liftfield[0]; // Re-use the potential velocity lift field k
+        surfaceScalarField phiProxy("phiProxy", linearInterpolate(Uproxy) & mesh.Sf());
+
+        scalar t1 = 1.0;
+        scalar t0 = 0.0;
+
+        forAll(Tlift.boundaryField(), j)
         {
             if (j == BCind)
             {
                 assignBC(Tlift, j, t1);
-                assignIF(Tlift, t0);
             }
-            else if (T.boundaryField()[BCind].type() == "fixedValue")
+            else if (Tlift.boundaryField()[j].type() == "fixedValue" 
+                  || Tlift.boundaryField()[j].type() == "surfaceNormalFixedValue")
             {
                 assignBC(Tlift, j, t0);
-                assignIF(Tlift, t0);
-            }
-            else
-            {
             }
         }
+
+        assignIF(Tlift, t0);
+        Tlift.correctBoundaryConditions();
+
+        dimensionedScalar& Pr = _Pr();
+        dimensionedScalar& Prt = _Prt();
+        volScalarField& alphat = _alphat();
+        alphat = turbulence->nut() / Prt;
+        alphat.correctBoundaryConditions();
+        volScalarField alphaEff("alphaEff", turbulence->nu() / Pr + alphat);
+        simpleControl simple(mesh);
+
+        Tlift.storePrevIter();
 
         while (simple.correctNonOrthogonal())
         {
             fvScalarMatrix TEqn
             (
-                fvm::div(phi, Tlift)
-                - fvm::laplacian(alphaEff, Tlift)
+                fvm::div(phiProxy, Tlift)
+              - fvm::laplacian(alphaEff, Tlift)
             );
+            TEqn.relax();
             TEqn.solve();
-            Info << "ExecutionTime = " << runTime.elapsedCpuTime() << " s"
-                 << "  ClockTime = " << runTime.elapsedClockTime() << " s"
-                 << nl << endl;
         }
 
         Tlift.write();
