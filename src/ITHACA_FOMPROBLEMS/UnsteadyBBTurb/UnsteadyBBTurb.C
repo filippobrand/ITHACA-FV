@@ -87,6 +87,9 @@ _MRF = autoPtr<IOMRFZoneList>(
              || bcMethod == "Gunzburger",
                          "The BC method must be set to lift, penalty or Gunzburger in ITHACAdict");
     turbulence->validate();
+    offline = ITHACAutilities::check_off();
+    podex = ITHACAutilities::check_pod();
+    supex = ITHACAutilities::check_sup();
     viscDict = ITHACAdict->subDict("viscDict");
     NUmodes = ITHACAdict->lookupOrDefault<label>("NmodesUproj", 10);
     NTmodes = ITHACAdict->lookupOrDefault<label>("NmodesTproj", 5);
