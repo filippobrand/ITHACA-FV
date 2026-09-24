@@ -204,8 +204,7 @@ void UnsteadyBBTurb::truthSolve(const List<scalar> mu_now, label nSample)
             ITHACAstream::exportSolution(p_rgh, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(T, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(nut, name(counter), "./ITHACAoutput/Offline/");
-            std::ofstream of("./ITHACAoutput/Offline/" + name(counter) + "/" +
-                             runTime.timeName());
+
             timeSnapshots[nSample](stepCounter) = runTime.value();
             stepCounter++;
             Ufield.append(U.clone());
