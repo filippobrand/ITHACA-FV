@@ -336,15 +336,14 @@ void LSPGUnsteadyBBTurb::offlineRBFInterpolation()
     {
         velDerCoeff = velDerivativeCoeff(coeffL2vel.transpose(), coeffL2nut.transpose(),
                                          timeSnapshots);
-        dimA = velDerCoeff[0].cols();
     }
     else
     {
         velDerCoeff[0] = coeffL2vel.transpose();
         velDerCoeff[1] = coeffL2nut.transpose();
-        dimA = velDerCoeff[0].cols();
     }
-
+    dimA = velDerCoeff[0].cols();
+    
     if (Pstream::master())
     {
         ITHACAutilities::createSymLink("./ITHACAoutput/Debug");
@@ -596,17 +595,18 @@ void LSPGUnsteadyBBTurb::computePOD()
   {
     ITHACAPOD::getModes(Uomfield, Umodes, _U().name(), podex, 0, 0, nModesU, true);
     ITHACAPOD::getModes(Tomfield, Tmodes, _T().name(), podex, 0, 0, nModesT, true);
+    getPhiModes(Umodes, Uomfield, Phimodes, Phiomfield);
   }
   else
   {
     ITHACAPOD::getModes(Ufield, Umodes, _U().name(), podex, 0, 0, nModesU, true);
     ITHACAPOD::getModes(Tfield, Tmodes, _T().name(), podex, 0, 0, nModesT, true);
+    getPhiModes(Umodes, Ufield, Phimodes, Phifield);
   }
   ITHACAPOD::getModes(omegafield, omegamodes, "omega", podex, 0, 0, nModesNut, false);
   ITHACAPOD::getModes(kfield, kmodes, "k", podex, 0, 0, nModesNut, false);
   ITHACAPOD::getModes(Prghfield, Prghmodes, _p_rgh().name(), podex, 0, 0, nModesPrgh, false);
   ITHACAPOD::getModes(fluctNutfield, nutmodes, fluctNutfield[0].name(), podex, 0, 0, nModesNut, true);
-  getPhiModes(Umodes, Uomfield, Phimodes, Phiomfield);
 }
 
 void LSPGUnsteadyBBTurb::setupLift()
@@ -676,14 +676,14 @@ void LSPGUnsteadyBBTurb::getPhiModes(
   
   for (label i = 0; i < Umodes.size(); i++)
   {
-    surfaceScalarField phiMode("PhiMode", 0*Phiomfield[0]);
+    surfaceScalarField phiMode("phi", 0*Phiomfield[0]);
     for (label n = 0; n < Uomfield.size(); n++)
     {
       phiMode += WU(n, i) * Phiomfield[n];
     }
     Phimodes.set(i, phiMode.clone());
   }
-  ITHACAstream::exportFields(Phimodes, "./ITHACAoutput/POD", "PhiMode");
+  ITHACAstream::exportFields(Phimodes, "./ITHACAoutput/POD", "phi");
 }
 
 void LSPGUnsteadyBBTurb::liftSolve()
@@ -850,7 +850,6 @@ void LSPGUnsteadyBBTurb::liftSolveT()
         liftfieldT.append(Tlift.clone());
     }
 }
-
 
 void LSPGUnsteadyBBTurb::switchOffAutoWrite()
 {

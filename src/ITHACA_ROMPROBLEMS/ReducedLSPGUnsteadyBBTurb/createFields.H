@@ -57,17 +57,6 @@ _nut = autoPtr<volScalarField>(
                mesh));
 volScalarField& nut = _nut();
 
-_UliftBC = autoPtr<volScalarField>(
-               new volScalarField(
-                   IOobject(
-                       "UliftBC",
-                       runTime.timeName(),
-                       mesh,
-                       IOobject::MUST_READ,
-                       IOobject::NO_WRITE),
-                   mesh));
-volScalarField& UliftBC = _UliftBC();
-
 // Laminar Prandtl number
 _Pr = autoPtr<dimensionedScalar>(
           new dimensionedScalar(

@@ -43,6 +43,47 @@ ITHACAcontext::~ITHACAcontext()
     _args.clear();
 }
 
+template <typename FieldType>
+PtrList<FieldType> ITHACAcontext::loadFieldsFromCaseFolder(const word& fieldName)
+{
+    Time& runTime = _runTime();
+    fvMesh& mesh = _mesh();
+    const instantList times = runTime.times();
+    PtrList<FieldType> fields;
+
+    for (const instant& time : times)
+    {
+        const word timeName = time.name();
+
+        IOobject fieldIO
+        (
+            fieldName,
+            timeName,
+            mesh,
+            IOobject::MUST_READ,
+            IOobject::NO_WRITE
+        );
+
+        if (!fieldIO.typeHeaderOk<FieldType>(true))
+        {
+            Info << "Skipping " << timeName << "/" << fieldName << nl;
+            continue;
+        }
+
+        Info << "Loading field " << fieldName
+             << " from time directory " << timeName << endl;
+
+        fields.emplace_back(fieldIO, mesh);
+    }
+
+    return fields;
+}
+
+// Explicit template instantiation
+template PtrList<volVectorField> ITHACAcontext::loadFieldsFromCaseFolder<volVectorField>(const word& fieldName);
+template PtrList<volScalarField> ITHACAcontext::loadFieldsFromCaseFolder<volScalarField>(const word& fieldName);
+template PtrList<surfaceScalarField> ITHACAcontext::loadFieldsFromCaseFolder<surfaceScalarField>(const word& fieldName);
+
 argList& ITHACAcontext::args()
 {
     return _args();

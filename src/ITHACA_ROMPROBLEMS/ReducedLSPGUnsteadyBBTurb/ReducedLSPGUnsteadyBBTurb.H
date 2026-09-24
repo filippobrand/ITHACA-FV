@@ -52,15 +52,9 @@ SourceFiles
 #include <Eigen/Dense>
 #include <memory>
 
-struct ROMSettings
-{
-    word bcMethod = "lift";
-};
-
 struct InterpolationSettings
 {
     int firstRBFIndex = 0;
-    bool skipLift = true;
     bool derivative = false;
     int dimInputRBF = 0;
     int avgTermOfflineSamples = 0;
@@ -210,9 +204,6 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
 
     ///- Pointer to the turbulent viscosity field
     autoPtr<volScalarField> _nut;
-
-    ///- Lifting function for the velocity field
-    autoPtr<volScalarField> _UliftBC;
 
     ///- Pointer to the Prandtl number 
     autoPtr<dimensionedScalar> _Pr;

@@ -71,6 +71,10 @@ class ITHACAcontext
     //- Access to the MRF
     IOMRFZoneList& MRF();
 
+    /// @brief Loads the selected fields from the current case folder, given by the context.
+    template <typename FieldType>
+    PtrList<FieldType> loadFieldsFromCaseFolder(const word& fieldName);
+
   private:
     ///- Pointer to the argList object
     autoPtr<argList> _args;  

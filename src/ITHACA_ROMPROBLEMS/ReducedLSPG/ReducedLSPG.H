@@ -45,6 +45,12 @@ SourceFiles
 #include <Eigen/Dense>
 #include <memory>
 
+struct ROMSettings
+{
+  word bcMethod = "lift";
+  word romID = "";
+};
+
 /*
 Base class for the Reduced Least-Squares Petrov-Galerkin (LSPG) problem
 Here we only implement the constructor and the destructor, which initialize quantities that are common to all (most) reduced problems.
@@ -74,9 +80,17 @@ class ReducedLSPG
         return stateScaling_;
     }
 
+    const word& getID() const
+    {
+        return romID_;
+    }
+
   protected:
     /// @brief Shared pointer to the ITHACAcontext object
     std::shared_ptr<ITHACAcontext> context_;
+
+    /// @brief Pointer to the ITHACAdict object
+    IOdictionary* ITHACAdict;
 
     /// @brief Access to the argList object
     /// @return Reference to the argList object
@@ -108,6 +122,9 @@ class ReducedLSPG
     /// State scaling vector (could be for example the POD singular values)
     Eigen::VectorXd stateScaling_;
 
+    /// Word identifier. It literally just identifies the ROM for post-processing purposes.
+    word romID_;
+
     // *** Time step management - These are called by openfoam Time object *** //
     //- Whether to adjust the time step based on the Courant number (or custom criteria?)
     bool adjustTimeStep;
@@ -117,7 +134,6 @@ class ReducedLSPG
 
     //- Maximum time step allowed
     scalar maxDeltaT;
-
 };
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

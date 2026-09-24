@@ -140,7 +140,6 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         /// do not write U, and other fields. (They write U_r, ...)
         ///
         void switchOffAutoWrite();
-
         
     private:
         ///- Reads the dictionary ITHACAdict and sets the relevant parameters

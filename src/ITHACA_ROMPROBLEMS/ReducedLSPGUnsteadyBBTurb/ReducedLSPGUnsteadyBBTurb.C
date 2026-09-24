@@ -64,7 +64,6 @@ void ReducedLSPGUnsteadyBBTurb::captureFOMData(
   interpolationSettings_ = InterpolationSettings
   {
       problem.ITHACAdict->lookupOrDefault<int>("firstRBFIndex", 0),
-      problem.dimA,
       problem.ITHACAdict->lookupOrDefault<bool>("derivativeInRBF", false),
       problem.ITHACAdict->lookupOrDefault<label>("dimInputRBF", 0),
       problem.mu.cols()
@@ -72,7 +71,8 @@ void ReducedLSPGUnsteadyBBTurb::captureFOMData(
 
   romSettings_ = ROMSettings
   {
-      problem.ITHACAdict->lookupOrDefault<word>("bcMethod", "lift")
+      ITHACAdict->lookupOrDefault<word>("bcMethod", "lift"),
+      ITHACAdict->lookupOrDefault<word>("caseIdentifier", "")
   };
   numberOfModes_ = NumberOfModes
   {
@@ -191,11 +191,8 @@ Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::assembleResidual(
 {
   fvMesh& mesh = this->mesh();
   fv::options& fvOptions = this->fvOptions();
-  pimpleControl& pimple = this->pimple();
   IOMRFZoneList& MRF = this->MRF();
 
-  singlePhaseTransportModel& laminarTransport = _laminarTransport();
-  volScalarField& p = _p();
   volVectorField& U = _U();
   volScalarField& p_rgh = _p_rgh();
   volScalarField& T = _T();
@@ -420,69 +417,74 @@ void ReducedLSPGUnsteadyBBTurb::readEigenvalues()
   pEigenvalues_ = Eigen::VectorXd::Zero(numberOfModes_.pressure);
   tEigenvalues_ = Eigen::VectorXd::Zero(numberOfModes_.temperature);
   nutEigenvalues_ = Eigen::VectorXd::Zero(numberOfModes_.nut);
-    std::ifstream uFile("ITHACAoutput/POD/Eigenvalues_U");
-    M_Assert(uFile.is_open(),
-            "Could not open file ITHACAoutput/POD/Eigenvalues_U. Please make sure the file exists and is readable.");
-    std::string line;
-    std::getline(uFile, line); // Ignore first line
-    std::getline(uFile, line); // Ignore second line
-    uEigenvalues_.resize(numberOfModes_.velocity);
+  std::ifstream uFile("ITHACAoutput/POD/Eigenvalues_U");
+  M_Assert(uFile.is_open(),
+          "Could not open file ITHACAoutput/POD/Eigenvalues_U. Please make sure the file exists and is readable.");
+  std::string line;
+  std::getline(uFile, line); // Ignore first line
+  std::getline(uFile, line); // Ignore second line
+  uEigenvalues_.resize(numberOfModes_.velocity);
 
-    for (int i = 0; i < numberOfModes_.velocity; i++)
-    {
-        std::getline(uFile, line);
-        uEigenvalues_(i) = std::stod(line);
-    }
+  for (int i = 0; i < numberOfModes_.velocity; i++)
+  {
+      std::getline(uFile, line);
+      uEigenvalues_(i) = std::stod(line);
+  }
 
-    std::ifstream pFile("ITHACAoutput/POD/Eigenvalues_p_rgh");
-    M_Assert(pFile.is_open(),
-            "Could not open file ITHACAoutput/POD/Eigenvalues_p_rgh. Please make sure the file exists and is readable.");
-    std::getline(pFile, line); // Ignore first line
-    std::getline(pFile, line); // Ignore second line
-    pEigenvalues_.resize(numberOfModes_.pressure);
+  std::ifstream pFile("ITHACAoutput/POD/Eigenvalues_p_rgh");
+  M_Assert(pFile.is_open(),
+          "Could not open file ITHACAoutput/POD/Eigenvalues_p_rgh. Please make sure the file exists and is readable.");
+  std::getline(pFile, line); // Ignore first line
+  std::getline(pFile, line); // Ignore second line
+  pEigenvalues_.resize(numberOfModes_.pressure);
 
-    for (int i = 0; i < numberOfModes_.pressure; i++)
-    {
-        std::getline(pFile, line);
-        pEigenvalues_(i) = std::stod(line);
-    }
+  for (int i = 0; i < numberOfModes_.pressure; i++)
+  {
+      std::getline(pFile, line);
+      pEigenvalues_(i) = std::stod(line);
+  }
 
-    std::ifstream tFile("ITHACAoutput/POD/Eigenvalues_T");
-    M_Assert(tFile.is_open(),
-            "Could not open file ITHACAoutput/POD/Eigenvalues_T. Please make sure the file exists and is readable.");
-    std::getline(tFile, line); // Ignore first line
-    std::getline(tFile, line); // Ignore second line
-    tEigenvalues_.resize(numberOfModes_.temperature);
+  std::ifstream tFile("ITHACAoutput/POD/Eigenvalues_T");
+  M_Assert(tFile.is_open(),
+          "Could not open file ITHACAoutput/POD/Eigenvalues_T. Please make sure the file exists and is readable.");
+  std::getline(tFile, line); // Ignore first line
+  std::getline(tFile, line); // Ignore second line
+  tEigenvalues_.resize(numberOfModes_.temperature);
 
-    for (int i = 0; i < numberOfModes_.temperature; i++)
-    {
-        std::getline(tFile, line);
-        tEigenvalues_(i) = std::stod(line);
-    }
+  for (int i = 0; i < numberOfModes_.temperature; i++)
+  {
+      std::getline(tFile, line);
+      tEigenvalues_(i) = std::stod(line);
+  }
 
-    std::ifstream nutFile("ITHACAoutput/POD/Eigenvalues_fluctNut");
-    M_Assert(nutFile.is_open(),
-            "Could not open file ITHACAoutput/POD/Eigenvalues_fluctNut. Please make sure the file exists and is readable.");
-    std::getline(nutFile, line); // Ignore first line
-    std::getline(nutFile, line); // Ignore second line
-    nutEigenvalues_.resize(numberOfModes_.nut);
+  std::ifstream nutFile("ITHACAoutput/POD/Eigenvalues_fluctNut");
+  M_Assert(nutFile.is_open(),
+          "Could not open file ITHACAoutput/POD/Eigenvalues_fluctNut. Please make sure the file exists and is readable.");
+  std::getline(nutFile, line); // Ignore first line
+  std::getline(nutFile, line); // Ignore second line
+  nutEigenvalues_.resize(numberOfModes_.nut);
 
-    for (int i = 0; i < numberOfModes_.nut; i++)
-    {
-        std::getline(nutFile, line);
-        nutEigenvalues_(i) = std::stod(line);
-    }
+  for (int i = 0; i < numberOfModes_.nut; i++)
+  {
+      std::getline(nutFile, line);
+      nutEigenvalues_(i) = std::stod(line);
+  }
 
-    Info << "### EIGS - Velocity eigenvalues: " << uEigenvalues_.transpose() << nl
-         << "### EIGS - Pressure eigenvalues: " << pEigenvalues_.transpose() << nl
-         << "### EIGS - Temperature eigenvalues: " << tEigenvalues_.transpose() << nl
-         << "### EIGS - FluctNut eigenvalues: " << nutEigenvalues_.transpose() << endl;
-        
-    eigenvalues_ = Eigen::VectorXd::Zero(
-        numberOfModes_.velocity + numberOfModes_.pressure + numberOfModes_.temperature);
-    stateScaling_ = Eigen::VectorXd::Zero(
-        numberOfModes_.velocity + numberOfModes_.pressure + numberOfModes_.temperature);
-    eigenvalues_ << uEigenvalues_, pEigenvalues_, tEigenvalues_;
-    // The state scaling is sqrt(eigenvalue)
-    stateScaling_ = eigenvalues_.array().sqrt();
+  Info << "### EIGS - Velocity eigenvalues: " << uEigenvalues_.transpose() << nl
+        << "### EIGS - Pressure eigenvalues: " << pEigenvalues_.transpose() << nl
+        << "### EIGS - Temperature eigenvalues: " << tEigenvalues_.transpose() << nl
+        << "### EIGS - FluctNut eigenvalues: " << nutEigenvalues_.transpose() << endl;
+      
+  eigenvalues_ = Eigen::VectorXd::Zero(
+      numberOfModes_.velocity + numberOfModes_.pressure + numberOfModes_.temperature);
+  stateScaling_ = Eigen::VectorXd::Zero(
+      numberOfModes_.velocity + numberOfModes_.pressure + numberOfModes_.temperature);
+  eigenvalues_ << uEigenvalues_, pEigenvalues_, tEigenvalues_;
+  // The state scaling is sqrt(eigenvalue)
+  stateScaling_ = eigenvalues_.array().sqrt();
+  M_Assert(stateScaling_.size() == currentState_.size(),
+      "State scaling size does not match current state size.");
+  // Make sure no scaling factor is zero to avoid division by zero
+  M_Assert(stateScaling_.minCoeff() > 1e-10,
+      "State scaling has a zero or negative value, which is not allowed.");
 }
