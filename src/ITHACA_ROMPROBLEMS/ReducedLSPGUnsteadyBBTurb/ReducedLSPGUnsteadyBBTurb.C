@@ -23,9 +23,22 @@ ReducedLSPGUnsteadyBBTurb::ReducedLSPGUnsteadyBBTurb(
     numberOfModes_.temperature
   );
   currentNutCoeffs_ = Eigen::VectorXd::Zero(numberOfModes_.nut);
-  readEigenvalues();
+  if (Pstream::master())
+  {
+    readEigenvalues();
+  }
 
   const label nCells = mesh.nCells();
+
+  Eigen::VectorXd wScalar = Foam2Eigen::field2Eigen(mesh.V().field()).cwiseSqrt().cwiseInverse();
+  vectorField wVecField(nCells);
+  forAll(wVecField, celli)
+  {
+    const scalar w = 1.0 / Foam::sqrt(mesh.V()[celli]);
+    wVecField[celli] = vector(w, w, w);
+  }
+  Eigen::VectorXd wVector = Foam2Eigen::field2Eigen(wVecField);
+
   residualWorkspace_ = BlockResidual
   {
     {
@@ -38,6 +51,10 @@ ReducedLSPGUnsteadyBBTurb::ReducedLSPGUnsteadyBBTurb(
   iU_ = residualWorkspace_.index("U_r");
   iP_ = residualWorkspace_.index("p_rgh_r");
   iT_ = residualWorkspace_.index("T_r");
+
+  residualWorkspace_.setBlockRowWeights(iU_, wVector);
+  residualWorkspace_.setBlockRowWeights(iP_, wScalar);
+  residualWorkspace_.setBlockRowWeights(iT_, wScalar);
 }
 
 void ReducedLSPGUnsteadyBBTurb::captureFOMData(
@@ -109,8 +126,18 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
   #include "readTimeControls.H"
   
   initializePODCoeffsFromFields(); // Here we cannot correct the BCs for pRgh
-  assembleResidual(currentState_, runTime, false); // Here we cannot correct the BCs for pRgh
+  assembleResidual(currentState_, false); // Here we cannot correct the BCs for pRgh
+  assembleResidual(currentState_, true); // Here we can correct the BCs for pRgh, as the snGrad is filled
   residualWorkspace_.calibrateWeights(1e-8);
+
+  LevenbergMarquardtFunctor lmFunctor(this, currentState_.size(), residualWorkspace_.size());
+  Eigen::NumericalDiff<LevenbergMarquardtFunctor> numDiff(lmFunctor);
+  Eigen::LevenbergMarquardt<Eigen::NumericalDiff<LevenbergMarquardtFunctor>> lm(numDiff);
+
+  lm.parameters.ftol   = 1e-8;
+  lm.parameters.xtol   = 1e-8;
+  lm.parameters.gtol   = 1e-10;
+  lm.parameters.maxfev = 500;
 
   auto start = std::chrono::high_resolution_clock::now();
   while (runTime.run())
@@ -118,52 +145,35 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
     runTime++;
     Info << "Time = " << runTime.time().value() << nl << endl;
     boundaryConditions_.updateTimeDependentBC(runTime.time().value());
-    double old_res_norm = GREAT;
+
+    Eigen::VectorXd scaledState = currentState_.cwiseQuotient(stateScaling_);
+    // minimizeInit evaluates the residual and Jacobian once at currentState_
+    // and sets lm's internal state up for iterating from there.
+    Eigen::LevenbergMarquardtSpace::Status status = lm.minimizeInit(scaledState);
+
     for (int gnIter = 0; gnIter < gn_settings.maxIter; gnIter++)
     {
-      Eigen::VectorXd residual = assembleResidual(currentState_, runTime);
-      const double residualNorm = residual.norm();
+      const double residualNorm = lm.fnorm;
+
       if (residualNorm < gn_settings.tol)
       {
-          Info << "Gauss-Newton converged at iteration " << gnIter << endl;
+        Info << "LM converged at iteration " << gnIter << endl;
+        break;
+      }
+
+      status = lm.minimizeOneStep(scaledState);
+
+      if (status != Eigen::LevenbergMarquardtSpace::Running)
+      {
+          Info << "LM stopped internally at iteration " << gnIter
+              << " (status = " << lmStatusToString(status) << ")" << endl;
           break;
-      }
-      else if (std::abs(residualNorm - old_res_norm) < gn_settings.stagnationTol * old_res_norm)
-      {
-          Info << "Gauss-Newton stagnated at iteration " << gnIter << nl
-               << "  - Old residual norm " << old_res_norm << nl
-               << "  - New residual norm " << residualNorm << nl;
-          break;
-      }
-
-      old_res_norm = residualNorm;
-
-      Eigen::MatrixXd jacobian = assembleJacobian(currentState_, residual, runTime);
-      Eigen::VectorXd dq = jacobian.colPivHouseholderQr().solve(-residual);
-
-      // Backtracking line search
-      double alpha = 1.0;
-      const int maxLineSearch = 4;
-      bool accepted = false;
-      for (int m = 0; m < maxLineSearch; m++)
-      {
-          Eigen::VectorXd trialState = currentState_ + alpha * dq;
-          double trialNorm = assembleResidual(trialState, runTime).norm();
-          if (trialNorm < residualNorm)
-          {
-              currentState_ = trialState;
-              accepted = true;
-              break;
-          }
-          alpha *= 0.5;
-      }
-      if (!accepted)
-      {
-        currentState_ += alpha * dq;
-        Info << "Line search failed to reduce residual at GN iter " << gnIter
-              << " — accepting smallest trial step anyway" << nl;
       }
     }
+
+    currentState_ = scaledState.cwiseProduct(stateScaling_);
+    // Called for logging purposes
+    assembleResidual(currentState_);
     Info << "  - U residual norm " << residualWorkspace_.blockNorm(iU_) << nl
          << "  - p_rgh residual norm " << residualWorkspace_.blockNorm(iP_) << nl
          << "  - T residual norm " << residualWorkspace_.blockNorm(iT_) << endl;
@@ -177,7 +187,6 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
 
 Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::assembleResidual(
   const Eigen::VectorXd& state,
-  const Time& runTime,
   bool correctBCs)
 {
   fvMesh& mesh = this->mesh();
@@ -319,28 +328,6 @@ void ReducedLSPGUnsteadyBBTurb::reconstructReducedFields(
 }
 
 
-Eigen::MatrixXd ReducedLSPGUnsteadyBBTurb::assembleJacobian(
-  const Eigen::VectorXd& state,
-  const Eigen::VectorXd& residual,
-  const Time& runTime)
-{
-  int n = state.size();
-  Eigen::MatrixXd J = Eigen::MatrixXd::Zero(residual.size(), n);
-  double eps = 1e-6;
-  double absoluteFloor_ = 1e-8;
-  
-  for (int i = 0; i < n; i++)
-  {
-    double h = std::sqrt(eps) * std::max({std::abs(state[i]), absoluteFloor_});
-    Eigen::VectorXd state_plus = state;
-    state_plus[i] += h;
-    Eigen::VectorXd residual_plus = assembleResidual(state_plus, runTime);
-    J.col(i) = (residual_plus - residual) / h;
-  }
-  return J;
-}
-
-
 void ReducedLSPGUnsteadyBBTurb::interpolateNutCoeffs(volScalarField& nut_field, volScalarModes& nut_modes, const Eigen::VectorXd& state)
 {
   const label inputRBFSize =
@@ -400,89 +387,6 @@ Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::interpolateIDW(const Eigen::VectorXd&
     return weights;
 }
 
-
-void ReducedLSPGUnsteadyBBTurb::readEigenvalues()
-{
-    Eigen::VectorXd uEigenvalues_, pEigenvalues_, tEigenvalues_, nutEigenvalues_;
-    uEigenvalues_ = Eigen::VectorXd::Zero(numberOfModes_.velocity);
-    pEigenvalues_ = Eigen::VectorXd::Zero(numberOfModes_.pressure);
-    tEigenvalues_ = Eigen::VectorXd::Zero(numberOfModes_.temperature);
-    nutEigenvalues_ = Eigen::VectorXd::Zero(numberOfModes_.nut);
-    if (Pstream::master())
-    {
-      std::ifstream uFile("ITHACAoutput/POD/Eigenvalues_U");
-      M_Assert(uFile.is_open(),
-              "Could not open file ITHACAoutput/POD/Eigenvalues_U. Please make sure the file exists and is readable.");
-      std::string line;
-      std::getline(uFile, line); // Ignore first line
-      std::getline(uFile, line); // Ignore second line
-      uEigenvalues_.resize(numberOfModes_.velocity);
-
-      for (int i = 0; i < numberOfModes_.velocity; i++)
-      {
-          std::getline(uFile, line);
-          uEigenvalues_(i) = std::stod(line);
-      }
-
-      std::ifstream pFile("ITHACAoutput/POD/Eigenvalues_p_rgh");
-      M_Assert(pFile.is_open(),
-              "Could not open file ITHACAoutput/POD/Eigenvalues_p_rgh. Please make sure the file exists and is readable.");
-      std::getline(pFile, line); // Ignore first line
-      std::getline(pFile, line); // Ignore second line
-      pEigenvalues_.resize(numberOfModes_.pressure);
-
-      for (int i = 0; i < numberOfModes_.pressure; i++)
-      {
-          std::getline(pFile, line);
-          pEigenvalues_(i) = std::stod(line);
-      }
-
-      std::ifstream tFile("ITHACAoutput/POD/Eigenvalues_T");
-      M_Assert(tFile.is_open(),
-              "Could not open file ITHACAoutput/POD/Eigenvalues_T. Please make sure the file exists and is readable.");
-      std::getline(tFile, line); // Ignore first line
-      std::getline(tFile, line); // Ignore second line
-      tEigenvalues_.resize(numberOfModes_.temperature);
-
-      for (int i = 0; i < numberOfModes_.temperature; i++)
-      {
-          std::getline(tFile, line);
-          tEigenvalues_(i) = std::stod(line);
-      }
-
-      std::ifstream nutFile("ITHACAoutput/POD/Eigenvalues_fluctNut");
-      M_Assert(nutFile.is_open(),
-              "Could not open file ITHACAoutput/POD/Eigenvalues_fluctNut. Please make sure the file exists and is readable.");
-      std::getline(nutFile, line); // Ignore first line
-      std::getline(nutFile, line); // Ignore second line
-      nutEigenvalues_.resize(numberOfModes_.nut);
-
-      for (int i = 0; i < numberOfModes_.nut; i++)
-      {
-          std::getline(nutFile, line);
-          nutEigenvalues_(i) = std::stod(line);
-      }
-    }
-
-    if (Pstream::parRun())
-    {
-        reduce(uEigenvalues_, sumOp<Eigen::VectorXd>());
-        reduce(pEigenvalues_, sumOp<Eigen::VectorXd>());
-        reduce(tEigenvalues_, sumOp<Eigen::VectorXd>());
-        reduce(nutEigenvalues_, sumOp<Eigen::VectorXd>());
-    }    
-
-    Info << "### EIGS - Velocity eigenvalues: " << uEigenvalues_.transpose() << nl
-         << "### EIGS - Pressure eigenvalues: " << pEigenvalues_.transpose() << nl
-         << "### EIGS - Temperature eigenvalues: " << tEigenvalues_.transpose() << nl
-         << "### EIGS - FluctNut eigenvalues: " << nutEigenvalues_.transpose() << endl;
-        
-    eigenvalues_ = Eigen::VectorXd::Zero(
-        numberOfModes_.velocity + numberOfModes_.pressure + numberOfModes_.temperature);
-    eigenvalues_ << uEigenvalues_, pEigenvalues_, tEigenvalues_;
-}
-
-
 void ReducedLSPGUnsteadyBBTurb::initializePODCoeffsFromFields()
 {
     volVectorField& U = _U();
@@ -506,4 +410,79 @@ void ReducedLSPGUnsteadyBBTurb::initializePODCoeffsFromFields()
     currentNutCoeffs_ = ITHACAutilities::getCoeffs(nutFields_[0], Nutmodes_);
     currentNutAvgCoeffs_ = interpolateIDW(boundaryConditions_.getCurrentBCs().head(2));
     reconstructReducedFields(currentState_, U, p_rgh, T, phi, false);
+}
+
+
+void ReducedLSPGUnsteadyBBTurb::readEigenvalues()
+{
+  Eigen::VectorXd uEigenvalues_, pEigenvalues_, tEigenvalues_, nutEigenvalues_;
+  uEigenvalues_ = Eigen::VectorXd::Zero(numberOfModes_.velocity);
+  pEigenvalues_ = Eigen::VectorXd::Zero(numberOfModes_.pressure);
+  tEigenvalues_ = Eigen::VectorXd::Zero(numberOfModes_.temperature);
+  nutEigenvalues_ = Eigen::VectorXd::Zero(numberOfModes_.nut);
+    std::ifstream uFile("ITHACAoutput/POD/Eigenvalues_U");
+    M_Assert(uFile.is_open(),
+            "Could not open file ITHACAoutput/POD/Eigenvalues_U. Please make sure the file exists and is readable.");
+    std::string line;
+    std::getline(uFile, line); // Ignore first line
+    std::getline(uFile, line); // Ignore second line
+    uEigenvalues_.resize(numberOfModes_.velocity);
+
+    for (int i = 0; i < numberOfModes_.velocity; i++)
+    {
+        std::getline(uFile, line);
+        uEigenvalues_(i) = std::stod(line);
+    }
+
+    std::ifstream pFile("ITHACAoutput/POD/Eigenvalues_p_rgh");
+    M_Assert(pFile.is_open(),
+            "Could not open file ITHACAoutput/POD/Eigenvalues_p_rgh. Please make sure the file exists and is readable.");
+    std::getline(pFile, line); // Ignore first line
+    std::getline(pFile, line); // Ignore second line
+    pEigenvalues_.resize(numberOfModes_.pressure);
+
+    for (int i = 0; i < numberOfModes_.pressure; i++)
+    {
+        std::getline(pFile, line);
+        pEigenvalues_(i) = std::stod(line);
+    }
+
+    std::ifstream tFile("ITHACAoutput/POD/Eigenvalues_T");
+    M_Assert(tFile.is_open(),
+            "Could not open file ITHACAoutput/POD/Eigenvalues_T. Please make sure the file exists and is readable.");
+    std::getline(tFile, line); // Ignore first line
+    std::getline(tFile, line); // Ignore second line
+    tEigenvalues_.resize(numberOfModes_.temperature);
+
+    for (int i = 0; i < numberOfModes_.temperature; i++)
+    {
+        std::getline(tFile, line);
+        tEigenvalues_(i) = std::stod(line);
+    }
+
+    std::ifstream nutFile("ITHACAoutput/POD/Eigenvalues_fluctNut");
+    M_Assert(nutFile.is_open(),
+            "Could not open file ITHACAoutput/POD/Eigenvalues_fluctNut. Please make sure the file exists and is readable.");
+    std::getline(nutFile, line); // Ignore first line
+    std::getline(nutFile, line); // Ignore second line
+    nutEigenvalues_.resize(numberOfModes_.nut);
+
+    for (int i = 0; i < numberOfModes_.nut; i++)
+    {
+        std::getline(nutFile, line);
+        nutEigenvalues_(i) = std::stod(line);
+    }
+
+    Info << "### EIGS - Velocity eigenvalues: " << uEigenvalues_.transpose() << nl
+         << "### EIGS - Pressure eigenvalues: " << pEigenvalues_.transpose() << nl
+         << "### EIGS - Temperature eigenvalues: " << tEigenvalues_.transpose() << nl
+         << "### EIGS - FluctNut eigenvalues: " << nutEigenvalues_.transpose() << endl;
+        
+    eigenvalues_ = Eigen::VectorXd::Zero(
+        numberOfModes_.velocity + numberOfModes_.pressure + numberOfModes_.temperature);
+    stateScaling_ = Eigen::VectorXd::Zero(
+        numberOfModes_.velocity + numberOfModes_.pressure + numberOfModes_.temperature);
+    eigenvalues_ << uEigenvalues_, pEigenvalues_, tEigenvalues_;
+    // The state scaling is sqrt(eigenvalue)
+    stateScaling_ = eigenvalues_.array().sqrt();
 }

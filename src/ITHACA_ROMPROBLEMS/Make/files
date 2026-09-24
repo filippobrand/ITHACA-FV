@@ -22,5 +22,6 @@ ReducedUnsteadyMSR/ReducedUnsteadyMSR.C
 ReducedUnsteadyNSExplicit/ReducedUnsteadyNSExplicit.C
 ReducedFsi/ReducedFsi.C
 ReducedCompressibleSteadyNS/ReducedCompressibleSteadyNS.C
+NonLinearSolvers/LevenbergMarquardt.H
 
 LIB = $(FOAM_USER_LIBBIN)/libITHACA_ROMPROBLEMS

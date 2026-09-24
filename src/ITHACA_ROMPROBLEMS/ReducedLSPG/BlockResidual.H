@@ -53,6 +53,10 @@ class BlockResidual
     /// @param specs Vector of BlockSpec, each with a name, size and optional weight and rowWeights. The order of the blocks in the vector will be the order in which they are assembled in the residual.
     explicit BlockResidual(std::vector<BlockSpec> specs);
 
+    /// @brief Returns the size of the residual vector
+    /// @return int of the size of the residual vector
+    int size() const;
+
     /// @brief Returns the index of a block given its name
     /// @param name Name of the block
     /// @return Index of the block in the vector of blocks
@@ -90,6 +94,11 @@ class BlockResidual
     /// @param block_index Index of the block to set the weight of
     /// @param weight Weight to set
     void setBlockWeight(int block_index, double weight);
+
+    /// @brief Sets the per-entry weights of a specific block
+    /// @param block_index Index of the block to set the per-entry weights of
+    /// @param rowWeights Eigen::VectorXd of the per-entry weights to set. Must
+    void setBlockRowWeights(int block_index, const Eigen::VectorXd& rowWeights);
 
     int numBlocks() const;
 

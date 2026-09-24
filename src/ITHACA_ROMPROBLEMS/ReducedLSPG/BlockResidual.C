@@ -11,7 +11,9 @@ BlockResidual::BlockResidual(std::vector<BlockSpec> specs)
   {
     M_Assert(spec.size > 0, "Block has size <= 0");
     M_Assert(spec.weight > 0, "Block has weight <= 0");
-    M_Assert(spec.rowWeights.size() == 0 && spec.rowWeights.size() != spec.size, "Block has rowWeights size mismatch with block size");
+    M_Assert(spec.rowWeights.size() == 0 || spec.rowWeights.size() == spec.size, "Block has rowWeights size mismatch with block size");
+    // Should actually be:
+    //  M_Assert(spec.rowWeights.size() == 0 || spec.rowWeights.size() == spec.size, ...);
     for (const Block& otherblock : blocks_)
     {
       M_Assert(spec.name != otherblock.name, "Duplicate block name found.");
@@ -32,6 +34,11 @@ BlockResidual::BlockResidual(std::vector<BlockSpec> specs)
   raw_ = Eigen::VectorXd::Zero(offset);
   scaled_ = raw_;
   isScaled_ = false;
+}
+
+int BlockResidual::size() const
+{
+  return static_cast<int>(raw_.size());
 }
 
 const BlockResidual::Block& BlockResidual::at(int block) const
@@ -73,6 +80,14 @@ void BlockResidual::setBlockWeight(int block_index, double weight)
 {
     at(block_index);
     blocks_[static_cast<std::size_t>(block_index)].weight = weight;
+    isScaled_ = false;
+}
+
+void BlockResidual::setBlockRowWeights(int block_index, const Eigen::VectorXd& rowWeights)
+{
+    Block& block = blocks_[static_cast<std::size_t>(block_index)];
+    M_Assert(rowWeights.size() == block.size, "BlockResidual: block has size mismatch with input rowWeights");
+    block.rowWeights = rowWeights;
     isScaled_ = false;
 }
 

@@ -48,6 +48,7 @@ SourceFiles
 #include "Modes.H"
 #include "BoundaryConditions.H"
 #include "RBFTurbulence.H"
+#include "LevenbergMarquardt.H"
 #include <Eigen/Dense>
 #include <memory>
 
@@ -109,7 +110,7 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     void captureFOMData(const LSPGUnsteadyBBTurb& problem);
 
     //- Assembles the residual vector
-    Eigen::VectorXd assembleResidual(const Eigen::VectorXd& state, const Time& runTime, bool correctBCs = true);
+    Eigen::VectorXd assembleResidual(const Eigen::VectorXd& state, bool correctBCs = true) override;
 
     //- Reconstructs the reduced solution fields from the currentState_ vector
     void reconstructReducedFields(
@@ -119,12 +120,6 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
       volScalarField& temperature_field,
       surfaceScalarField& phi_field,
       bool correctBCs = true);
-
-    //- Assemble the Jacobian matrix
-    Eigen::MatrixXd assembleJacobian(
-      const Eigen::VectorXd& state,
-      const Eigen::VectorXd& residual,
-      const Time& runTime);
   
     //- Interpolates the turbulent eddy viscosity coefficients from the RBF interpolation to the current state
     void interpolateNutCoeffs(
@@ -202,9 +197,6 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
 
     ///- Boundary conditions for the reduced problem
     BoundaryConditions boundaryConditions_;
-
-    ///- Current state vector
-    Eigen::VectorXd currentState_;
 
     ///- Current nut coefficients vector (fluctuating part)
     Eigen::VectorXd currentNutCoeffs_;

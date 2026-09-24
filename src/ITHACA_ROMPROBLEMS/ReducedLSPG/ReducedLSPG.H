@@ -65,6 +65,15 @@ class ReducedLSPG
     /// @brief Destructor
     virtual ~ReducedLSPG() = default;
 
+    /// @brief Virtual function to be overridden to assemble the residual
+    virtual Eigen::VectorXd assembleResidual(const Eigen::VectorXd& state, bool correctBCs = true) = 0;
+
+    /// @brief Returns the scaling factor
+    const Eigen::VectorXd& getStateScaling() const
+    {
+        return stateScaling_;
+    }
+
   protected:
     /// @brief Shared pointer to the ITHACAcontext object
     std::shared_ptr<ITHACAcontext> context_;
@@ -92,6 +101,12 @@ class ReducedLSPG
     /// @brief Access to the MRF object
     /// @return Reference to the MRF object
     IOMRFZoneList& MRF() const;
+
+    /// Current state vector
+    Eigen::VectorXd currentState_;
+
+    /// State scaling vector (could be for example the POD singular values)
+    Eigen::VectorXd stateScaling_;
 
     // *** Time step management - These are called by openfoam Time object *** //
     //- Whether to adjust the time step based on the Courant number (or custom criteria?)
