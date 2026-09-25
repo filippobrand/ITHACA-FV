@@ -57,7 +57,6 @@ struct InterpolationSettings
     int firstRBFIndex = 0;
     bool derivative = false;
     int dimInputRBF = 0;
-    int avgTermOfflineSamples = 0;
 };
 
 struct NumberOfModes
@@ -92,11 +91,8 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     //- Default destructor
     virtual ~ReducedLSPGUnsteadyBBTurb() = default;
 
-    //- Sets the initial, final and time step for the time object
-    void setTime(const scalar startTime, const scalar endTime, const scalar deltaT);
-
     //- Given the boundary conditions and a timeManager, solves the reduced problem
-    void solveOnline(const Eigen::MatrixXd& vel_now_BC, const Eigen::MatrixXd& temp_now_BC);
+    void solveOnline(  const word& bcROM, const word& bcROMT);
 
   private:
     /// @brief Captures the relevant FOM data and stores it internally

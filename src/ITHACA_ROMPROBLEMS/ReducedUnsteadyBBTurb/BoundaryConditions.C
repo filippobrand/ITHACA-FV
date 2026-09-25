@@ -33,7 +33,7 @@ License
 /// Source file of the BoundaryConditions class
 
 #include "BoundaryConditions.H"
-#include "UnsteadyBBTurb.H"
+#include "ITHACAstream.H"
 
 // * * * * * * * * * * * * * * * Constructors * * * * * * * * * * * * * * * * //
 
@@ -78,6 +78,32 @@ BoundaryConditions::BoundaryConditions(const Eigen::VectorXd& velocityBC,
     currentVelocityBC = velocityBC.tail(velocityBC.size() - 1);
     std::cout << "### DEBUG --- Current temperature BC: " <<
               currentTemperatureBC.transpose() << std::endl;
+}
+
+BoundaryConditions::BoundaryConditions(const word velocityBCFile, 
+  const word temperatureBCFile, word timeDepMethod):
+  timeDepMethod_(timeDepMethod)
+{
+  velocityBCMatrix_ = ITHACAstream::readMatrix(velocityBCFile);
+  temperatureBCMatrix_ = ITHACAstream::readMatrix(temperatureBCFile);
+
+  temperatureTimeDep_ = false;
+  velocityTimeDep_ = false;
+
+  if (temperatureBCMatrix_.rows() > 1)
+  {
+      temperatureTimeDep_ = true;
+      timestepsTempBC_ = temperatureBCMatrix_.col(0);
+  }
+
+  if (velocityBCMatrix_.rows() > 1)
+  {
+      velocityTimeDep_ = true;
+      timestepsVelBC_ = velocityBCMatrix_.col(0);
+  }
+
+  currentTemperatureBC = temperatureBCMatrix_.row(0).tail(temperatureBCMatrix_.cols() - 1);
+  currentVelocityBC = velocityBCMatrix_.row(0).tail(velocityBCMatrix_.cols() - 1);
 }
 
 // Methods

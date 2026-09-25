@@ -60,13 +60,11 @@ ReducedLSPGUnsteadyBBTurb::ReducedLSPGUnsteadyBBTurb(
 void ReducedLSPGUnsteadyBBTurb::captureFOMData(
   const LSPGUnsteadyBBTurb& problem)
 {
-
   interpolationSettings_ = InterpolationSettings
   {
       problem.ITHACAdict->lookupOrDefault<int>("firstRBFIndex", 0),
       problem.ITHACAdict->lookupOrDefault<bool>("derivativeInRBF", false),
       problem.ITHACAdict->lookupOrDefault<label>("dimInputRBF", 0),
-      problem.mu.cols()
   };
 
   romSettings_ = ROMSettings
@@ -103,27 +101,16 @@ void ReducedLSPGUnsteadyBBTurb::captureFOMData(
   inletIndexT_ = problem.inletIndexT;
 }
 
-void ReducedLSPGUnsteadyBBTurb::setTime(
-  const scalar startTime,
-  const scalar endTime,
-  const scalar deltaT)
-{
-  Time& runTime = this->runTime();
-
-  runTime.setTime(startTime, 0);
-  runTime.setEndTime(endTime);
-  runTime.setDeltaT(deltaT);
-}
-
 void ReducedLSPGUnsteadyBBTurb::solveOnline(
-  const Eigen::MatrixXd& vel_now_BC,
-  const Eigen::MatrixXd& temp_now_BC)
+  const word& bcROM,
+  const word& bcROMT)
 {
-  Time& runTime = this->runTime();
-  boundaryConditions_ = BoundaryConditions{vel_now_BC, temp_now_BC, "linear"};
+  Info << "Starting Reduced LSPG solution" << endl;
+  boundaryConditions_ = BoundaryConditions{bcROM, bcROMT, "linear"};
   GaussNewtonSettings gn_settings = GaussNewtonSettings{5, 1e-2, 5e-5};
-  // Maybe here we need: #include "initContinuityErrs.H" - Check later
+  Time& runTime = this->runTime();
   #include "readTimeControls.H"
+  // Maybe here we need: #include "initContinuityErrs.H" - Check later
   
   initializePODCoeffsFromFields(); // Here we cannot correct the BCs for pRgh
   assembleResidual(currentState_, false); // Here we cannot correct the BCs for pRgh
@@ -356,7 +343,9 @@ void ReducedLSPGUnsteadyBBTurb::interpolateNutCoeffs(volScalarField& nut_field, 
 Eigen::VectorXd ReducedLSPGUnsteadyBBTurb::interpolateIDW(const Eigen::VectorXd&
         input_parameters)
 {
-    const label n_samples = interpolationSettings_.avgTermOfflineSamples;
+    M_Assert(input_parameters.size() == mu_.rows(),
+            "Input parameters size to the linear interpolation does not match the expected size.");
+    const label n_samples = mu_.cols();
     Eigen::VectorXd weights(n_samples);
 
     for (label i = 0; i < n_samples; i++)
@@ -405,7 +394,7 @@ void ReducedLSPGUnsteadyBBTurb::initializePODCoeffsFromFields()
     currentState_.segment(numberOfModes_.velocity, numberOfModes_.pressure) = ITHACAutilities::getCoeffs(p_rgh, Prghmodes_);
     currentState_.tail(numberOfModes_.temperature) = ITHACAutilities::getCoeffs(T, Tmodes_);
     currentNutCoeffs_ = ITHACAutilities::getCoeffs(nutFields_[0], Nutmodes_);
-    currentNutAvgCoeffs_ = interpolateIDW(boundaryConditions_.getCurrentBCs().head(2));
+    currentNutAvgCoeffs_ = interpolateIDW(boundaryConditions_.getCurrentBCs().head(3));
     reconstructReducedFields(currentState_, U, p_rgh, T, phi, false);
 }
 

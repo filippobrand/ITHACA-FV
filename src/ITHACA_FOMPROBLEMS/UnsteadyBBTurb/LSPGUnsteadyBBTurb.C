@@ -61,7 +61,7 @@ LSPGUnsteadyBBTurb::LSPGUnsteadyBBTurb(std::shared_ptr<ITHACAcontext> context)
                    runTime.timeName(),
                    mesh,
                    IOobject::MUST_READ,
-                   IOobject::AUTO_WRITE),
+                   IOobject::NO_WRITE),
                mesh));
   _omega = autoPtr<volScalarField>(
                new volScalarField(
@@ -70,7 +70,7 @@ LSPGUnsteadyBBTurb::LSPGUnsteadyBBTurb(std::shared_ptr<ITHACAcontext> context)
                        runTime.timeName(),
                        mesh,
                        IOobject::MUST_READ,
-                       IOobject::AUTO_WRITE),
+                       IOobject::NO_WRITE),
                    mesh));
 }
 
@@ -81,7 +81,7 @@ void LSPGUnsteadyBBTurb::readITHACAdict()
         
     M_Assert(bcMethod == "lift" , "The BC method must be set to lift in ITHACAdict. Other methods are not implemented yet.");
     
-    NUmodes_ = ITHACAdict->lookupOrDefault<label>("NmodesUproj", 10);
+    NUmodes_ = ITHACAdict->lookupOrDefault<label>("NmodesUproj", 5);
     NTmodes_ = ITHACAdict->lookupOrDefault<label>("NmodesTproj", 5);
     NPrghmodes_ = ITHACAdict->lookupOrDefault<label>("NmodesPrghproj", 5);
     NNutModes_ = ITHACAdict->lookupOrDefault<label>("NmodesNutproj", 5);
@@ -97,6 +97,7 @@ void LSPGUnsteadyBBTurb::readITHACAdict()
 // * * * * * * * * * * * * * * Full Order Methods * * * * * * * * * * * * * * //
 void LSPGUnsteadyBBTurb::truthSolve(const List<scalar> mu_now, label nSample)
 {
+    Info << nl << "### Offline solve for parameter set: " << mu_now << nl << endl;
     fvMesh& mesh = this->mesh();
     Time& runTime = this->runTime();
     pimpleControl& pimple = this->pimple();
@@ -121,36 +122,37 @@ void LSPGUnsteadyBBTurb::truthSolve(const List<scalar> mu_now, label nSample)
     dimensionedScalar& Pr = _Pr();
     dimensionedScalar& Prt = _Prt();
 
-    instantList Times = runTime.times();
-
     runTime.setEndTime(finalTime);
     runTime.setTime(startTime, 0);
     runTime.setDeltaT(timeStep);
     nextWrite = startTime + writeEvery;
-    label nSavedTimesteps = (finalTime - startTime) / writeEvery;
+    label nSavedTimesteps = std::ceil((finalTime - startTime) / writeEvery);
+    label nTotalTimesteps = (finalTime - startTime) / timeStep;
+
+    M_Assert(nSavedTimesteps <= nTotalTimesteps,
+             "The number of saved timesteps must be less than or equal to the total number of timesteps. Please adjust the parameters accordingly.");
     M_Assert(timeSnapshots.size() > nSample,
              "The timeSnapshots list does not have enough space for the current sample index.");
+
     timeSnapshots[nSample].resize(nSavedTimesteps);
     label stepCounter = 0;
     Info << "Starting time loop." << nl << endl;
 
     while (runTime.run())
     {
-#include "readTimeControls.H"
-#include "CourantNo.H"
-#include "setDeltaT.H"
+        #include "readTimeControls.H"
+        #include "CourantNo.H"
+        #include "setDeltaT.H"
         runTime++;
-        // runTime.setEndTime(finalTime + timeStep);
         Info << "Time = " << runTime.timeName() << nl << endl;
 
         while (pimple.loop())
         {
-#include "UEqn.H"
-#include "TEqn.H"
-
+            #include "UEqn.H"
+            #include "TEqn.H"
             while (pimple.correct())
             {
-#include "pEqn.H"
+              #include "pEqn.H"
             }
 
             if (pimple.turbCorr())
@@ -171,14 +173,13 @@ void LSPGUnsteadyBBTurb::truthSolve(const List<scalar> mu_now, label nSample)
             omega = turbulence->omega();
             ITHACAstream::exportSolution(U, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(phi, name(counter), "./ITHACAoutput/Offline/");
-            ITHACAstream::exportSolution(p, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(p_rgh, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(T, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(nut, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(k, name(counter), "./ITHACAoutput/Offline/");
             ITHACAstream::exportSolution(omega, name(counter), "./ITHACAoutput/Offline/");
-            std::ofstream of("./ITHACAoutput/Offline/" + name(counter) + "/" +
-                             runTime.timeName());
+            M_Assert(stepCounter < nSavedTimesteps,
+                     "The stepCounter has exceeded the allocated size for timeSnapshots.");
             timeSnapshots[nSample](stepCounter) = runTime.value();
             stepCounter++;
             Ufield.append(U.clone());
@@ -288,7 +289,6 @@ void LSPGUnsteadyBBTurb::truthSolve(fileName folder)
 void LSPGUnsteadyBBTurb::removeMean()
 {
     Info << "Not implemented yet" << endl;
-
 }
 
 // * * * * * * * * * * * * * * RBF Prep Methods * * * * * * * * * * * * * * //
@@ -435,6 +435,7 @@ List<Eigen::MatrixXd> LSPGUnsteadyBBTurb::velDerivativeCoeff(
 
 void LSPGUnsteadyBBTurb::splitEddyViscositySnapshots()
 {
+    ITHACAstream::ReadDenseMatrixList(timeSnapshots, "./ITHACAoutput/Offline/", "timeSnapshots");
     const label nSamples = timeSnapshots.size();
     avgNutfield.setSize(nSamples);
     const label totalSnapshots = Nutfield.size();
@@ -505,6 +506,7 @@ void LSPGUnsteadyBBTurb::restart()
     Time& runTime = this->runTime();
     fvMesh& mesh = this->mesh();
     pimpleControl& pimple = this->pimple();
+    fv::options& fvOptions = this->fvOptions();
 
     runTime.setTime(0, 0);
     // Read transportProperties dictionary
@@ -582,17 +584,13 @@ void LSPGUnsteadyBBTurb::resizeModes()
 
 void LSPGUnsteadyBBTurb::computePOD()
 {
-  if (bcMethod == "lift")
-  {
-    setupLift();
-  }
-
   int nModesU = ITHACAdict->lookupOrDefault<int>("NmodesUout", 0);
   int nModesPrgh = ITHACAdict->lookupOrDefault<int>("NmodesPrghout", 0);
   int nModesT = ITHACAdict->lookupOrDefault<int>("NmodesTout", 0);
   int nModesNut = ITHACAdict->lookupOrDefault<int>("NmodesNutout", 0);
   if (bcMethod == "lift")
   {
+    setupLift();
     ITHACAPOD::getModes(Uomfield, Umodes, _U().name(), podex, 0, 0, nModesU, true);
     ITHACAPOD::getModes(Tomfield, Tmodes, _T().name(), podex, 0, 0, nModesT, true);
     getPhiModes(Umodes, Uomfield, Phimodes, Phiomfield);
@@ -607,6 +605,11 @@ void LSPGUnsteadyBBTurb::computePOD()
   ITHACAPOD::getModes(kfield, kmodes, "k", podex, 0, 0, nModesNut, false);
   ITHACAPOD::getModes(Prghfield, Prghmodes, _p_rgh().name(), podex, 0, 0, nModesPrgh, false);
   ITHACAPOD::getModes(fluctNutfield, nutmodes, fluctNutfield[0].name(), podex, 0, 0, nModesNut, true);
+  // Assert that the modes are not empty
+  M_Assert(Umodes.size() > 0, "Velocity modes are empty.");
+  M_Assert(Tmodes.size() > 0, "Temperature modes are empty.");
+  M_Assert(Phimodes.size() > 0, "Phi modes are empty.");
+  M_Assert(Prghmodes.size() > 0, "Pressure modes are empty.");
 }
 
 void LSPGUnsteadyBBTurb::setupLift()
@@ -859,4 +862,18 @@ void LSPGUnsteadyBBTurb::switchOffAutoWrite()
   _p_rgh->writeOpt(IOobject::NO_WRITE);
   _nut->writeOpt(IOobject::NO_WRITE);
   _alphat->writeOpt(IOobject::NO_WRITE);
+}
+
+void LSPGUnsteadyBBTurb::loadFieldsFromDisk(
+  const word offlinepath
+)
+{
+  ITHACAutilities::createSymLink(offlinepath);
+  ITHACAstream::read_fields(Ufield, _U(), offlinepath);
+  ITHACAstream::read_fields(Phifield, _phi(), offlinepath);
+  ITHACAstream::read_fields(Prghfield, _p_rgh(), offlinepath);
+  ITHACAstream::read_fields(Tfield, _T(), offlinepath);
+  ITHACAstream::read_fields(Nutfield, _nut(), offlinepath);
+  ITHACAstream::read_fields(kfield, _k(), offlinepath);
+  ITHACAstream::read_fields(omegafield, _omega(), offlinepath);
 }

@@ -177,7 +177,22 @@ _U = autoPtr<volVectorField>(
              mesh));
 volVectorField& U = _U();
 
-#include "createPhi.H"
+_phi = autoPtr<surfaceScalarField>
+       (
+           new surfaceScalarField
+           (
+               IOobject
+               (
+                   "phi_r",
+                   runTime.timeName(),
+                   mesh,
+                   IOobject::READ_IF_PRESENT,
+                   IOobject::AUTO_WRITE
+               ),
+               linearInterpolate(U) & mesh.Sf()
+           )
+       );
+surfaceScalarField& phi = _phi();
 
 _laminarTransport = autoPtr<singlePhaseTransportModel>(
                         new singlePhaseTransportModel(U, phi));

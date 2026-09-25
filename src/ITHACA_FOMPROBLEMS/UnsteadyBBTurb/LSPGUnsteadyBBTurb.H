@@ -140,6 +140,11 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         /// do not write U, and other fields. (They write U_r, ...)
         ///
         void switchOffAutoWrite();
+
+        //--------------------------------------------------------------------------
+        /// @brief      Loads the fields from disk
+        ///
+        void loadFieldsFromDisk(word offlinepath = "./ITHACAOutput/Offline");
         
     private:
         ///- Reads the dictionary ITHACAdict and sets the relevant parameters
@@ -208,6 +213,10 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
 
         /// maxDeltaT
         scalar maxDeltaT;
+    
+    protected:
+        /// List of time snapshots for each parameter sample
+        List<Eigen::VectorXd> timeSnapshots;
     
     public:
         //- Velocity snapshots
@@ -360,9 +369,6 @@ class LSPGUnsteadyBBTurb : public LSPGProblem, public UnsteadyProblem
         
         ///- Pointer to field ghf
         autoPtr<surfaceScalarField> _ghf;
-
-        /// List of time snapshots for each parameter sample
-        List<Eigen::VectorXd> timeSnapshots;
 
 };
 

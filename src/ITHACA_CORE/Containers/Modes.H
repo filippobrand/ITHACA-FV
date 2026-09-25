@@ -258,5 +258,3 @@ typedef Modes<scalar, fvsPatchField, surfaceMesh> surfaceScalarModes;
 typedef Modes<vector, pointPatchField, pointMesh> pointVectorModes;
 
 #endif
-
-

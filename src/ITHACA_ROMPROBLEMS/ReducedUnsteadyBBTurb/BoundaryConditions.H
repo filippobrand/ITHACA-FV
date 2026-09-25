@@ -94,6 +94,7 @@ class BoundaryConditions
                            const Eigen::MatrixXd& temperatureBC, word timeDepMethod);
         BoundaryConditions(const Eigen::VectorXd& velocityBC,
                            const Eigen::VectorXd& temperatureBC);
+        BoundaryConditions(const word velocityBCFile, const word temperatureBCFile, word timeDepMethod = "linear");
 
         // Destructor
         ~BoundaryConditions() { };
