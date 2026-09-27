@@ -103,8 +103,11 @@ void ReducedLSPGUnsteadyBBTurb::captureFOMData(
 
 void ReducedLSPGUnsteadyBBTurb::solveOnline(
   const word& bcROM,
-  const word& bcROMT)
+  const word& bcROMT,
+  const word& folder)
 {
+  mkDir(folder);
+  ITHACAutilities::createSymLink(folder);
   Info << "Starting Reduced LSPG solution" << endl;
   boundaryConditions_ = BoundaryConditions{bcROM, bcROMT, "linear"};
   GaussNewtonSettings gn_settings = GaussNewtonSettings{5, 1e-2, 5e-5};
@@ -165,7 +168,14 @@ void ReducedLSPGUnsteadyBBTurb::solveOnline(
          << "  - p_rgh residual norm " << residualWorkspace_.blockNorm(iP_) << nl
          << "  - T residual norm " << residualWorkspace_.blockNorm(iT_) << endl;
 
-    runTime.write();
+    // runTime.write();
+    if (runTime.writeTime())
+    {
+      ITHACAstream::exportSolution(_U(), name(runTime.time().value()), folder);
+      ITHACAstream::exportSolution(_p_rgh(), name(runTime.time().value()), folder);
+      ITHACAstream::exportSolution(_T(), name(runTime.time().value()), folder);
+      ITHACAstream::exportSolution(_nut(), name(runTime.time().value()), folder);
+    }
   }
   auto end = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -336,7 +346,7 @@ void ReducedLSPGUnsteadyBBTurb::interpolateNutCoeffs(volScalarField& nut_field, 
   {
       nut_field += currentNutAvgCoeffs_(k) * avgNutFields_[k];
   }
-  nut_field.correctBoundaryConditions();
+  nut_field.correctBoundaryConditions(); // This is probably not needed, as it should be called by reconstruct()
 }
 
 
@@ -395,7 +405,6 @@ void ReducedLSPGUnsteadyBBTurb::initializePODCoeffsFromFields()
     currentState_.tail(numberOfModes_.temperature) = ITHACAutilities::getCoeffs(T, Tmodes_);
     currentNutCoeffs_ = ITHACAutilities::getCoeffs(nutFields_[0], Nutmodes_);
     currentNutAvgCoeffs_ = interpolateIDW(boundaryConditions_.getCurrentBCs().head(3));
-    reconstructReducedFields(currentState_, U, p_rgh, T, phi, false);
 }
 
 

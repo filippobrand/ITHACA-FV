@@ -44,21 +44,41 @@ ITHACAcontext::~ITHACAcontext()
 }
 
 template <typename FieldType>
-PtrList<FieldType> ITHACAcontext::loadFieldsFromCaseFolder(const word& fieldName)
+PtrList<FieldType> ITHACAcontext::loadFieldsFromCaseFolder
+(
+    const word& fieldName,
+    const fileName& folder
+)
 {
     Time& runTime = _runTime();
     fvMesh& mesh = _mesh();
-    const instantList times = runTime.times();
     PtrList<FieldType> fields;
+
+    const fileName searchDir = folder.empty() ? runTime.path() : runTime.path()/folder;
+
+    // Enumerate time-like subdirectories manually, since runTime.times()
+    // only knows about the case root's own time directories
+    fileNameList timeDirNames = Foam::readDir(searchDir, fileName::DIRECTORY);
+
+    DynamicList<instant> times(timeDirNames.size());
+    forAll(timeDirNames, i)
+    {
+        if (timeDirNames[i].size() && isdigit(timeDirNames[i][0]))
+        {
+            times.append(instant(timeDirNames[i]));
+        }
+    }
+    Foam::sort(times);
 
     for (const instant& time : times)
     {
         const word timeName = time.name();
+        const fileName instance = folder.empty() ? fileName(timeName) : folder/timeName;
 
         IOobject fieldIO
         (
             fieldName,
-            timeName,
+            instance,
             mesh,
             IOobject::MUST_READ,
             IOobject::NO_WRITE
@@ -66,13 +86,12 @@ PtrList<FieldType> ITHACAcontext::loadFieldsFromCaseFolder(const word& fieldName
 
         if (!fieldIO.typeHeaderOk<FieldType>(true))
         {
-            Info << "Skipping " << timeName << "/" << fieldName << nl;
+            Info << "Skipping " << instance << "/" << fieldName << nl;
             continue;
         }
 
         Info << "Loading field " << fieldName
-             << " from time directory " << timeName << endl;
-
+             << " from time directory " << instance << endl;
         fields.emplace_back(fieldIO, mesh);
     }
 
@@ -80,9 +99,9 @@ PtrList<FieldType> ITHACAcontext::loadFieldsFromCaseFolder(const word& fieldName
 }
 
 // Explicit template instantiation
-template PtrList<volVectorField> ITHACAcontext::loadFieldsFromCaseFolder<volVectorField>(const word& fieldName);
-template PtrList<volScalarField> ITHACAcontext::loadFieldsFromCaseFolder<volScalarField>(const word& fieldName);
-template PtrList<surfaceScalarField> ITHACAcontext::loadFieldsFromCaseFolder<surfaceScalarField>(const word& fieldName);
+template PtrList<volVectorField> ITHACAcontext::loadFieldsFromCaseFolder<volVectorField>(const word& fieldName, const fileName& folder);
+template PtrList<volScalarField> ITHACAcontext::loadFieldsFromCaseFolder<volScalarField>(const word& fieldName, const fileName& folder);
+template PtrList<surfaceScalarField> ITHACAcontext::loadFieldsFromCaseFolder<surfaceScalarField>(const word& fieldName, const fileName& folder);
 
 argList& ITHACAcontext::args()
 {

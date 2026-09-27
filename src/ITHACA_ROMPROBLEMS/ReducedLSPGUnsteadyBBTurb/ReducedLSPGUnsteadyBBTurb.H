@@ -92,7 +92,7 @@ class ReducedLSPGUnsteadyBBTurb : public ReducedLSPG
     virtual ~ReducedLSPGUnsteadyBBTurb() = default;
 
     //- Given the boundary conditions and a timeManager, solves the reduced problem
-    void solveOnline(  const word& bcROM, const word& bcROMT);
+    void solveOnline(const word& bcROM, const word& bcROMT, const word& folder = "ITHACAoutput/OnlineLSPGROM/");
 
   private:
     /// @brief Captures the relevant FOM data and stores it internally

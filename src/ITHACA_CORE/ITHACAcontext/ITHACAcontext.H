@@ -71,9 +71,13 @@ class ITHACAcontext
     //- Access to the MRF
     IOMRFZoneList& MRF();
 
-    /// @brief Loads the selected fields from the current case folder, given by the context.
+    /// @brief Loads the selected fields from the specified case folder, given by the context.
+    /// @tparam FieldType The type of the field to be loaded (e.g., volVectorField, volScalarField, surfaceScalarField).
+    /// @param fieldName The name of the field to be loaded.
+    /// @param folder The folder (relative to the case root) from which to load the
+    ///
     template <typename FieldType>
-    PtrList<FieldType> loadFieldsFromCaseFolder(const word& fieldName);
+    PtrList<FieldType> loadFieldsFromCaseFolder(const word& fieldName, const fileName& folder);
 
   private:
     ///- Pointer to the argList object
@@ -93,7 +97,6 @@ class ITHACAcontext
 
     ///- Pointer to the MRF object
     autoPtr<IOMRFZoneList> _MRF;
-    
 };
 
 #endif
